@@ -352,3 +352,72 @@ func TestWatchReportsContainerChanges(t *testing.T) {
 		}
 	}
 }
+
+func TestContentChangesRecreate(t *testing.T) {
+	ctx := context.Background()
+	e := newTestEngine(t)
+	app := testApp(t, e)
+	dir := t.TempDir()
+	write(t, dir, "compose.yaml", `
+services:
+  web:
+    image: busybox
+    command: ["sleep", "3600"]
+    env_file: app.env
+    configs: [{source: conf, target: /etc/app.conf}]
+    secrets: [pw]
+    volumes: ["./nginx.conf:/etc/nginx.conf:ro", "./data:/data"]
+  plain:
+    image: busybox
+    command: ["sleep", "3600"]
+configs:
+  conf: {file: ./app.conf}
+secrets:
+  pw: {file: ./pw.txt}
+`)
+	write(t, dir, "app.env", "A=1\n")
+	write(t, dir, "app.conf", "v1\n")
+	write(t, dir, "pw.txt", "s1\n")
+	write(t, dir, "nginx.conf", "n1\n")
+	os.Mkdir(filepath.Join(dir, "data"), 0o755)
+	if err := e.Sync(ctx, app, dir, domain.SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	webID := func() string {
+		ls, _ := e.Status(ctx, app)
+		for _, c := range ls.Containers {
+			if c.Service == "web" {
+				return c.ID
+			}
+		}
+		return ""
+	}
+	cases := []struct {
+		file, content string
+		recreate      bool
+	}{
+		{"app.conf", "v2\n", true},
+		{"pw.txt", "s2\n", true},
+		{"nginx.conf", "n2\n", true},
+		{"app.env", "A=2\n", true},
+		{"data/runtime.db", "written by the app\n", false},
+	}
+	for _, c := range cases {
+		before := webID()
+		write(t, dir, c.file, c.content)
+		diffs, err := e.Diff(ctx, app, dir, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		changed := len(diffs) == 1 && diffs[0].Service == "web" && diffs[0].Change == "changed"
+		if changed != c.recreate || (!c.recreate && len(diffs) != 0) {
+			t.Errorf("%s: diff = %+v, want web changed = %v", c.file, diffs, c.recreate)
+		}
+		if err := e.Sync(ctx, app, dir, domain.SyncOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		if recreated := before != webID(); recreated != c.recreate {
+			t.Errorf("%s: recreated = %v, want %v", c.file, recreated, c.recreate)
+		}
+	}
+}

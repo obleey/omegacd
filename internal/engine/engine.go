@@ -3,10 +3,13 @@ package engine
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"maps"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -101,7 +104,74 @@ func (e *Engine) load(ctx context.Context, app domain.Application, dir string) (
 		}
 		p.Services[name] = s
 	}
+	if err := addContentHashes(p); err != nil {
+		return nil, err
+	}
 	return p, nil
+}
+
+// contentHashLabel carries a hash of the files a service reads but compose does not hash:
+// file-based configs and secrets, and bind-mounted regular files inside the project dir.
+// Labels are part of the config hash, so a content change recreates the container.
+const contentHashLabel = "dev.dockercd.content-hash"
+
+func addContentHashes(p *types.Project) error {
+	for name, s := range p.Services {
+		h := sha256.New()
+		n := 0
+		add := func(kind, id, file, content string) error {
+			if file != "" {
+				b, err := os.ReadFile(file)
+				if err != nil {
+					return fmt.Errorf("service %q %s %q: %w", name, kind, id, err)
+				}
+				content = string(b)
+			}
+			fmt.Fprintf(h, "%s\x00%s\x00%d\x00%s", kind, id, len(content), content)
+			n++
+			return nil
+		}
+		for _, c := range s.Configs {
+			if obj, ok := p.Configs[c.Source]; ok && (obj.File != "" || obj.Content != "") {
+				if err := add("config", c.Source+":"+c.Target, obj.File, obj.Content); err != nil {
+					return err
+				}
+			}
+		}
+		for _, c := range s.Secrets {
+			if obj, ok := p.Secrets[c.Source]; ok && (obj.File != "" || obj.Content != "") {
+				if err := add("secret", c.Source+":"+c.Target, obj.File, obj.Content); err != nil {
+					return err
+				}
+			}
+		}
+		for _, v := range s.Volumes {
+			if v.Type != types.VolumeTypeBind || !insideDir(p.WorkingDir, v.Source) {
+				continue
+			}
+			// only regular files: a bind-mounted directory may hold runtime data that changes constantly
+			if fi, err := os.Stat(v.Source); err != nil || !fi.Mode().IsRegular() {
+				continue
+			}
+			if err := add("bind", v.Target, v.Source, ""); err != nil {
+				return err
+			}
+		}
+		if n == 0 {
+			continue // no label at all, so services without such files keep compose's plain hash
+		}
+		if s.Labels == nil {
+			s.Labels = types.Labels{}
+		}
+		s.Labels[contentHashLabel] = hex.EncodeToString(h.Sum(nil))
+		p.Services[name] = s
+	}
+	return nil
+}
+
+func insideDir(dir, path string) bool {
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, "../")
 }
 
 // remember caches the deployed project's services so Status can report Missing ones.
