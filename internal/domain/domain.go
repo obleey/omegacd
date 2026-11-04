@@ -122,9 +122,21 @@ type Container struct {
 	Health   HealthStatus `json:"health"`
 }
 
+// Resource is a network or volume on the Host, or a file the Application's services read:
+// "env_file", "config", "secret" or "bind" (Name is then relative to the working dir).
 type Resource struct {
-	Kind string `json:"kind"` // "network", "volume"
-	Name string `json:"name"`
+	Kind     string   `json:"kind"` // "network", "volume", "env_file", "config", "secret", "bind"
+	Name     string   `json:"name"`
+	Services []string `json:"services,omitempty"` // services using it
+	Target   string   `json:"target,omitempty"`   // mount path in the container
+	Secret   bool     `json:"secret,omitempty"`   // content is never revealed
+}
+
+type ResourceDetail struct {
+	Resource
+	Content string            `json:"content,omitempty"`
+	Masked  bool              `json:"masked,omitempty"` // Content has its values replaced
+	Info    map[string]string `json:"info,omitempty"`
 }
 
 // LiveState is what runs on the Host for an Application.
@@ -256,6 +268,10 @@ type Engine interface {
 	ProjectExists(ctx context.Context, name string) (exists, managed bool, err error)
 	// Logs streams container logs (stdout+stderr, demultiplexed, with timestamps) to w until ctx ends or, if !follow, EOF.
 	Logs(ctx context.Context, containerID string, follow bool, tail int, w io.Writer) error
+	// ProjectFiles lists the env files, configs, secrets and bind mounts (inside dir) of the project in dir.
+	ProjectFiles(ctx context.Context, app Application, dir string) ([]Resource, error)
+	// Inspect describes a volume or network of the project.
+	Inspect(ctx context.Context, app Application, kind, name string) (map[string]string, error)
 	// Watch calls changed with a Compose project name whenever one of its containers changes state.
 	// It blocks, reconnecting as needed, until ctx ends.
 	Watch(ctx context.Context, changed func(project string)) error
@@ -279,6 +295,8 @@ type Controller interface {
 	History(ctx context.Context, name string) ([]SyncOperation, error)
 	Diff(ctx context.Context, name string) (DiffView, error)
 	Resources(ctx context.Context, name string) (LiveState, error)
+	// ResourceDetail describes one of the app's Resources; secret content is never returned.
+	ResourceDetail(ctx context.Context, name, kind, resName string) (ResourceDetail, error)
 	Logs(ctx context.Context, name, containerID string, follow bool, tail int, w io.Writer) error
 
 	// RepoChanged is called by webhooks: refresh every app on repoURL (matched loosely: scheme, .git suffix, case).

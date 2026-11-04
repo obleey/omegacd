@@ -54,6 +54,7 @@ func New(cfg Config) http.Handler {
 	mux.HandleFunc("GET /api/apps/{name}/history", s.history)
 	mux.HandleFunc("GET /api/apps/{name}/diff", s.diff)
 	mux.HandleFunc("GET /api/apps/{name}/resources", s.resources)
+	mux.HandleFunc("GET /api/apps/{name}/resource", s.resource)
 	mux.HandleFunc("GET /api/apps/{name}/export", s.export)
 	mux.HandleFunc("GET /api/apps/{name}/logs/{container}", s.logs)
 	mux.HandleFunc("GET /api/events", s.events)

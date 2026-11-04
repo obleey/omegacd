@@ -164,6 +164,13 @@ func (c *fakeController) Rollback(_ context.Context, name string, opID int64) (i
 	return opID + 1, nil
 }
 
+func (c *fakeController) ResourceDetail(_ context.Context, name, kind, res string) (domain.ResourceDetail, error) {
+	if name != "web" || kind != "config" || res != "nginx.conf" {
+		return domain.ResourceDetail{}, domain.ErrNotFound
+	}
+	return domain.ResourceDetail{Resource: domain.Resource{Kind: kind, Name: res}, Content: "server {}"}, nil
+}
+
 func (c *fakeController) RepoChanged(_ context.Context, url string) { c.changed <- url }
 
 func (c *fakeController) Subscribe() (<-chan domain.Event, func()) { return c.events, func() {} }
@@ -333,6 +340,15 @@ func TestAppsCRUD(t *testing.T) {
 	e.expect("DELETE", "/api/apps/web?cascade=true", "", 204)
 	e.expect("DELETE", "/api/apps/web", "", 404)
 	e.expect("GET", "/api/nothing", "", 404)
+}
+
+func TestResourceDetail(t *testing.T) {
+	e := newEnv(t, false)
+	e.login()
+	if b := e.expect("GET", "/api/apps/web/resource?kind=config&name=nginx.conf", "", 200); !strings.Contains(b, `"content":"server {}"`) {
+		t.Fatal(b)
+	}
+	e.expect("GET", "/api/apps/web/resource?kind=config&name=..%2Fetc%2Fpasswd", "", 404)
 }
 
 func TestEventsSSE(t *testing.T) {

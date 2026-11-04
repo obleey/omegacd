@@ -93,6 +93,12 @@ func (s *server) resources(w http.ResponseWriter, r *http.Request) {
 	respond(w, http.StatusOK, l, err)
 }
 
+func (s *server) resource(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	d, err := s.Controller.ResourceDetail(r.Context(), r.PathValue("name"), q.Get("kind"), q.Get("name"))
+	respond(w, http.StatusOK, d, err)
+}
+
 func (s *server) export(w http.ResponseWriter, r *http.Request) {
 	v, err := s.Controller.GetApp(r.Context(), r.PathValue("name"))
 	if err != nil {

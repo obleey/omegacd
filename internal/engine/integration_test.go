@@ -185,7 +185,7 @@ func TestLifecycle(t *testing.T) {
 			t.Errorf("extra container survived prune: %+v", c)
 		}
 	}
-	if !slices.Contains(ls.Resources, domain.Resource{Kind: "volume", Name: app.Name + "_cache"}) {
+	if !slices.ContainsFunc(ls.Resources, func(r domain.Resource) bool { return r.Kind == "volume" && r.Name == app.Name+"_cache" }) {
 		t.Errorf("cache volume pruned; resources = %+v", ls.Resources)
 	}
 	if !slices.Equal(ls.Services, []string{"once", "web"}) {
@@ -419,5 +419,76 @@ secrets:
 		if recreated := before != webID(); recreated != c.recreate {
 			t.Errorf("%s: recreated = %v, want %v", c.file, recreated, c.recreate)
 		}
+	}
+}
+
+func TestProjectFilesAndInspect(t *testing.T) {
+	ctx := context.Background()
+	e := newTestEngine(t)
+	app := testApp(t, e)
+	dir := t.TempDir()
+	write(t, dir, "compose.yaml", `
+services:
+  web:
+    image: busybox
+    command: ["sleep", "3600"]
+    env_file: [web.env]
+    volumes: [data:/data, ./site.conf:/etc/site.conf, ./html:/html, /tmp:/host-tmp]
+    configs: [{source: app, target: /etc/app.yaml}]
+    secrets: [pw]
+configs:
+  app: {file: ./app.yaml}
+secrets:
+  pw: {file: ./pw.txt}
+volumes:
+  data: {}
+`)
+	for _, f := range []string{".env", "web.env", "site.conf", "app.yaml", "pw.txt"} {
+		write(t, dir, f, "X=1\n")
+	}
+	if err := os.Mkdir(filepath.Join(dir, "html"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	files, err := e.ProjectFiles(ctx, app, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []domain.Resource{
+		{Kind: "bind", Name: "html", Services: []string{"web"}, Target: "/html"},
+		{Kind: "bind", Name: "site.conf", Services: []string{"web"}, Target: "/etc/site.conf"},
+		{Kind: "config", Name: "app.yaml", Services: []string{"web"}, Target: "/etc/app.yaml"},
+		{Kind: "env_file", Name: ".env"},
+		{Kind: "env_file", Name: "web.env", Services: []string{"web"}},
+		{Kind: "secret", Name: "pw.txt", Services: []string{"web"}, Target: "/run/secrets/pw", Secret: true},
+	}
+	if fmt.Sprint(files) != fmt.Sprint(want) {
+		t.Errorf("ProjectFiles =\n%+v\nwant\n%+v", files, want)
+	}
+
+	if err := e.Sync(ctx, app, dir, domain.SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	ls, err := e.Status(ctx, app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vol := app.Name + "_data"
+	if !slices.ContainsFunc(ls.Resources, func(r domain.Resource) bool { return r.Name == vol && slices.Equal(r.Services, []string{"web"}) }) {
+		t.Errorf("Status resources = %+v, want %s used by web", ls.Resources, vol)
+	}
+	info, err := e.Inspect(ctx, app, "volume", vol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info["driver"] != "local" || info["mountpoint"] == "" || !strings.Contains(info["containers"], app.Name+"-web-1") {
+		t.Errorf("Inspect volume = %+v", info)
+	}
+	info, err = e.Inspect(ctx, app, "network", app.Name+"_default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info["subnet"] == "" || !strings.Contains(info["containers"], app.Name+"-web-1") {
+		t.Errorf("Inspect network = %+v", info)
 	}
 }

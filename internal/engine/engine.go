@@ -397,7 +397,24 @@ func (e *Engine) Status(ctx context.Context, app domain.Application) (domain.Liv
 	}
 	ls := domain.LiveState{Containers: []domain.Container{}, Resources: []domain.Resource{}, Health: domain.Healthy}
 	seen := map[string]bool{}
+	usedBy := map[string][]string{} // "volume/x" or "network/x" -> services
+	use := func(key, svc string) {
+		if !slices.Contains(usedBy[key], svc) {
+			usedBy[key] = append(usedBy[key], svc)
+			slices.Sort(usedBy[key])
+		}
+	}
 	for _, c := range ctrs {
+		for _, m := range c.Mounts {
+			if m.Name != "" {
+				use("volume/"+m.Name, c.Labels[api.ServiceLabel])
+			}
+		}
+		if c.NetworkSettings != nil {
+			for n := range c.NetworkSettings.Networks {
+				use("network/"+n, c.Labels[api.ServiceLabel])
+			}
+		}
 		insp, err := e.cli.Client().ContainerInspect(ctx, c.ID, client.ContainerInspectOptions{})
 		if err != nil {
 			return domain.LiveState{}, fmt.Errorf("inspect container %s: %w", c.ID, err)
@@ -441,14 +458,14 @@ func (e *Engine) Status(ctx context.Context, app domain.Application) (domain.Liv
 		return domain.LiveState{}, fmt.Errorf("list networks: %w", err)
 	}
 	for _, n := range nets.Items {
-		ls.Resources = append(ls.Resources, domain.Resource{Kind: "network", Name: n.Name})
+		ls.Resources = append(ls.Resources, domain.Resource{Kind: "network", Name: n.Name, Services: usedBy["network/"+n.Name]})
 	}
 	vols, err := e.cli.Client().VolumeList(ctx, client.VolumeListOptions{Filters: projectFilter(app.Name)})
 	if err != nil {
 		return domain.LiveState{}, fmt.Errorf("list volumes: %w", err)
 	}
 	for _, v := range vols.Items {
-		ls.Resources = append(ls.Resources, domain.Resource{Kind: "volume", Name: v.Name})
+		ls.Resources = append(ls.Resources, domain.Resource{Kind: "volume", Name: v.Name, Services: usedBy["volume/"+v.Name]})
 	}
 	return ls, nil
 }

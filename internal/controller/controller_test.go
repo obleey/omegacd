@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -126,7 +129,9 @@ func (g *fakeGit) TreeHash(_ context.Context, _, sha, _ string) (string, error) 
 	defer g.mu.Unlock()
 	return "tree-" + sha, nil
 }
-func (g *fakeGit) Export(context.Context, string, string, string, string) error { return nil }
+func (g *fakeGit) Export(_ context.Context, _, _, _, dest string) error {
+	return os.WriteFile(filepath.Join(dest, "compose.yaml"), []byte("services: {}\n"), 0o644)
+}
 func (g *fakeGit) Diff(context.Context, string, string, string, string) (string, error) {
 	return "", nil
 }
@@ -146,6 +151,7 @@ type fakeEngine struct {
 	live    domain.LiveState
 	removed bool
 	changed func(string)
+	files   []domain.Resource
 }
 
 func (e *fakeEngine) Validate(context.Context, domain.Application, string) error { return nil }
@@ -168,6 +174,12 @@ func (e *fakeEngine) Status(context.Context, domain.Application) (domain.LiveSta
 }
 func (e *fakeEngine) ProjectExists(context.Context, string) (bool, bool, error) {
 	return e.exists, e.managed, nil
+}
+func (e *fakeEngine) ProjectFiles(context.Context, domain.Application, string) ([]domain.Resource, error) {
+	return slices.Clone(e.files), nil
+}
+func (e *fakeEngine) Inspect(_ context.Context, _ domain.Application, kind, name string) (map[string]string, error) {
+	return map[string]string{"inspected": kind + "/" + name}, nil
 }
 func (e *fakeEngine) Logs(context.Context, string, bool, int, io.Writer) error { return nil }
 func (e *fakeEngine) Watch(ctx context.Context, changed func(string)) error {
@@ -491,5 +503,108 @@ func TestDockerEventsRefreshHealthWithoutGitFetch(t *testing.T) {
 	defer r.g.mu.Unlock()
 	if r.g.resolves != before {
 		t.Fatalf("docker event caused %d git resolves", r.g.resolves-before)
+	}
+}
+
+func TestResourceDetail(t *testing.T) {
+	r := newRig(t)
+	r.st.apps["web"] = app("web")
+	dir := r.c.appDir("web")
+	outside := filepath.Join(r.c.cfg.WorkDir, "apps", "outside.txt")
+	for name, content := range map[string]string{
+		"plain.env": "A=1\n", "db.env": "USER=root\n# PASSWORD=hunter2\nexport PASSWORD=hunter2\nCERT=\"line1\nline2\"\n", "db.sops.env": "ENC[...]",
+		"app.yaml": "token: abc", "app.sops.yaml": "ENC[...]", "pw.txt": "hunter2",
+	} {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	os.WriteFile(outside, []byte("nope"), 0o600)
+	if err := os.Symlink(outside, filepath.Join(dir, "link.txt")); err != nil {
+		t.Fatal(err)
+	}
+	r.e.live.Resources = []domain.Resource{{Kind: "volume", Name: "web_data"}}
+	r.e.files = []domain.Resource{
+		{Kind: "env_file", Name: "plain.env"}, {Kind: "env_file", Name: "db.env"}, {Kind: "config", Name: "app.yaml"},
+		{Kind: "secret", Name: "pw.txt"}, {Kind: "bind", Name: "link.txt"}, {Kind: "bind", Name: "../outside.txt"},
+	}
+	get := func(kind, name string) (domain.ResourceDetail, error) {
+		return r.c.ResourceDetail(t.Context(), "web", kind, name)
+	}
+
+	for _, n := range []string{"nope.env", "../plain.env", "../../outside.txt"} {
+		if _, err := get("env_file", n); !errors.Is(err, domain.ErrNotFound) {
+			t.Errorf("%s: want ErrNotFound, got %v", n, err)
+		}
+	}
+	for _, n := range []string{"link.txt", "../outside.txt"} {
+		if _, err := get("bind", n); !errors.Is(err, domain.ErrInvalid) {
+			t.Errorf("%s: want ErrInvalid, got %v", n, err)
+		}
+	}
+	if d, err := get("env_file", "plain.env"); err != nil || d.Content != "A=1\n" || d.Secret || d.Masked {
+		t.Errorf("plain: %+v %v", d, err)
+	}
+	if d, err := get("env_file", "db.env"); err != nil || !d.Secret || !d.Masked || d.Content != "USER=••••\nPASSWORD=••••\nCERT=••••" {
+		t.Errorf("sops env: %+v %v", d, err)
+	}
+	for _, kr := range [][2]string{{"config", "app.yaml"}, {"secret", "pw.txt"}} {
+		d, err := get(kr[0], kr[1])
+		if err != nil || !d.Secret || d.Content != "" {
+			t.Errorf("%s: %+v %v", kr[1], d, err)
+		}
+	}
+	if d, err := get("volume", "web_data"); err != nil || d.Info["inspected"] != "volume/web_data" {
+		t.Errorf("volume: %+v %v", d, err)
+	}
+	live, _ := r.c.Resources(t.Context(), "web")
+	for _, res := range live.Resources {
+		if strings.Contains(res.Name, "pw") && !res.Secret {
+			t.Error("secret not flagged in Resources")
+		}
+	}
+}
+
+func TestUpdateResetsRetryBudget(t *testing.T) {
+	r := newRig(t)
+	ctx := t.Context()
+	r.e.syncErr = errors.New("compose file not found")
+	a := app("web")
+	a.AutoSync = true
+	r.c.CreateApp(ctx, a)
+	for range maxRetries {
+		r.waitIdle(t, "web")
+		r.c.mu.Lock()
+		r.c.apps["web"].nextRetry = time.Now().Add(-time.Second)
+		r.c.mu.Unlock()
+		r.c.Refresh(ctx, "web")
+	}
+	r.waitIdle(t, "web")
+	syncs := r.e.syncCount()
+
+	r.e.mu.Lock()
+	r.e.syncErr = nil
+	r.e.mu.Unlock()
+	a.Path = "apps/web" // the user fixes the settings
+	r.c.UpdateApp(ctx, a)
+	r.waitIdle(t, "web")
+	if r.e.syncCount() != syncs+1 {
+		t.Fatalf("fixed settings did not get a fresh auto-sync attempt: syncs %d -> %d", syncs, r.e.syncCount())
+	}
+}
+
+func TestMissingComposeFileExplainsPath(t *testing.T) {
+	r := newRig(t)
+	a := app("web")
+	a.ComposeFiles = []string{"missing.yaml"}
+	r.c.CreateApp(t.Context(), a)
+	r.c.Sync(t.Context(), "web")
+	r.waitIdle(t, "web")
+	ops, _ := r.st.ListOps(t.Context(), "web")
+	if ops[0].Phase != domain.OpFailed || !strings.Contains(ops[0].Message, `compose file "missing.yaml" not found in path "/"`) {
+		t.Fatalf("op = %s %q", ops[0].Phase, ops[0].Message)
 	}
 }

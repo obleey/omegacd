@@ -3,10 +3,12 @@
 package controller
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -381,6 +383,12 @@ func (c *Controller) apply(ctx context.Context, a domain.Application, op domain.
 	if _, err := c.cfg.Secrets.DecryptDir(dir); err != nil {
 		return fmt.Errorf("decrypt secrets: %w", err)
 	}
+	for _, f := range a.ComposeFiles {
+		if _, err := os.Stat(filepath.Join(dir, f)); errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("%w: compose file %q not found in path %q of the repository at %s; check the Application's Path and Compose files",
+				domain.ErrInvalid, f, cmp.Or(a.Path, "/"), short(op.Revision))
+		}
+	}
 	if err := c.cfg.Engine.Validate(ctx, a, dir); err != nil {
 		return err
 	}
@@ -504,6 +512,11 @@ func (c *Controller) UpdateApp(ctx context.Context, a domain.Application) (domai
 	if err := c.cfg.Store.UpdateApp(ctx, a); err != nil {
 		return domain.AppView{}, err
 	}
+	// new settings deserve a fresh retry budget: earlier failures may have been caused by the old ones
+	c.mu.Lock()
+	s := c.state(a.Name)
+	s.retries, s.nextRetry, s.failedTree = 0, time.Time{}, ""
+	c.mu.Unlock()
 	return c.reconcile(ctx, a), nil
 }
 
@@ -623,11 +636,135 @@ func (c *Controller) Resources(ctx context.Context, name string) (domain.LiveSta
 	if err != nil {
 		return domain.LiveState{}, err
 	}
-	return c.cfg.Engine.Status(ctx, a)
+	live, err := c.cfg.Engine.Status(ctx, a)
+	if err != nil {
+		return domain.LiveState{}, err
+	}
+	dir := c.appDir(name)
+	if _, err := os.Stat(dir); err != nil {
+		return live, nil // never synced
+	}
+	files, err := c.cfg.Engine.ProjectFiles(ctx, a, dir)
+	if err != nil {
+		c.cfg.Log.Warn("list project files", "app", name, "err", err)
+	}
+	for _, f := range files {
+		f.Secret = f.Secret || f.Kind == "secret" || decrypted(filepath.Join(dir, f.Name))
+		live.Resources = append(live.Resources, f)
+	}
+	return live, nil
+}
+
+const maxResourceContent = 256 << 10
+
+// ResourceDetail only serves Resources listed by Resources, which is what keeps it from reading arbitrary paths.
+func (c *Controller) ResourceDetail(ctx context.Context, name, kind, resName string) (domain.ResourceDetail, error) {
+	live, err := c.Resources(ctx, name)
+	if err != nil {
+		return domain.ResourceDetail{}, err
+	}
+	i := slices.IndexFunc(live.Resources, func(r domain.Resource) bool { return r.Kind == kind && r.Name == resName })
+	if i < 0 {
+		return domain.ResourceDetail{}, fmt.Errorf("%s %q: %w", kind, resName, domain.ErrNotFound)
+	}
+	d := domain.ResourceDetail{Resource: live.Resources[i], Info: map[string]string{}}
+	if kind == "volume" || kind == "network" {
+		a, err := c.cfg.Store.GetApp(ctx, name)
+		if err != nil {
+			return domain.ResourceDetail{}, err
+		}
+		d.Info, err = c.cfg.Engine.Inspect(ctx, a, kind, resName)
+		return d, err
+	}
+
+	path, err := c.resolveInAppDir(name, resName)
+	if err != nil {
+		return domain.ResourceDetail{}, err
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		return domain.ResourceDetail{}, err
+	}
+	d.Info["modified"] = fi.ModTime().Format(time.RFC3339)
+	if fi.IsDir() {
+		d.Info["type"] = "directory"
+		return d, nil
+	}
+	d.Info["type"] = "file"
+	d.Info["size"] = fmt.Sprintf("%d bytes", fi.Size())
+	if d.Secret && kind != "env_file" {
+		return d, nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return domain.ResourceDetail{}, err
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, maxResourceContent+1))
+	if err != nil {
+		return domain.ResourceDetail{}, err
+	}
+	if len(b) > maxResourceContent {
+		b = b[:maxResourceContent]
+		d.Info["truncated"] = "showing the first 256 KiB"
+	}
+	d.Content = string(b)
+	if d.Secret {
+		d.Content, d.Masked = maskEnv(d.Content), true
+	}
+	return d, nil
+}
+
+// resolveInAppDir joins rel to the app's working dir and refuses anything resolving outside it, symlinks included.
+func (c *Controller) resolveInAppDir(name, rel string) (string, error) {
+	dir, err := filepath.EvalSymlinks(c.appDir(name))
+	if err != nil {
+		return "", err
+	}
+	outside := func(path string) bool {
+		r, err := filepath.Rel(dir, path)
+		return err != nil || r == ".." || strings.HasPrefix(r, "../")
+	}
+	path := filepath.Join(dir, rel)
+	if outside(path) {
+		return "", fmt.Errorf("%w: %q is outside the working directory", domain.ErrInvalid, rel)
+	}
+	if path, err = filepath.EvalSymlinks(path); err != nil {
+		return "", err
+	}
+	if outside(path) {
+		return "", fmt.Errorf("%w: %q links outside the working directory", domain.ErrInvalid, rel)
+	}
+	return path, nil
+}
+
+// decrypted reports whether path was written by Secrets.DecryptDir from a sibling "x.sops.ext".
+func decrypted(path string) bool {
+	entries, _ := os.ReadDir(filepath.Dir(path))
+	return slices.ContainsFunc(entries, func(e os.DirEntry) bool {
+		return strings.Contains(e.Name(), ".sops.") && strings.Replace(e.Name(), ".sops.", ".", 1) == filepath.Base(path)
+	})
+}
+
+var envKey = regexp.MustCompile(`^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_.-]*)\s*=`)
+
+// maskEnv keeps only the keys of an env file; any other line could be part of a multi-line value.
+func maskEnv(s string) string {
+	var out []string
+	for line := range strings.Lines(s) {
+		if m := envKey.FindStringSubmatch(line); m != nil {
+			out = append(out, m[1]+"=••••")
+		}
+	}
+	return strings.Join(out, "\n")
 }
 
 func (c *Controller) Logs(ctx context.Context, name, containerID string, follow bool, tail int, w io.Writer) error {
-	live, err := c.Resources(ctx, name)
+	a, err := c.cfg.Store.GetApp(ctx, name)
+	if err != nil {
+		return err
+	}
+	live, err := c.cfg.Engine.Status(ctx, a)
 	if err != nil {
 		return err
 	}

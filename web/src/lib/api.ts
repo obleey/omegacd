@@ -70,8 +70,22 @@ export interface Container {
 export interface LiveState {
 	services: string[] | null;
 	containers: Container[] | null;
-	resources: { kind: string; name: string }[] | null;
+	resources: Resource[] | null;
 	health: HealthStatus;
+}
+
+export interface Resource {
+	kind: 'network' | 'volume' | 'env_file' | 'config' | 'secret' | 'bind';
+	name: string;
+	services?: string[];
+	target?: string;
+	secret?: boolean;
+}
+
+export interface ResourceDetail extends Resource {
+	content?: string;
+	masked?: boolean;
+	info?: Record<string, string>;
 }
 
 export interface ProgressEvent {
