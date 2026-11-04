@@ -26,6 +26,7 @@
 	import { toastError } from '#lib/toast.svelte.ts';
 	import AppForm from '#lib/AppForm.svelte';
 	import { refreshApp } from '#lib/actions.ts';
+	import RefreshNote from '#lib/RefreshNote.svelte';
 	import Resources from '#lib/app/Resources.svelte';
 	import Diff from '#lib/app/Diff.svelte';
 	import History from '#lib/app/History.svelte';
@@ -198,6 +199,7 @@
 			<div class="actions">
 				<button class="primary" onclick={openSync} disabled={!!busy || running}><Icon name="sync" size={15} spin={running} />{running ? 'Syncing…' : 'Sync'}</button>
 				<button onclick={refresh} disabled={!!busy}><Icon name="refresh" size={15} spin={busy === 'refresh'} />Refresh</button>
+				<RefreshNote app={name} />
 				<button onclick={() => (editing = !editing)} aria-expanded={editing} disabled={!!app.parent} title={app.parent ? 'Settings of a Child Application are owned by Git' : undefined}><Icon name="edit" size={15} />Edit</button>
 				<a class="btn" href="/api/apps/{enc(app.name)}/export" download="{app.name}.yaml"><Icon name="download" size={15} />Export YAML</a>
 				<button class="danger" onclick={() => (delOpen = true)} disabled={!!busy || !canDelete}><Icon name="trash" size={15} />Delete</button>

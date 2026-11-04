@@ -1,5 +1,6 @@
 import { prefersReducedMotion } from 'svelte/motion';
 import type { AppView } from './api.ts';
+import { live } from './live.svelte.ts';
 import type { IconName } from './Icon.svelte';
 
 export type Tone = 'green' | 'yellow' | 'red' | 'blue' | 'overlay';
@@ -11,6 +12,8 @@ export const statusMeta: Record<string, [Tone, IconName, boolean?]> = {
 	OutOfSync: ['yellow', 'arrow-circle'],
 	Unknown: ['overlay', 'question'],
 	Syncing: ['blue', 'sync', true],
+	Done: ['green', 'check-circle'], // briefly, right after a Sync succeeded
+	'Sync failed': ['red', 'x-circle'], // briefly, right after a Sync failed
 	// Health Status
 	Healthy: ['green', 'heart'],
 	Progressing: ['blue', 'notch', true],
@@ -36,7 +39,7 @@ export const meta = (s?: string) => statusMeta[s ?? ''] ?? statusMeta.Unknown;
 
 export const isSyncing = (a?: AppView) => a?.lastOperation?.phase === 'Running';
 /** Sync Status as shown: "Syncing" while a Sync Operation runs. */
-export const shownSync = (a: AppView) => (isSyncing(a) ? 'Syncing' : a.syncStatus || 'Unknown');
+export const shownSync = (a: AppView) => (isSyncing(a) ? 'Syncing' : (live.finished[a.name] ?? (a.syncStatus || 'Unknown')));
 
 /** One color summarising an Application, worst signal first (tile status bar). */
 export function appTone(a: AppView): Tone {

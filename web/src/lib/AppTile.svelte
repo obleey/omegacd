@@ -4,6 +4,7 @@
 	import Icon from './Icon.svelte';
 	import { appTone, isSyncing, shownSync } from './status.ts';
 	import { refreshApp, syncApp } from './actions.ts';
+	import RefreshNote from './RefreshNote.svelte';
 	import PolicyChips from './PolicyChips.svelte';
 
 	let { a, kids }: { a: AppView; kids?: number } = $props();
@@ -61,6 +62,7 @@
 		<button class="sm ghost" onclick={() => run('refresh')} disabled={!!busy} aria-label="Refresh {a.name}">
 			<Icon name="refresh" size={14} spin={busy === 'refresh'} />Refresh
 		</button>
+		<RefreshNote app={a.name} />
 	</footer>
 </article>
 

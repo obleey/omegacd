@@ -10,8 +10,22 @@ export const live = $state({
 	/** newest op seen per Application, from "op" events */
 	ops: {} as Record<string, SyncOperation>,
 	/** progress lines per op ID, from "progress" events */
-	progress: {} as Record<number, ProgressEvent[]>
+	progress: {} as Record<number, ProgressEvent[]>,
+	/** a Sync that just finished, shown as ✓/✗ for a moment before the normal status */
+	finished: {} as Record<string, 'Done' | 'Sync failed'>,
+	/** a short note after Refresh: "Up to date", "New revision …" */
+	notes: {} as Record<string, { text: string; tone: 'green' | 'yellow' | 'blue'; id: number }>
 });
+
+let noteSeq = 0;
+/** Shows a transient note for an Application (cleared after ms unless replaced). */
+export function note(app: string, text: string, tone: 'green' | 'yellow' | 'blue', ms = 2600) {
+	const id = ++noteSeq;
+	live.notes[app] = { text, tone, id };
+	setTimeout(() => {
+		if (live.notes[app]?.id === id) delete live.notes[app];
+	}, ms);
+}
 
 export async function loadApps() {
 	const list = await get<AppView[]>('/apps');
@@ -57,7 +71,13 @@ export function connectEvents() {
 	es.addEventListener('op', (e) => {
 		const op = unwrap(e.data).data as SyncOperation;
 		const prev = live.ops[op.app];
-		if (prev?.id !== op.id || prev.phase !== op.phase) opToast(op);
+		if (prev?.id !== op.id || prev.phase !== op.phase) {
+			opToast(op);
+			if (op.phase !== 'Running') {
+				live.finished[op.app] = op.phase === 'Failed' ? 'Sync failed' : 'Done';
+				setTimeout(() => delete live.finished[op.app], 1600);
+			}
+		}
 		live.ops[op.app] = op;
 		const a = live.apps[op.app];
 		if (a) a.lastOperation = op;
