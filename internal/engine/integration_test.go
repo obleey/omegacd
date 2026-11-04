@@ -286,8 +286,17 @@ services:
 	if _, err := e.local().cli.Client().ContainerStop(ctx, ls.Containers[0].ID, client.ContainerStopOptions{Timeout: &timeout}); err != nil {
 		t.Fatal(err)
 	}
+	// the container list can lag the stop call (seen on GitHub-hosted runners); wait until Docker reports it
+	var state string
+	for deadline := time.Now().Add(15 * time.Second); time.Now().Before(deadline); time.Sleep(200 * time.Millisecond) {
+		if ls, _ = e.Status(ctx, app); len(ls.Containers) == 1 {
+			if state = ls.Containers[0].State; state != "running" {
+				break
+			}
+		}
+	}
 	if diffs, _ := e.Diff(ctx, app, dir, ""); len(diffs) != 1 || diffs[0].Change != "stopped" {
-		t.Fatalf("Diff = %+v; want web stopped", diffs)
+		t.Fatalf("Diff = %+v (container state %q); want web stopped", diffs, state)
 	}
 	if ls, _ = e.Status(ctx, app); ls.Health != domain.Degraded {
 		t.Fatalf("Health = %s; want Degraded", ls.Health)
