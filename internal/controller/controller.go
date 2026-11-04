@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/obleey/dockercd/internal/appdef"
 	"github.com/obleey/dockercd/internal/domain"
 )
 
@@ -49,6 +50,7 @@ type Config struct {
 type appState struct {
 	view       domain.AppView
 	syncing    bool
+	deleting   bool // set before a delete touches containers, so nothing re-syncs the app meanwhile
 	targetTree string
 	drift      bool
 	retries    int
@@ -162,7 +164,15 @@ func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fe
 		v.LastOperation = &ops[0]
 	}
 
-	if live, err := c.cfg.Engine.Status(ctx, a); err == nil {
+	var children []domain.Application
+	if a.Kind == domain.KindApps {
+		if children, err = c.children(ctx, a.Name); err != nil {
+			c.cfg.Log.Warn("list child applications", "app", a.Name, "err", err)
+		}
+		c.mu.Lock()
+		v.Health = c.worstHealth(children)
+		c.mu.Unlock()
+	} else if live, err := c.cfg.Engine.Status(ctx, a); err == nil {
 		v.Health = live.Health
 	} else {
 		c.cfg.Log.Warn("live state", "app", a.Name, "err", err)
@@ -179,6 +189,18 @@ func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fe
 		v.SyncStatus, v.SyncMessage = domain.OutOfSync, "never synced"
 	case targetTree != last.TreeHash:
 		v.SyncStatus, v.SyncMessage = domain.OutOfSync, "new revision "+short(sha)
+	case a.Kind == domain.KindApps:
+		var gone []string
+		for _, ch := range children {
+			if ch.NotInGit {
+				gone = append(gone, ch.Name)
+			}
+		}
+		v.SyncStatus = domain.Synced
+		if len(gone) > 0 {
+			drift = true
+			v.SyncStatus, v.SyncMessage = domain.OutOfSync, "not in Git: "+strings.Join(gone, ", ")
+		}
 	default:
 		diffs, derr := c.cfg.Engine.Diff(ctx, a, c.appDir(a.Name), "")
 		switch {
@@ -206,6 +228,9 @@ func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fe
 	trigger := c.autoTrigger(a, s, v)
 	c.mu.Unlock()
 	c.emit(domain.Event{Type: "app", App: a.Name, Data: v})
+	if a.Parent != "" {
+		c.refreshParent(ctx, a.Parent)
+	}
 
 	if trigger != "" {
 		if _, err := c.startSync(a, sha, trigger); err != nil && !errors.Is(err, domain.ErrBusy) {
@@ -255,7 +280,7 @@ func (c *Controller) watch(ctx context.Context) {
 			mu.Unlock()
 			c.mu.Lock()
 			st, ok := c.apps[project]
-			busy := ok && st.syncing
+			busy := ok && (st.syncing || st.deleting)
 			c.mu.Unlock()
 			if busy {
 				return // the Sync reconciles when it finishes
@@ -272,7 +297,7 @@ func (c *Controller) watch(ctx context.Context) {
 
 // autoTrigger decides whether policy wants a Sync now. Caller holds c.mu.
 func (c *Controller) autoTrigger(a domain.Application, s *appState, v domain.AppView) string {
-	if !a.AutoSync || a.RolledBack || s.syncing || v.SyncStatus != domain.OutOfSync {
+	if !a.AutoSync || a.RolledBack || s.syncing || s.deleting || v.SyncStatus != domain.OutOfSync {
 		return ""
 	}
 	if s.targetTree == s.failedTree {
@@ -282,7 +307,8 @@ func (c *Controller) autoTrigger(a domain.Application, s *appState, v domain.App
 		return ""
 	}
 	if s.drift {
-		if a.SelfHeal {
+		// an App of Apps only drifts by children kept without Prune; syncing again would not change that
+		if a.SelfHeal && a.Kind != domain.KindApps {
 			return "self-heal"
 		}
 		return ""
@@ -299,12 +325,17 @@ func (c *Controller) startSync(a domain.Application, sha, trigger string) (int64
 	}
 	c.mu.Lock()
 	s := c.state(a.Name)
-	if s.syncing {
+	if s.syncing || s.deleting {
 		c.mu.Unlock()
 		return 0, domain.ErrBusy
 	}
 	s.syncing = true
 	c.mu.Unlock()
+	// a reconcile that started before a delete finished must not resurrect the app
+	if _, err := c.cfg.Store.GetApp(ctx, a.Name); err != nil {
+		c.setSyncing(a.Name, false)
+		return 0, err
+	}
 
 	op := domain.SyncOperation{App: a.Name, Revision: sha, TreeHash: tree, Phase: domain.OpRunning, Trigger: trigger, StartedAt: time.Now()}
 	id, err := c.cfg.Store.CreateOp(ctx, op)
@@ -372,8 +403,10 @@ func (c *Controller) runSync(a domain.Application, op domain.SyncOperation) {
 
 // apply materialises the Revision into the Application's working dir and brings the project up.
 func (c *Controller) apply(ctx context.Context, a domain.Application, op domain.SyncOperation) error {
-	if err := c.refuseSelf(ctx, a); err != nil {
-		return err
+	if a.Kind == domain.KindCompose {
+		if err := c.refuseSelf(ctx, a); err != nil {
+			return err
+		}
 	}
 	dir := c.appDir(a.Name)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
@@ -381,6 +414,9 @@ func (c *Controller) apply(ctx context.Context, a domain.Application, op domain.
 	}
 	if err := c.cfg.Git.Export(ctx, a.RepoURL, op.Revision, a.Path, dir); err != nil {
 		return fmt.Errorf("export: %w", err)
+	}
+	if a.Kind == domain.KindApps {
+		return c.syncChildren(ctx, a, dir)
 	}
 	if _, err := c.cfg.Secrets.DecryptDir(dir); err != nil {
 		return fmt.Errorf("decrypt secrets: %w", err)
@@ -483,25 +519,36 @@ func (c *Controller) cachedView(ctx context.Context, a domain.Application) domai
 }
 
 func (c *Controller) CreateApp(ctx context.Context, a domain.Application) (domain.AppView, error) {
-	if err := normalize(&a); err != nil {
+	a.Parent, a.NotInGit = "", false
+	if err := c.checkNew(ctx, &a); err != nil {
 		return domain.AppView{}, err
 	}
-	if err := c.checkHost(ctx, a.Host); err != nil {
-		return domain.AppView{}, err
-	}
-	exists, managed, err := c.cfg.Engine.ProjectExists(ctx, a.Host, a.Name)
-	if err != nil {
-		return domain.AppView{}, err
-	}
-	if exists && !managed && !a.Adopt {
-		return domain.AppView{}, domain.ErrUnmanaged
-	}
-	a.CreatedAt = time.Now()
-	a.RolledBack = false
 	if err := c.cfg.Store.CreateApp(ctx, a); err != nil {
 		return domain.AppView{}, err
 	}
 	return c.reconcile(ctx, a), nil
+}
+
+// checkNew normalizes an Application about to be created and checks it may be.
+func (c *Controller) checkNew(ctx context.Context, a *domain.Application) error {
+	if err := normalize(a); err != nil {
+		return err
+	}
+	if err := c.checkHost(ctx, a.Host); err != nil {
+		return err
+	}
+	if a.Kind == domain.KindCompose {
+		exists, managed, err := c.cfg.Engine.ProjectExists(ctx, a.Host, a.Name)
+		if err != nil {
+			return err
+		}
+		if exists && !managed && !a.Adopt {
+			return domain.ErrUnmanaged
+		}
+	}
+	a.CreatedAt = time.Now()
+	a.RolledBack = false
+	return nil
 }
 
 func (c *Controller) UpdateApp(ctx context.Context, a domain.Application) (domain.AppView, error) {
@@ -509,23 +556,45 @@ func (c *Controller) UpdateApp(ctx context.Context, a domain.Application) (domai
 	if err != nil {
 		return domain.AppView{}, err
 	}
+	if old.Parent != "" {
+		return domain.AppView{}, fmt.Errorf("%w: managed by App of Apps %q; change it in Git", domain.ErrInvalid, old.Parent)
+	}
+	a.Kind = cmp.Or(a.Kind, old.Kind)
 	if err := normalize(&a); err != nil {
 		return domain.AppView{}, err
 	}
+	if a.Kind != old.Kind {
+		return domain.AppView{}, fmt.Errorf("%w: the kind of an Application cannot be changed", domain.ErrInvalid)
+	}
+	if err := checkUpdate(old, &a); err != nil {
+		return domain.AppView{}, err
+	}
+	if err := c.saveUpdate(ctx, a); err != nil {
+		return domain.AppView{}, err
+	}
+	return c.reconcile(ctx, a), nil
+}
+
+// checkUpdate carries over what an update may not change.
+func checkUpdate(old domain.Application, a *domain.Application) error {
 	if a.Host != old.Host {
-		return domain.AppView{}, fmt.Errorf("%w: delete and recreate the Application to move it to another Host", domain.ErrInvalid)
+		return fmt.Errorf("%w: delete and recreate the Application %q to move it to another Host", domain.ErrInvalid, a.Name)
 	}
 	a.CreatedAt, a.Adopt = old.CreatedAt, old.Adopt
 	a.RolledBack = old.RolledBack && !a.AutoSync
+	return nil
+}
+
+func (c *Controller) saveUpdate(ctx context.Context, a domain.Application) error {
 	if err := c.cfg.Store.UpdateApp(ctx, a); err != nil {
-		return domain.AppView{}, err
+		return err
 	}
 	// new settings deserve a fresh retry budget: earlier failures may have been caused by the old ones
 	c.mu.Lock()
 	s := c.state(a.Name)
 	s.retries, s.nextRetry, s.failedTree = 0, time.Time{}, ""
 	c.mu.Unlock()
-	return c.reconcile(ctx, a), nil
+	return nil
 }
 
 func (c *Controller) DeleteApp(ctx context.Context, name string, cascade bool) error {
@@ -533,27 +602,74 @@ func (c *Controller) DeleteApp(ctx context.Context, name string, cascade bool) e
 	if err != nil {
 		return err
 	}
+	if a.Parent != "" && !a.NotInGit {
+		return fmt.Errorf("%w: managed by App of Apps %q; remove it from Git", domain.ErrInvalid, a.Parent)
+	}
+	if err := c.deleteApp(ctx, a, cascade); err != nil {
+		return err
+	}
+	if a.Parent != "" {
+		c.refreshParent(ctx, a.Parent)
+	}
+	return nil
+}
+
+// deleteApp deletes a; for an App of Apps, cascade deletes its children too and otherwise orphans them.
+func (c *Controller) deleteApp(ctx context.Context, a domain.Application, cascade bool) error {
 	c.mu.Lock()
-	if s, ok := c.apps[name]; ok && s.syncing {
+	s := c.state(a.Name)
+	if s.syncing || s.deleting {
 		c.mu.Unlock()
 		return domain.ErrBusy
 	}
+	s.deleting = true
 	c.mu.Unlock()
-	if cascade {
-		if err := c.cfg.Engine.Remove(ctx, a); err != nil {
+	if err := c.deleteAppLocked(ctx, a, cascade); err != nil {
+		c.mu.Lock()
+		s.deleting = false
+		c.mu.Unlock()
+		return err
+	}
+	return nil
+}
+
+func (c *Controller) deleteAppLocked(ctx context.Context, a domain.Application, cascade bool) error {
+	if a.Kind == domain.KindApps {
+		children, err := c.children(ctx, a.Name)
+		if err != nil {
 			return err
 		}
-		if err := os.RemoveAll(c.appDir(name)); err != nil {
+		for _, ch := range children {
+			if cascade {
+				err = c.deleteApp(ctx, ch, true)
+			} else {
+				ch.Parent, ch.NotInGit = "", false
+				if err = c.cfg.Store.UpdateApp(ctx, ch); err == nil {
+					c.reconcileWith(ctx, ch, false)
+				}
+			}
+			if err != nil {
+				return fmt.Errorf("application %q: %w", ch.Name, err)
+			}
+		}
+	}
+	if cascade {
+		if a.Kind == domain.KindCompose {
+			if err := c.cfg.Engine.Remove(ctx, a); err != nil {
+				return err
+			}
+		}
+		if err := os.RemoveAll(c.appDir(a.Name)); err != nil {
 			return err
 		}
 	}
-	if err := c.cfg.Store.DeleteApp(ctx, name); err != nil {
+	if err := c.cfg.Store.DeleteApp(ctx, a.Name); err != nil {
 		return err
 	}
 	c.mu.Lock()
-	delete(c.apps, name)
+	delete(c.apps, a.Name)
 	c.mu.Unlock()
-	c.emit(domain.Event{Type: "app-deleted", App: name, Data: name})
+	c.emit(domain.Event{Type: "app-deleted", App: a.Name, Data: a.Name})
 	return nil
 }
 
@@ -562,6 +678,7 @@ func (c *Controller) Sync(ctx context.Context, name string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	c.cfg.Git.Invalidate(a.RepoURL)
 	sha, err := c.cfg.Git.Resolve(ctx, a.RepoURL, a.TargetRevision)
 	if err != nil {
 		return 0, err
@@ -578,6 +695,10 @@ func (c *Controller) Rollback(ctx context.Context, name string, opID int64) (int
 	if err != nil {
 		return 0, err
 	}
+	if a.Parent != "" {
+		return 0, fmt.Errorf("%w: Child Application %s is managed by App of Apps %s; pin targetRevision in Git (or roll back %s) instead",
+			domain.ErrInvalid, name, a.Parent, a.Parent)
+	}
 	if op.App != name || op.Phase != domain.OpSucceeded {
 		return 0, fmt.Errorf("%w: can only roll back to a succeeded sync of this application", domain.ErrInvalid)
 	}
@@ -593,6 +714,7 @@ func (c *Controller) Refresh(ctx context.Context, name string) (domain.AppView, 
 	if err != nil {
 		return domain.AppView{}, err
 	}
+	c.cfg.Git.Invalidate(a.RepoURL)
 	return c.reconcile(ctx, a), nil
 }
 
@@ -610,6 +732,7 @@ func (c *Controller) Diff(ctx context.Context, name string) (domain.DiffView, er
 	if err != nil {
 		return domain.DiffView{}, err
 	}
+	c.cfg.Git.Invalidate(a.RepoURL)
 	to, err := c.cfg.Git.Resolve(ctx, a.RepoURL, a.TargetRevision)
 	if err != nil {
 		return domain.DiffView{}, err
@@ -630,6 +753,10 @@ func (c *Controller) Diff(ctx context.Context, name string) (domain.DiffView, er
 	if err := c.cfg.Git.Export(ctx, a.RepoURL, to, a.Path, stage); err != nil {
 		return domain.DiffView{}, err
 	}
+	if a.Kind == domain.KindApps {
+		dv.Services, err = c.childDiff(ctx, a.Name, stage)
+		return dv, err
+	}
 	if _, err := c.cfg.Secrets.DecryptDir(stage); err != nil {
 		return domain.DiffView{}, err
 	}
@@ -643,6 +770,10 @@ func (c *Controller) Resources(ctx context.Context, name string) (domain.LiveSta
 	a, err := c.cfg.Store.GetApp(ctx, name)
 	if err != nil {
 		return domain.LiveState{}, err
+	}
+	if a.Kind == domain.KindApps {
+		// its children are Applications of their own, listed with ListApps
+		return domain.LiveState{Services: []string{}, Containers: []domain.Container{}, Resources: []domain.Resource{}, Health: c.cachedView(ctx, a).Health}, nil
 	}
 	live, err := c.cfg.Engine.Status(ctx, a)
 	if err != nil {
@@ -784,6 +915,7 @@ func (c *Controller) Logs(ctx context.Context, name, containerID string, follow 
 
 func (c *Controller) RepoChanged(ctx context.Context, repoURL string) {
 	want := c.cfg.NormalizeURL(repoURL)
+	c.cfg.Git.Invalidate(repoURL)
 	apps, err := c.cfg.Store.ListApps(ctx)
 	if err != nil {
 		c.cfg.Log.Error("list applications", "err", err)
@@ -830,6 +962,10 @@ func normalize(a *domain.Application) error {
 	if a.Path == "." {
 		a.Path = ""
 	}
+	a.Kind = cmp.Or(a.Kind, domain.KindCompose)
+	if a.Kind != domain.KindCompose && a.Kind != domain.KindApps {
+		return fmt.Errorf("%w: kind must be %q or %q", domain.ErrInvalid, domain.KindCompose, domain.KindApps)
+	}
 	if !nameRE.MatchString(a.Name) {
 		return fmt.Errorf("%w: name must be lowercase letters, digits, '-' or '_'", domain.ErrInvalid)
 	}
@@ -842,7 +978,11 @@ func normalize(a *domain.Application) error {
 	if a.TargetRevision == "" {
 		a.TargetRevision = "main"
 	}
-	if len(a.ComposeFiles) == 0 {
+	a.Host = cmp.Or(strings.TrimSpace(a.Host), domain.LocalHost)
+	if a.Kind == domain.KindApps {
+		// an App of Apps deploys nothing itself
+		a.ComposeFiles, a.Profiles, a.Host = nil, nil, domain.LocalHost
+	} else if len(a.ComposeFiles) == 0 {
 		a.ComposeFiles = []string{"compose.yaml"}
 	}
 	for _, f := range a.ComposeFiles {
@@ -850,7 +990,6 @@ func normalize(a *domain.Application) error {
 			return fmt.Errorf("%w: compose file %q must be relative to the path", domain.ErrInvalid, f)
 		}
 	}
-	a.Host = cmp.Or(strings.TrimSpace(a.Host), domain.LocalHost)
 	return nil
 }
 
@@ -863,6 +1002,187 @@ func (c *Controller) checkHost(ctx context.Context, name string) error {
 		return fmt.Errorf("%w: host %q does not exist", domain.ErrInvalid, name)
 	}
 	return err
+}
+
+// ---- App of Apps ----
+
+func (c *Controller) children(ctx context.Context, parent string) ([]domain.Application, error) {
+	apps, err := c.cfg.Store.ListApps(ctx)
+	return slices.DeleteFunc(apps, func(a domain.Application) bool { return a.Parent != parent }), err
+}
+
+var healthOrder = []domain.HealthStatus{domain.Healthy, domain.Progressing, domain.Missing, domain.Degraded}
+
+// worstHealth is the worst last-known Health of children; Missing when there are none. Caller holds c.mu.
+func (c *Controller) worstHealth(children []domain.Application) domain.HealthStatus {
+	if len(children) == 0 {
+		return domain.Missing
+	}
+	worst := domain.Healthy
+	for _, ch := range children {
+		h := domain.Missing
+		if s, ok := c.apps[ch.Name]; ok && !s.view.ReconciledAt.IsZero() {
+			h = s.view.Health
+		}
+		if slices.Index(healthOrder, h) > slices.Index(healthOrder, worst) {
+			worst = h
+		}
+	}
+	return worst
+}
+
+// refreshParent recomputes an App of Apps' Health from its children's cached views and publishes it.
+func (c *Controller) refreshParent(ctx context.Context, name string) {
+	children, err := c.children(ctx, name)
+	if err != nil {
+		return
+	}
+	c.mu.Lock()
+	s, ok := c.apps[name]
+	if !ok || s.view.ReconciledAt.IsZero() {
+		c.mu.Unlock()
+		return
+	}
+	s.view.Health = c.worstHealth(children)
+	v := s.view
+	c.mu.Unlock()
+	c.emit(domain.Event{Type: "app", App: name, Data: v})
+}
+
+// syncChildren makes parent's Child Applications match the definitions in dir.
+// Every definition is validated before anything is changed.
+func (c *Controller) syncChildren(ctx context.Context, parent domain.Application, dir string) error {
+	defs, err := appdef.Parse(dir)
+	if err != nil {
+		return err
+	}
+	apps, err := c.cfg.Store.ListApps(ctx)
+	if err != nil {
+		return err
+	}
+	existing := map[string]domain.Application{}
+	for _, a := range apps {
+		existing[a.Name] = a
+	}
+	declared := map[string]bool{}
+	var creates, updates []domain.Application
+	for _, d := range defs {
+		d.Parent = parent.Name
+		old, ok := existing[d.Name]
+		if ok && old.Parent != parent.Name {
+			return fmt.Errorf("%w: application %q already exists and is not managed by %q", domain.ErrInvalid, d.Name, parent.Name)
+		}
+		if !ok {
+			err = c.checkNew(ctx, &d)
+		} else if err = normalize(&d); err == nil {
+			if err = c.checkHost(ctx, d.Host); err == nil {
+				err = checkUpdate(old, &d)
+			}
+		}
+		if err != nil {
+			return fmt.Errorf("application %q: %w", d.Name, err)
+		}
+		declared[d.Name] = true
+		switch {
+		case !ok:
+			creates = append(creates, d)
+		case old.NotInGit || len(changedFields(old, d)) > 0:
+			updates = append(updates, d)
+		}
+	}
+
+	for _, d := range creates {
+		if err := c.cfg.Store.CreateApp(ctx, d); err != nil {
+			return fmt.Errorf("application %q: %w", d.Name, err)
+		}
+	}
+	for _, d := range updates {
+		if err := c.saveUpdate(ctx, d); err != nil {
+			return fmt.Errorf("application %q: %w", d.Name, err)
+		}
+	}
+	for _, a := range apps {
+		if a.Parent != parent.Name || declared[a.Name] {
+			continue
+		}
+		if parent.Prune {
+			err = c.deleteApp(ctx, a, true)
+		} else if !a.NotInGit {
+			a.NotInGit = true
+			if err = c.cfg.Store.UpdateApp(ctx, a); err == nil {
+				c.reconcileWith(ctx, a, false)
+			}
+		}
+		if err != nil {
+			return fmt.Errorf("application %q: %w", a.Name, err)
+		}
+	}
+	for _, d := range slices.Concat(creates, updates) {
+		c.reconcile(ctx, d)
+	}
+	return nil
+}
+
+// childDiff compares the definitions in dir with parent's stored Child Applications.
+func (c *Controller) childDiff(ctx context.Context, parent, dir string) ([]domain.ServiceDiff, error) {
+	defs, err := appdef.Parse(dir)
+	if err != nil {
+		return nil, err
+	}
+	children, err := c.children(ctx, parent)
+	if err != nil {
+		return nil, err
+	}
+	diffs := []domain.ServiceDiff{}
+	declared := map[string]bool{}
+	for _, d := range defs {
+		if err := normalize(&d); err != nil {
+			return nil, fmt.Errorf("application %q: %w", d.Name, err)
+		}
+		declared[d.Name] = true
+		i := slices.IndexFunc(children, func(ch domain.Application) bool { return ch.Name == d.Name })
+		if i < 0 {
+			diffs = append(diffs, domain.ServiceDiff{Service: d.Name, Change: "added"})
+			continue
+		}
+		fields := changedFields(children[i], d)
+		if children[i].NotInGit {
+			fields = append(fields, "notInGit")
+		}
+		if len(fields) > 0 {
+			diffs = append(diffs, domain.ServiceDiff{Service: d.Name, Change: "changed", Fields: fields})
+		}
+	}
+	for _, ch := range children {
+		if !declared[ch.Name] {
+			diffs = append(diffs, domain.ServiceDiff{Service: ch.Name, Change: "removed"})
+		}
+	}
+	return diffs, nil
+}
+
+// changedFields names the definition settings that differ between two normalized Applications.
+func changedFields(old, a domain.Application) []string {
+	var f []string
+	for _, c := range []struct {
+		name    string
+		changed bool
+	}{
+		{"repoURL", old.RepoURL != a.RepoURL},
+		{"path", old.Path != a.Path},
+		{"targetRevision", old.TargetRevision != a.TargetRevision},
+		{"composeFiles", !slices.Equal(old.ComposeFiles, a.ComposeFiles)},
+		{"profiles", !slices.Equal(old.Profiles, a.Profiles)},
+		{"host", old.Host != a.Host},
+		{"autoSync", old.AutoSync != a.AutoSync},
+		{"selfHeal", old.SelfHeal != a.SelfHeal},
+		{"prune", old.Prune != a.Prune},
+	} {
+		if c.changed {
+			f = append(f, c.name)
+		}
+	}
+	return f
 }
 
 // ---- Hosts ----

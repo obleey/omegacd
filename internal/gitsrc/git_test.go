@@ -104,9 +104,14 @@ func TestResolveFetchCooldown(t *testing.T) {
 	if got, _ := g.Resolve(ctx, "file://"+f.dir, "main"); got != c2 {
 		t.Errorf("within cooldown: got %s, want cached %s", got, c2)
 	}
-	g.FetchCooldown = 0
+	g.Invalidate(f.dir) // a webhook or Refresh: matched by normalized URL, so the other spelling counts
 	if got, _ := g.Resolve(ctx, "file://"+f.dir, "main"); got != c3 {
-		t.Errorf("after cooldown: got %s, want %s", got, c3)
+		t.Errorf("after Invalidate: got %s, want %s", got, c3)
+	}
+	c4 := f.commit(map[string]string{"x": "z"})
+	g.FetchCooldown = 0
+	if got, _ := g.Resolve(ctx, "file://"+f.dir, "main"); got != c4 {
+		t.Errorf("after cooldown: got %s, want %s", got, c4)
 	}
 }
 

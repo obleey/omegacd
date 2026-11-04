@@ -17,6 +17,9 @@ export interface Application {
 	selfHeal: boolean;
 	prune: boolean;
 	adopt: boolean;
+	kind: 'compose' | 'apps'; // 'apps' = an App of Apps
+	parent?: string; // the App of Apps that owns this Child Application
+	notInGit: boolean; // a Child Application its parent no longer declares
 	createdAt?: string;
 }
 

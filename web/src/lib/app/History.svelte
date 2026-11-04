@@ -2,7 +2,8 @@
 	import { ago, short, type SyncOperation } from '../api';
 	import Badge from '../Badge.svelte';
 
-	let { ops, onrollback }: { ops: SyncOperation[] | null; onrollback: (op: SyncOperation) => void } = $props();
+	// onrollback is omitted for Child Applications: their Revision is pinned in Git, not rolled back here.
+	let { ops, onrollback }: { ops: SyncOperation[] | null; onrollback?: (op: SyncOperation) => void } = $props();
 
 	// The current deployment is the newest Succeeded op; rolling back to it is a no-op.
 	let currentID = $derived(ops?.find((o) => o.phase === 'Succeeded')?.id);
@@ -38,7 +39,7 @@
 						<td class="right">
 							{#if o.id === currentID}
 								<span class="muted small">Current</span>
-							{:else if o.phase === 'Succeeded'}
+							{:else if o.phase === 'Succeeded' && onrollback}
 								<button onclick={() => onrollback(o)} aria-label="Rollback to {short(o.revision)}">Rollback</button>
 							{/if}
 						</td>

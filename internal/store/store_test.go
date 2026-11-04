@@ -63,6 +63,7 @@ func TestApps(t *testing.T) {
 		Name: "web", RepoURL: "https://example.com/r.git", Path: "apps/web", TargetRevision: "main",
 		ComposeFiles: []string{"compose.yaml", "override.yaml"}, Profiles: []string{"prod"},
 		Host: domain.LocalHost, AutoSync: true, Prune: true, RolledBack: true,
+		Kind: domain.KindCompose, Parent: "root", NotInGit: true,
 		CreatedAt: time.Unix(1700000000, 0).UTC(),
 	}
 	must(t, s.CreateApp(ctx, a))
@@ -74,10 +75,10 @@ func TestApps(t *testing.T) {
 		t.Fatalf("got %+v\nwant %+v", got, a)
 	}
 
-	a.SelfHeal, a.RolledBack, a.Profiles = true, false, nil
+	a.SelfHeal, a.RolledBack, a.Profiles, a.Parent, a.NotInGit = true, false, nil, "", false
 	must(t, s.UpdateApp(ctx, a))
 	got, _ = s.GetApp(ctx, "web")
-	if !got.SelfHeal || got.RolledBack || got.Profiles != nil || !got.CreatedAt.Equal(a.CreatedAt) {
+	if !got.SelfHeal || got.RolledBack || got.Profiles != nil || got.Parent != "" || got.NotInGit || !got.CreatedAt.Equal(a.CreatedAt) {
 		t.Fatalf("update not applied: %+v", got)
 	}
 	wantErr(t, s.UpdateApp(ctx, domain.Application{Name: "nope"}), domain.ErrNotFound)

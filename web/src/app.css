@@ -121,7 +121,7 @@ input, textarea, select {
 	color: var(--text);
 }
 textarea { font-family: var(--mono); font-size: 0.85rem; }
-input[type='checkbox'] { width: auto; accent-color: var(--accent); }
+input[type='checkbox'], input[type='radio'] { width: auto; accent-color: var(--accent); }
 input:focus, textarea:focus, select:focus { border-color: var(--accent); outline: none; }
 
 label { display: block; font-weight: 500; }
@@ -139,5 +139,9 @@ label { display: block; font-weight: 500; }
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--surface0); vertical-align: top; }
 th { font-weight: 500; color: var(--subtext0); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.03em; }
+
+/* small text label, e.g. "App of Apps"; .tag.warn for warnings */
+.tag { display: inline-block; padding: 0 0.45rem; border-radius: 999px; font-size: 0.72rem; font-weight: 500; white-space: nowrap; vertical-align: middle; color: var(--blue); border: 1px solid color-mix(in srgb, var(--blue) 45%, transparent); background: color-mix(in srgb, var(--blue) 12%, transparent); }
+.tag.warn { color: var(--yellow); border-color: color-mix(in srgb, var(--yellow) 45%, transparent); background: color-mix(in srgb, var(--yellow) 12%, transparent); }
 
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

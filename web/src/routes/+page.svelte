@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api, ago, enc, errMsg, short } from '#lib/api.ts';
+	import { api, ago, enc, errMsg, short, type AppView } from '#lib/api.ts';
 	import { live, loadApps } from '#lib/live.svelte.ts';
 	import Badge from '#lib/Badge.svelte';
 
@@ -12,13 +12,33 @@
 		loadApps().catch((e) => (error = errMsg(e)));
 	});
 
-	let apps = $derived(
+	let collapsed = $state<Record<string, boolean>>({});
+	let q = $derived(filter.trim().toLowerCase());
+	const matches = (a: AppView) =>
+		!q || [a.name, a.host, a.repoURL, a.path, a.syncStatus, a.health].some((s) => s?.toLowerCase().includes(q));
+
+	// Child Applications grouped by their App of Apps; a child whose parent is gone is shown top-level.
+	let kidsOf = $derived.by(() => {
+		const m: Record<string, AppView[]> = {};
+		for (const a of Object.values(live.apps)) if (a.parent && live.apps[a.parent]) (m[a.parent] ??= []).push(a);
+		return m;
+	});
+
+	type Row = { a: AppView; depth: number; kids: number; open: boolean };
+	// A row is shown when it or a descendant matches the filter; filtering expands every parent.
+	function rowsOf(a: AppView, depth: number): Row[] {
+		const kids = [...(kidsOf[a.name] ?? [])].sort((x, y) => x.name.localeCompare(y.name));
+		const open = !!q || !collapsed[a.name];
+		const sub = kids.flatMap((k) => rowsOf(k, depth + 1));
+		if (!matches(a) && !sub.length) return [];
+		return [{ a, depth, kids: kids.length, open }, ...(open ? sub : [])];
+	}
+
+	let rows = $derived(
 		Object.values(live.apps)
-			.filter((a) => {
-				const q = filter.trim().toLowerCase();
-				return !q || [a.name, a.host, a.repoURL, a.path, a.syncStatus, a.health].some((s) => s?.toLowerCase().includes(q));
-			})
+			.filter((a) => !a.parent || !live.apps[a.parent])
 			.sort((a, b) => a.name.localeCompare(b.name))
+			.flatMap((a) => rowsOf(a, 0))
 	);
 
 	async function sync(name: string) {
@@ -54,7 +74,7 @@
 		<p class="muted">An Application deploys a Compose project from a path in a Git Repository.</p>
 		<a class="btn primary" href="/apps/new">New Application</a>
 	</div>
-{:else if apps.length === 0}
+{:else if rows.length === 0}
 	<p class="muted">No Applications match “{filter}”.</p>
 {:else}
 	<div class="card flush">
@@ -71,11 +91,27 @@
 				</tr>
 			</thead>
 			<tbody>
-				{#each apps as a (a.name)}
+				{#each rows as { a, depth, kids, open } (a.name)}
 					{@const op = a.lastOperation}
-					<tr>
-						<td>
+					<tr class:child={depth > 0}>
+						<td style:padding-left="{0.6 + depth * 1.6}rem">
+							{#if kids}
+								<button
+									class="ghost toggle"
+									aria-expanded={open}
+									aria-label="{open ? 'Hide' : 'Show'} Child Applications of {a.name}"
+									disabled={!!q}
+									onclick={() => (collapsed[a.name] = open)}><span aria-hidden="true">{open ? '▾' : '▸'}</span></button
+								>
+							{:else if depth > 0}
+								<span class="muted" aria-hidden="true">↳</span>
+							{/if}
 							<a class="name" href="/apps/{enc(a.name)}">{a.name}</a>
+							{#if a.kind === 'apps'}
+								<span class="tag">App of Apps</span>
+								<span class="muted small">{kids} {kids === 1 ? 'child' : 'children'}</span>
+							{/if}
+							{#if a.notInGit}<span class="tag warn">not in Git</span>{/if}
 							<div class="muted small mono trunc" title="{a.repoURL} {a.path}">
 								{a.repoURL.replace(/^https?:\/\//, '')}{a.path && a.path !== '.' ? ` · ${a.path}` : ''}
 							</div>
@@ -117,6 +153,8 @@
 	.filter { width: 220px; }
 	.flush { padding: 0; overflow-x: auto; }
 	.name { font-weight: 600; font-size: 0.95rem; }
+	.toggle { padding: 0 0.3rem; font-size: 0.8rem; color: var(--subtext0); }
+	.child { background: color-mix(in srgb, var(--crust) 35%, transparent); }
 	.trunc { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.actions { text-align: right; }
 	tbody tr:last-child td { border-bottom: 0; }

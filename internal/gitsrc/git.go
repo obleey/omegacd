@@ -144,6 +144,18 @@ func (g *Git) auth(ctx context.Context, url string) (transport.AuthMethod, error
 	return nil, nil
 }
 
+func (g *Git) Invalidate(repoURL string) {
+	sum := sha256.Sum256([]byte(NormalizeURL(repoURL)))
+	g.mu.Lock()
+	e, ok := g.repos[hex.EncodeToString(sum[:])]
+	g.mu.Unlock()
+	if ok {
+		e.mu.Lock()
+		e.lastFetch = time.Time{}
+		e.mu.Unlock()
+	}
+}
+
 func (g *Git) Resolve(ctx context.Context, repoURL, rev string) (string, error) {
 	e, unlock, err := g.open(repoURL)
 	if err != nil {

@@ -28,6 +28,7 @@
 	let selfHeal = $state(init?.selfHeal ?? false);
 	let prune = $state(init?.prune ?? false);
 	let adopt = $state(init?.adopt ?? false);
+	let kind = $state(init?.kind || 'compose');
 	let host = $state(init?.host || 'local');
 	let hosts = $state<string[]>([init?.host || 'local']);
 	onMount(() => {
@@ -51,17 +52,20 @@
 		try {
 			await onsave({
 				...init,
+				kind,
+				notInGit: init?.notInGit ?? false,
 				name: name.trim(),
 				repoURL: repoURL.trim(),
 				path: path.trim(),
 				targetRevision: targetRevision.trim() || 'main',
-				composeFiles: list(composeFiles).length ? list(composeFiles) : ['compose.yaml'],
-				profiles: list(profiles),
+				// An App of Apps has no compose files; its children pick their own Host.
+				composeFiles: kind === 'apps' ? [] : list(composeFiles).length ? list(composeFiles) : ['compose.yaml'],
+				profiles: kind === 'apps' ? [] : list(profiles),
 				host,
 				autoSync,
 				selfHeal,
 				prune,
-				adopt
+				adopt: kind === 'compose' && adopt
 			});
 		} catch (err) {
 			error = errMsg(err);
@@ -74,15 +78,48 @@
 <form onsubmit={submit} class="form">
 	{#if error}<p class="error" role="alert">{error}</p>{/if}
 
+	{#if !editing}
+		<fieldset>
+			<legend>Kind</legend>
+			<div class="check">
+				<input id="f-kind-compose" type="radio" name="kind" value="compose" bind:group={kind} />
+				<label for="f-kind-compose">Compose project <span class="hint">Path holds compose files deployed to one Host.</span></label>
+			</div>
+			<div class="check">
+				<input id="f-kind-apps" type="radio" name="kind" value="apps" bind:group={kind} />
+				<label for="f-kind-apps">App of Apps <span class="hint">Path holds Application definitions.</span></label>
+			</div>
+			{#if kind === 'apps'}
+				<div class="hint help">
+					<p>
+						Each YAML file in Path defines one Child Application. Syncing creates and updates them; with Prune it also
+						deletes the ones no longer declared. Each Child Application picks its own Host. For example:
+					</p>
+					<pre>name: web
+repoURL: https://github.com/org/repo.git
+path: apps/web
+targetRevision: main
+composeFiles: [compose.yaml]
+profiles: []
+host: local
+autoSync: true
+selfHeal: true
+prune: false</pre>
+				</div>
+			{/if}
+		</fieldset>
+	{/if}
+
 	<div class="field">
 		<label for="f-name">Name</label>
 		<input id="f-name" bind:value={name} required disabled={editing} pattern="[a-z0-9][a-z0-9_-]*" autocomplete="off" />
-		<span class="hint">Also the Compose project name. Lowercase letters, digits, - and _.</span>
+		<span class="hint">{kind === 'apps' ? '' : 'Also the Compose project name. '}Lowercase letters, digits, - and _.</span>
 	</div>
 	<div class="field">
 		<label for="f-repo">Repository URL</label>
 		<input id="f-repo" bind:value={repoURL} required placeholder="https://github.com/org/repo.git" autocomplete="off" />
 	</div>
+	{#if kind === 'compose'}
 	<div class="field">
 		<label for="f-host">Host</label>
 		<select id="f-host" bind:value={host} disabled={editing}>
@@ -92,11 +129,12 @@
 			{editing ? 'To move the Application to another Host, delete and recreate it.' : 'The Docker engine to deploy to. Add Hosts in Settings.'}
 		</span>
 	</div>
+	{/if}
 	<div class="grid2">
 		<div class="field">
 			<label for="f-path">Path</label>
 			<input id="f-path" bind:value={path} placeholder="." autocomplete="off" />
-			<span class="hint">Directory inside the Repository.</span>
+			<span class="hint">Directory inside the Repository{kind === 'apps' ? ' holding the Application definitions' : ''}.</span>
 		</div>
 		<div class="field">
 			<label for="f-rev">Target Revision</label>
@@ -104,6 +142,7 @@
 			<span class="hint">Branch, tag or commit.</span>
 		</div>
 	</div>
+	{#if kind === 'compose'}
 	<div class="grid2">
 		<div class="field">
 			<label for="f-files">Compose files</label>
@@ -116,6 +155,7 @@
 			<span class="hint">Optional. One per line or comma-separated.</span>
 		</div>
 	</div>
+	{/if}
 
 	<fieldset>
 		<legend>Sync Policy</legend>
@@ -131,7 +171,7 @@
 			<input id="f-prune" type="checkbox" bind:checked={prune} />
 			<label for="f-prune">Prune <span class="hint">Remove containers and networks no longer in the Desired State. Volumes are never removed.</span></label>
 		</div>
-		{#if !editing}
+		{#if !editing && kind === 'compose'}
 			<div class="check">
 				<input id="f-adopt" type="checkbox" bind:checked={adopt} />
 				<label for="f-adopt">Adopt <span class="hint">Take over an existing, unmanaged Compose project with the same name.</span></label>
@@ -151,5 +191,7 @@
 	fieldset { border: 1px solid var(--surface0); border-radius: 8px; padding: 0.8rem 1rem 0.2rem; margin: 0 0 1.2rem; }
 	legend { padding: 0 0.4rem; font-weight: 600; }
 	.check .hint { display: block; }
+	.help p { margin: 0 0 0.4rem; }
+	.help pre { background: var(--crust); border: 1px solid var(--surface0); border-radius: var(--radius); padding: 0.5rem 0.8rem; margin: 0 0 0.8rem; overflow-x: auto; color: var(--text); }
 	@media (max-width: 640px) { .grid2 { grid-template-columns: 1fr; } }
 </style>

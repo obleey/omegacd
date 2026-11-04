@@ -22,17 +22,35 @@
 	import Diff from '#lib/app/Diff.svelte';
 	import History from '#lib/app/History.svelte';
 	import Logs from '#lib/app/Logs.svelte';
+	import Children from '#lib/app/Children.svelte';
 
 	type Tab = 'resources' | 'diff' | 'history' | 'logs';
-	const tabs: [Tab, string][] = [
-		['resources', 'Resources'],
-		['diff', 'Diff'],
-		['history', 'History'],
-		['logs', 'Logs']
-	];
 
 	let name = $derived(page.params.name ?? '');
 	let app = $derived(live.apps[name] as AppView | undefined);
+	let isApps = $derived(app?.kind === 'apps');
+	// An App of Apps has no containers: its first tab lists Child Applications and there are no Logs.
+	let tabs = $derived<[Tab, string][]>(
+		isApps
+			? [
+					['resources', 'Child Applications'],
+					['diff', 'Diff'],
+					['history', 'History']
+				]
+			: [
+					['resources', 'Resources'],
+					['diff', 'Diff'],
+					['history', 'History'],
+					['logs', 'Logs']
+				]
+	);
+	let children = $derived(
+		Object.values(live.apps)
+			.filter((a) => a.parent === name)
+			.sort((a, b) => a.name.localeCompare(b.name))
+	);
+	// Child Application settings are owned by Git; it can only be deleted once its parent stops declaring it.
+	let canDelete = $derived(!app?.parent || app.notInGit);
 	let base = $derived(`/apps/${enc(name)}`);
 
 	let tab = $state<Tab>('resources');
@@ -71,7 +89,7 @@
 		const n = name;
 		const t = tab;
 		const fail = (e: unknown) => (error = errMsg(e));
-		if (t === 'resources' || t === 'logs') get<LiveState>(`/apps/${enc(n)}/resources`).then((v) => (liveState = v), fail);
+		if ((t === 'resources' && !isApps) || t === 'logs') get<LiveState>(`/apps/${enc(n)}/resources`).then((v) => (liveState = v), fail);
 		if (t === 'diff') get<DiffView>(`/apps/${enc(n)}/diff`).then((v) => (diff = v), fail);
 		if (t === 'history') get<SyncOperation[]>(`/apps/${enc(n)}/history`).then((v) => (ops = v ?? []), fail);
 	});
@@ -133,17 +151,19 @@
 	<header class="card hdr">
 		<div class="row">
 			<h1>{app.name}</h1>
+			{#if isApps}<span class="tag">App of Apps</span>{/if}
 			<Badge status={app.syncStatus} label="Sync Status" />
 			<Badge status={app.health} label="Health Status" />
+			{#if app.notInGit}<span class="tag warn">No longer declared in Git</span>{/if}
 			<span class="spacer"></span>
 			<button class="primary" onclick={sync} disabled={!!busy || running}>{running ? 'Syncing…' : 'Sync'}</button>
 			<button onclick={refresh} disabled={!!busy}>{busy === 'refresh' ? 'Refreshing…' : 'Refresh'}</button>
-			<button onclick={() => (editing = !editing)} aria-expanded={editing}>Edit settings</button>
+			<button onclick={() => (editing = !editing)} aria-expanded={editing} disabled={!!app.parent}>Edit settings</button>
 			<a class="btn" href="/api/apps/{enc(app.name)}/export" download="{app.name}.yaml">Export YAML</a>
-			<button class="danger" onclick={() => (delOpen = true)} disabled={!!busy}>Delete</button>
+			<button class="danger" onclick={() => (delOpen = true)} disabled={!!busy || !canDelete}>Delete</button>
 		</div>
 		<dl class="meta">
-			<div><dt>Host</dt><dd class="mono">{app.host || 'local'}</dd></div>
+			{#if !isApps}<div><dt>Host</dt><dd class="mono">{app.host || 'local'}</dd></div>{/if}
 			<div><dt>Repository</dt><dd class="mono">{app.repoURL}</dd></div>
 			<div><dt>Path</dt><dd class="mono">{app.path || '.'}</dd></div>
 			<div><dt>Target Revision</dt><dd class="mono">{app.targetRevision} <span class="muted">({short(app.targetSHA)})</span></dd></div>
@@ -160,6 +180,12 @@
 		{#if app.syncMessage}<p class="small syncmsg">{app.syncMessage}</p>{/if}
 	</header>
 
+	{#if app.parent}
+		<p class="banner" role="status">
+			Managed by App of Apps <a href="/apps/{enc(app.parent)}">{app.parent}</a> — change its settings in Git.
+			{#if app.notInGit}It is no longer declared in Git, so it can be deleted.{/if}
+		</p>
+	{/if}
 	{#if app.rolledBack}
 		<p class="banner" role="status">
 			Auto-Sync was turned off by a Rollback. Re-enable it in Edit settings to follow the target Revision again.
@@ -184,7 +210,7 @@
 		<p class="error" role="status">Last Sync failed: {op.message}</p>
 	{/if}
 
-	{#if editing}
+	{#if editing && !app.parent}
 		<section class="card">
 			<h2 class="mb">Edit settings</h2>
 			<AppForm
@@ -213,18 +239,30 @@
 			{/each}
 		</div>
 		<div id="panel" role="tabpanel" aria-labelledby="tab-{tab}" class="card">
-			{#if tab === 'resources'}
+			{#if tab === 'resources' && isApps}
+				<Children apps={children} />
+			{:else if tab === 'resources'}
 				<Resources name={app.name} state={liveState} onlogs={showLogs} />
 			{:else if tab === 'diff'}
-				<Diff {diff} />
+				<Diff {diff} apps={isApps} />
 			{:else if tab === 'history'}
+				{#if app.parent}
+					<p class="muted small">
+						Rollback is not available for a Child Application: pin its targetRevision in Git, or roll back
+						<a href="/apps/{app.parent}">{app.parent}</a>.
+					</p>
+				{/if}
 				<History
 					{ops}
-					onrollback={(o) => {
-						rbOp = o;
-						rbOpen = true;
-					}}
+					onrollback={app.parent
+						? undefined
+						: (o) => {
+								rbOp = o;
+								rbOpen = true;
+							}}
 				/>
+			{:else if isApps}
+				<p class="muted">An App of Apps has no containers.</p>
 			{:else if liveState}
 				<Logs app={app.name} containers={liveState.containers ?? []} bind:selected={logContainer} />
 			{:else}

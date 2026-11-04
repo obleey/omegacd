@@ -93,6 +93,10 @@ CREATE TABLE hosts (
 	tls_key TEXT NOT NULL,
 	created_at INTEGER NOT NULL
 );
+`, `
+ALTER TABLE apps ADD COLUMN kind TEXT NOT NULL DEFAULT 'compose';
+ALTER TABLE apps ADD COLUMN parent TEXT NOT NULL DEFAULT '';
+ALTER TABLE apps ADD COLUMN not_in_git INTEGER NOT NULL DEFAULT 0;
 `}
 
 type Store struct {
@@ -189,14 +193,14 @@ type scanner interface{ Scan(...any) error }
 
 // ---- apps ----
 
-const appCols = `name, repo_url, path, target_revision, compose_files, profiles, host, auto_sync, self_heal, prune, adopt, rolled_back, created_at`
+const appCols = `name, repo_url, path, target_revision, compose_files, profiles, host, auto_sync, self_heal, prune, adopt, rolled_back, kind, parent, not_in_git, created_at`
 
 func scanApp(r scanner) (domain.Application, error) {
 	var a domain.Application
 	var files, profiles string
 	var created int64
 	if err := r.Scan(&a.Name, &a.RepoURL, &a.Path, &a.TargetRevision, &files, &profiles, &a.Host,
-		&a.AutoSync, &a.SelfHeal, &a.Prune, &a.Adopt, &a.RolledBack, &created); err != nil {
+		&a.AutoSync, &a.SelfHeal, &a.Prune, &a.Adopt, &a.RolledBack, &a.Kind, &a.Parent, &a.NotInGit, &created); err != nil {
 		return a, mapErr(err)
 	}
 	a.CreatedAt = fromUnix(created)
@@ -210,7 +214,7 @@ func appArgs(a domain.Application) []any {
 	files, _ := json.Marshal(a.ComposeFiles)
 	profiles, _ := json.Marshal(a.Profiles)
 	return []any{a.Name, a.RepoURL, a.Path, a.TargetRevision, string(files), string(profiles), a.Host,
-		a.AutoSync, a.SelfHeal, a.Prune, a.Adopt, a.RolledBack}
+		a.AutoSync, a.SelfHeal, a.Prune, a.Adopt, a.RolledBack, a.Kind, a.Parent, a.NotInGit}
 }
 
 func (s *Store) ListApps(ctx context.Context) ([]domain.Application, error) {
@@ -238,7 +242,7 @@ func (s *Store) CreateApp(ctx context.Context, a domain.Application) error {
 	if a.CreatedAt.IsZero() {
 		a.CreatedAt = time.Now()
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO apps (`+appCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	_, err := s.db.ExecContext(ctx, `INSERT INTO apps (`+appCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		append(appArgs(a), toUnix(a.CreatedAt))...)
 	return mapErr(err)
 }
@@ -247,7 +251,7 @@ func (s *Store) CreateApp(ctx context.Context, a domain.Application) error {
 func (s *Store) UpdateApp(ctx context.Context, a domain.Application) error {
 	args := appArgs(a)
 	return affected(s.db.ExecContext(ctx, `UPDATE apps SET repo_url=?, path=?, target_revision=?, compose_files=?,
-		profiles=?, host=?, auto_sync=?, self_heal=?, prune=?, adopt=?, rolled_back=? WHERE name=?`, append(args[1:], a.Name)...))
+		profiles=?, host=?, auto_sync=?, self_heal=?, prune=?, adopt=?, rolled_back=?, kind=?, parent=?, not_in_git=? WHERE name=?`, append(args[1:], a.Name)...))
 }
 
 func (s *Store) DeleteApp(ctx context.Context, name string) error {

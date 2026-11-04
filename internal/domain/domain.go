@@ -12,6 +12,12 @@ import (
 // LocalHost is the built-in Host: the Docker engine dockercd talks to via DOCKER_HOST / the socket.
 const LocalHost = "local"
 
+// Application kinds.
+const (
+	KindCompose = "compose"
+	KindApps    = "apps"
+)
+
 // ManagedLabel is set on every container dockercd creates; its value is the Application name.
 const ManagedLabel = "dev.dockercd.application"
 
@@ -34,8 +40,11 @@ type Application struct {
 	AutoSync       bool      `json:"autoSync"`
 	SelfHeal       bool      `json:"selfHeal"`
 	Prune          bool      `json:"prune"`
-	Adopt          bool      `json:"adopt"`      // only honoured on create
-	RolledBack     bool      `json:"rolledBack"` // Auto-Sync was turned off by a Rollback; cleared when Auto-Sync is re-enabled
+	Adopt          bool      `json:"adopt"`            // only honoured on create
+	RolledBack     bool      `json:"rolledBack"`       // Auto-Sync was turned off by a Rollback; cleared when Auto-Sync is re-enabled
+	Kind           string    `json:"kind"`             // KindCompose (default) or KindApps (an App of Apps)
+	Parent         string    `json:"parent,omitempty"` // the App of Apps that owns this Child Application
+	NotInGit       bool      `json:"notInGit"`         // a Child Application its parent no longer declares (kept because Prune is off)
 	CreatedAt      time.Time `json:"createdAt"`
 }
 
@@ -266,6 +275,9 @@ type Store interface {
 type Git interface {
 	// Resolve fetches the Repository and resolves rev (branch, tag or SHA) to a commit SHA.
 	Resolve(ctx context.Context, repoURL, rev string) (string, error)
+	// Invalidate makes the next Resolve of repoURL fetch even within the fetch cooldown
+	// (used for explicit Refresh, manual Sync and webhooks).
+	Invalidate(repoURL string)
 	// TreeHash is the git tree hash of path at sha ("" if the path does not exist).
 	TreeHash(ctx context.Context, repoURL, sha, path string) (string, error)
 	// Export writes the files under path at sha into dest, overwriting files in place (same inode)

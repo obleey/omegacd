@@ -11,8 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"gopkg.in/yaml.v3"
-
+	"github.com/obleey/dockercd/internal/appdef"
 	"github.com/obleey/dockercd/internal/domain"
 )
 
@@ -106,18 +105,7 @@ func (s *server) export(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a := v.Application
-	out, err := yaml.Marshal(struct {
-		Name           string   `yaml:"name"`
-		RepoURL        string   `yaml:"repoURL"`
-		Path           string   `yaml:"path,omitempty"`
-		TargetRevision string   `yaml:"targetRevision,omitempty"`
-		ComposeFiles   []string `yaml:"composeFiles,omitempty"`
-		Profiles       []string `yaml:"profiles,omitempty"`
-		Host           string   `yaml:"host,omitempty"`
-		AutoSync       bool     `yaml:"autoSync"`
-		SelfHeal       bool     `yaml:"selfHeal"`
-		Prune          bool     `yaml:"prune"`
-	}{a.Name, a.RepoURL, a.Path, a.TargetRevision, a.ComposeFiles, a.Profiles, a.Host, a.AutoSync, a.SelfHeal, a.Prune})
+	out, err := appdef.Marshal(a)
 	if err != nil {
 		writeError(w, err)
 		return

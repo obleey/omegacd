@@ -147,8 +147,10 @@ type fakeGit struct {
 	tree     string
 	err      error
 	resolves int
+	files    map[string]string // exported instead of a compose.yaml when set
 }
 
+func (g *fakeGit) Invalidate(string) {}
 func (g *fakeGit) Resolve(context.Context, string, string) (string, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -161,12 +163,33 @@ func (g *fakeGit) TreeHash(_ context.Context, _, sha, _ string) (string, error) 
 	return "tree-" + sha, nil
 }
 func (g *fakeGit) Export(_ context.Context, _, _, _, dest string) error {
-	return os.WriteFile(filepath.Join(dest, "compose.yaml"), []byte("services: {}\n"), 0o644)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.files == nil {
+		return os.WriteFile(filepath.Join(dest, "compose.yaml"), []byte("services: {}\n"), 0o644)
+	}
+	if err := os.RemoveAll(dest); err != nil {
+		return err
+	}
+	os.MkdirAll(dest, 0o750)
+	for name, content := range g.files {
+		if err := os.WriteFile(filepath.Join(dest, name), []byte(content), 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 func (g *fakeGit) Diff(context.Context, string, string, string, string) (string, error) {
 	return "", nil
 }
 func (g *fakeGit) set(sha string) { g.mu.Lock(); g.sha = sha; g.mu.Unlock() }
+
+// define makes the next Revision hold one definitions file.
+func (g *fakeGit) define(sha, defs string) {
+	g.mu.Lock()
+	g.sha, g.files = sha, map[string]string{"apps.yaml": defs}
+	g.mu.Unlock()
+}
 
 type fakeSecrets struct{}
 
@@ -181,9 +204,12 @@ type fakeEngine struct {
 	managed      bool
 	live         domain.LiveState
 	removed      bool
+	removedApps  []string
+	health       map[string]domain.HealthStatus // per app, overrides live.Health
 	changed      func(string, string)
 	files        []domain.Resource
 	hostsChanged []string
+	onRemove     func(domain.Application) // runs after Remove, outside the lock: simulates Docker events mid-delete
 }
 
 func (e *fakeEngine) Validate(context.Context, domain.Application, string) error { return nil }
@@ -198,11 +224,26 @@ func (e *fakeEngine) Sync(context.Context, domain.Application, string, domain.Sy
 	e.syncs++
 	return e.syncErr
 }
-func (e *fakeEngine) Remove(context.Context, domain.Application) error { e.removed = true; return nil }
-func (e *fakeEngine) Status(context.Context, domain.Application) (domain.LiveState, error) {
+func (e *fakeEngine) Remove(_ context.Context, a domain.Application) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.live, nil
+	e.removed = true
+	e.removedApps = append(e.removedApps, a.Name)
+	if hook := e.onRemove; hook != nil {
+		e.mu.Unlock()
+		hook(a)
+		e.mu.Lock()
+	}
+	return nil
+}
+func (e *fakeEngine) Status(_ context.Context, a domain.Application) (domain.LiveState, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	live := e.live
+	if h, ok := e.health[a.Name]; ok {
+		live.Health = h
+	}
+	return live, nil
 }
 func (e *fakeEngine) ProjectExists(context.Context, string, string) (bool, bool, error) {
 	return e.exists, e.managed, nil
@@ -723,5 +764,34 @@ func TestMissingComposeFileExplainsPath(t *testing.T) {
 	ops, _ := r.st.ListOps(t.Context(), "web")
 	if ops[0].Phase != domain.OpFailed || !strings.Contains(ops[0].Message, `compose file "missing.yaml" not found in path "/"`) {
 		t.Fatalf("op = %s %q", ops[0].Phase, ops[0].Message)
+	}
+}
+
+func TestDeleteIsNotUndoneBySelfHeal(t *testing.T) {
+	r := newRig(t)
+	ctx := t.Context()
+	a := app("web")
+	a.AutoSync, a.SelfHeal = true, true
+	r.c.CreateApp(ctx, a)
+	r.waitIdle(t, "web")
+	syncs := r.e.syncCount()
+
+	// containers vanish mid-delete; the resulting reconcile sees drift and would self-heal
+	r.e.onRemove = func(a domain.Application) {
+		r.e.mu.Lock()
+		r.e.drift = []domain.ServiceDiff{{Service: "web", Change: "added"}}
+		r.e.mu.Unlock()
+		r.c.reconcileWith(ctx, a, false)
+	}
+	if err := r.c.DeleteApp(ctx, "web", true); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(300 * time.Millisecond) // a resurrecting sync would run in the background; give it time
+	if r.e.syncCount() != syncs {
+		t.Fatalf("delete was undone: %d sync(s) after delete", r.e.syncCount()-syncs)
+	}
+	// and the name can be reused
+	if _, err := r.c.CreateApp(ctx, app("web")); err != nil {
+		t.Fatal(err)
 	}
 }

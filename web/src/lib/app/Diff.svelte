@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { short, type DiffView } from '../api';
 
-	let { diff }: { diff: DiffView | null } = $props();
+	// apps: an App of Apps, whose diff entries are Child Applications rather than services
+	let { diff, apps = false }: { diff: DiffView | null; apps?: boolean } = $props();
 
 	const cls = (l: string) =>
 		l.startsWith('+++') || l.startsWith('---') || l.startsWith('diff ') || l.startsWith('index ')
@@ -20,7 +21,7 @@
 {#if !diff}
 	<p class="muted">Loading…</p>
 {:else}
-	<h3>Services</h3>
+	<h3>{apps ? 'Applications' : 'Services'}</h3>
 	{#if diff.services?.length}
 		<ul class="svc">
 			{#each diff.services as s (s.service)}
@@ -32,7 +33,9 @@
 			{/each}
 		</ul>
 	{:else}
-		<p class="muted small">Live State matches the last deployed Desired State.</p>
+		<p class="muted small">
+			{apps ? 'Child Applications match the Application definitions in Git.' : 'Live State matches the last deployed Desired State.'}
+		</p>
 	{/if}
 
 	<h3>Git diff <span class="muted small mono">{short(diff.fromSHA)} → {short(diff.toSHA)}</span></h3>
