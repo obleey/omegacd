@@ -31,6 +31,11 @@ type fakeStore struct {
 	mustChange   bool
 	tokens       map[string]domain.APIToken
 	sessions     map[string]time.Time
+	repoCreds    []domain.RepoCredential
+}
+
+func (s *fakeStore) ListRepoCredentials(context.Context) ([]domain.RepoCredential, error) {
+	return s.repoCreds, nil
 }
 
 func (s *fakeStore) CreateSession(_ context.Context, h string, exp time.Time) error {
@@ -209,6 +214,13 @@ func (c *fakeController) ResourceDetail(_ context.Context, name, kind, res strin
 		return domain.ResourceDetail{}, domain.ErrNotFound
 	}
 	return domain.ResourceDetail{Resource: domain.Resource{Kind: kind, Name: res}, Content: "server {}"}, nil
+}
+
+func (c *fakeController) CheckRepo(_ context.Context, url string) (domain.RepoAccess, error) {
+	if url == "" {
+		return domain.RepoAccess{}, domain.ErrInvalid
+	}
+	return domain.RepoAccess{Access: "credential", CredentialPrefix: "https://github.com/obleey/", DefaultBranch: "master"}, nil
 }
 
 func (c *fakeController) RepoChanged(_ context.Context, url string) { c.changed <- url }
@@ -572,5 +584,35 @@ func TestRegistryCredentialRejectsGitURL(t *testing.T) {
 		if b := e.expect("POST", "/api/settings/registry-credentials", `{"registry":"`+reg+`","username":"u","password":"p"}`, 400); !strings.Contains(b, "Repository credentials") {
 			t.Fatalf("%s: %s", reg, b)
 		}
+	}
+}
+
+func TestCheckRepo(t *testing.T) {
+	e := newEnv(t, false)
+	e.expect("POST", "/api/repos/check", `{"repoURL":"https://github.com/obleey/x.git"}`, 401)
+	e.login()
+	b := e.expect("POST", "/api/repos/check", `{"repoURL":"https://github.com/obleey/x.git"}`, 200)
+	if b != `{"access":"credential","credentialPrefix":"https://github.com/obleey/","defaultBranch":"master"}`+"\n" {
+		t.Fatal(b)
+	}
+	e.expect("POST", "/api/repos/check", `{"repoURL":""}`, 400)
+}
+
+func TestRepoCredentialsUsedBy(t *testing.T) {
+	e := newEnv(t, false)
+	e.store.repoCreds = []domain.RepoCredential{{ID: 1, URLPrefix: "https://github.com/"}, {ID: 2, URLPrefix: "https://github.com/obleey/"}}
+	for name, url := range map[string]string{"b": "https://github.com/obleey/b.git", "a": "https://github.com/obleey/a.git", "c": "https://github.com/other/c.git", "d": "https://gitlab.com/d.git"} {
+		e.ctrl.apps[name] = domain.AppView{Application: domain.Application{Name: name, RepoURL: url}}
+	}
+	e.login()
+	var got []struct {
+		ID     int64    `json:"id"`
+		UsedBy []string `json:"usedBy"`
+	}
+	if err := json.Unmarshal([]byte(e.expect("GET", "/api/settings/repo-credentials", "", 200)), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || strings.Join(got[0].UsedBy, ",") != "c" || strings.Join(got[1].UsedBy, ",") != "a,b" {
+		t.Fatalf("%+v", got)
 	}
 }

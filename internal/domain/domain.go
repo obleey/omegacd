@@ -97,6 +97,17 @@ type RepoCredential struct {
 	HasSSHKey     bool   `json:"hasSSHKey"`
 }
 
+// RepoAccess is whether omegacd can read a Repository. Access is one of
+// "public" (readable without credentials), "credential" (readable with the RepoCredential at CredentialPrefix),
+// "denied" (needs credentials and none matched, or the matching one was rejected) or
+// "error" (network, DNS or URL problems). Message explains denied and error; it never holds secrets.
+type RepoAccess struct {
+	Access           string `json:"access"`
+	CredentialPrefix string `json:"credentialPrefix,omitempty"`
+	DefaultBranch    string `json:"defaultBranch,omitempty"`
+	Message          string `json:"message,omitempty"`
+}
+
 // Host is a Docker engine Applications deploy to. LocalHost is built in and not stored.
 type Host struct {
 	Name          string    `json:"name"`
@@ -294,6 +305,8 @@ type Git interface {
 	Export(ctx context.Context, repoURL, sha, path, dest string) error
 	// Diff is a unified diff of path between two commits.
 	Diff(ctx context.Context, repoURL, fromSHA, toSHA, path string) (string, error)
+	// CheckAccess tells whether repoURL is readable, and with which credential, without cloning it.
+	CheckAccess(ctx context.Context, repoURL string) (RepoAccess, error)
 }
 
 // Secrets decrypts Encrypted Secrets (*.sops.* files) in a directory.
@@ -375,4 +388,6 @@ type Controller interface {
 	// DeleteHost refuses (ErrInvalid) while Applications use the Host.
 	DeleteHost(ctx context.Context, name string) error
 	TestHost(ctx context.Context, name string) (HostStatus, error)
+	// CheckRepo reports whether repoURL can be read (ErrInvalid if empty).
+	CheckRepo(ctx context.Context, repoURL string) (RepoAccess, error)
 }

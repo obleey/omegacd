@@ -183,6 +183,9 @@ func (g *fakeGit) Export(_ context.Context, _, _, _, dest string) error {
 func (g *fakeGit) Diff(context.Context, string, string, string, string) (string, error) {
 	return "", nil
 }
+func (g *fakeGit) CheckAccess(_ context.Context, url string) (domain.RepoAccess, error) {
+	return domain.RepoAccess{Access: "public", Message: url}, nil
+}
 func (g *fakeGit) set(sha string) { g.mu.Lock(); g.sha = sha; g.mu.Unlock() }
 
 // define makes the next Revision hold one definitions file.
@@ -875,5 +878,16 @@ func TestRestoreWorkDirsAfterReboot(t *testing.T) {
 	}
 	if !r.e.lastForce {
 		t.Fatal("restore did not force-recreate containers")
+	}
+}
+
+func TestCheckRepo(t *testing.T) {
+	r := newRig(t)
+	if _, err := r.c.CheckRepo(t.Context(), "  "); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("empty URL: %v", err)
+	}
+	got, err := r.c.CheckRepo(t.Context(), " https://example.com/r.git ")
+	if err != nil || got.Access != "public" || got.Message != "https://example.com/r.git" {
+		t.Fatalf("got %+v, %v", got, err)
 	}
 }

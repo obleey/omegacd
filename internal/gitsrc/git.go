@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	neturl "net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -26,6 +27,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
+	"github.com/go-git/go-git/v5/storage/memory"
 
 	"github.com/obleey/omegacd/internal/domain"
 )
@@ -104,7 +106,18 @@ func (g *Git) fetch(ctx context.Context, e *repo, url string) error {
 	return nil
 }
 
-func (g *Git) auth(ctx context.Context, url string) (transport.AuthMethod, error) {
+// MatchCredential returns the RepoCredential with the longest URLPrefix that url starts with, or nil.
+func MatchCredential(creds []domain.RepoCredential, url string) *domain.RepoCredential {
+	var best *domain.RepoCredential
+	for i, c := range creds {
+		if strings.HasPrefix(url, c.URLPrefix) && (best == nil || len(c.URLPrefix) > len(best.URLPrefix)) {
+			best = &creds[i]
+		}
+	}
+	return best
+}
+
+func (g *Git) credential(ctx context.Context, url string) (*domain.RepoCredential, error) {
 	if g.creds == nil {
 		return nil, nil
 	}
@@ -112,15 +125,19 @@ func (g *Git) auth(ctx context.Context, url string) (transport.AuthMethod, error
 	if err != nil {
 		return nil, fmt.Errorf("load repo credentials: %w", err)
 	}
-	var best *domain.RepoCredential
-	for i, c := range creds {
-		if strings.HasPrefix(url, c.URLPrefix) && (best == nil || len(c.URLPrefix) > len(best.URLPrefix)) {
-			best = &creds[i]
-		}
+	return MatchCredential(creds, url), nil
+}
+
+func (g *Git) auth(ctx context.Context, url string) (transport.AuthMethod, error) {
+	best, err := g.credential(ctx, url)
+	if err != nil || best == nil {
+		return nil, err
 	}
-	if best == nil {
-		return nil, nil
-	}
+	return g.authFor(best, url)
+}
+
+// authFor is nil when best holds no secret usable for url's scheme.
+func (g *Git) authFor(best *domain.RepoCredential, url string) (transport.AuthMethod, error) {
 	user := cmp.Or(best.Username, "git")
 	switch {
 	case strings.HasPrefix(url, "http://"), strings.HasPrefix(url, "https://"):
@@ -142,6 +159,98 @@ func (g *Git) auth(ctx context.Context, url string) (transport.AuthMethod, error
 		return keys, nil
 	}
 	return nil, nil
+}
+
+// CheckAccess lists the remote's refs (no clone, no cache) to tell whether, and how, repoURL can be read.
+func (g *Git) CheckAccess(ctx context.Context, repoURL string) (domain.RepoAccess, error) {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	cred, err := g.credential(ctx, repoURL)
+	if err != nil {
+		return domain.RepoAccess{}, err
+	}
+	clean := func(err error) string {
+		var ue *neturl.Error
+		if errors.As(err, &ue) { // drop the `Get "<url>":` wrapper
+			err = ue.Err
+		}
+		msg := err.Error()
+		if u, perr := neturl.Parse(repoURL); perr == nil {
+			if pw, ok := u.User.Password(); ok && pw != "" {
+				msg = strings.ReplaceAll(msg, pw, "***")
+			}
+		}
+		if cred != nil && cred.Password != "" {
+			msg = strings.ReplaceAll(msg, cred.Password, "***")
+		}
+		return msg
+	}
+	ep, err := transport.NewEndpoint(repoURL)
+	if err != nil {
+		return domain.RepoAccess{Access: "error", Message: clean(err)}, nil
+	}
+	if ep.Protocol != "ssh" { // ssh always needs a key, so an anonymous attempt is pointless
+		branch, err := listHead(ctx, repoURL, nil)
+		switch {
+		case err == nil:
+			return domain.RepoAccess{Access: "public", DefaultBranch: branch}, nil
+		case ep.Protocol == "file" || !isAuthErr(err):
+			return domain.RepoAccess{Access: "error", Message: clean(err)}, nil
+		}
+		if cred == nil {
+			return domain.RepoAccess{Access: "denied", Message: deniedReason(err) + "; no repository credential matches this URL"}, nil
+		}
+	} else if cred == nil {
+		return domain.RepoAccess{Access: "denied", Message: "SSH needs a repository credential with a private key; none matches this URL"}, nil
+	}
+	auth, err := g.authFor(cred, repoURL)
+	if err != nil {
+		return domain.RepoAccess{Access: "error", Message: clean(err)}, nil
+	}
+	if auth == nil {
+		return domain.RepoAccess{Access: "denied", Message: fmt.Sprintf("credential %s has no password/token or SSH key for this URL", cred.URLPrefix)}, nil
+	}
+	branch, err := listHead(ctx, repoURL, auth)
+	switch {
+	case err == nil:
+		return domain.RepoAccess{Access: "credential", CredentialPrefix: cred.URLPrefix, DefaultBranch: branch}, nil
+	case isAuthErr(err):
+		return domain.RepoAccess{Access: "denied", Message: fmt.Sprintf("%s with credential %s — check the token and its permissions", deniedReason(err), cred.URLPrefix)}, nil
+	}
+	return domain.RepoAccess{Access: "error", Message: clean(err)}, nil
+}
+
+// listHead lists the remote's refs and returns the branch HEAD points to ("" if unknown or the repository is empty).
+func listHead(ctx context.Context, url string, auth transport.AuthMethod) (string, error) {
+	rem := git.NewRemote(memory.NewStorage(), &config.RemoteConfig{Name: "origin", URLs: []string{url}})
+	refs, err := rem.ListContext(ctx, &git.ListOptions{Auth: auth})
+	if errors.Is(err, transport.ErrEmptyRemoteRepository) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	for _, r := range refs {
+		if r.Name() == plumbing.HEAD && r.Type() == plumbing.SymbolicReference {
+			return r.Target().Short(), nil
+		}
+	}
+	return "", nil
+}
+
+func isAuthErr(err error) bool {
+	return errors.Is(err, transport.ErrAuthenticationRequired) || errors.Is(err, transport.ErrAuthorizationFailed) || errors.Is(err, transport.ErrRepositoryNotFound)
+}
+
+func deniedReason(err error) string {
+	switch {
+	case errors.Is(err, transport.ErrRepositoryNotFound), strings.Contains(strings.ToLower(err.Error()), "not found"):
+		// GitHub answers "not found" for private repositories it will not show you
+		return "Repository not found or private"
+	case errors.Is(err, transport.ErrAuthorizationFailed):
+		return "Authorization failed"
+	}
+	return "Authentication required"
 }
 
 func (g *Git) Invalidate(repoURL string) {

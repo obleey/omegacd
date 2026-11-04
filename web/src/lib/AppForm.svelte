@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { slide } from 'svelte/transition';
-	import { errMsg, get, type Application, type HostView } from './api.ts';
+	import { api, errMsg, get, type Application, type HostView, type RepoAccess, type RepoCredential } from './api.ts';
 	import Icon from './Icon.svelte';
 	import { ms } from './status.ts';
 
@@ -45,6 +45,77 @@
 	let askRoot = $state(false);
 	let pathEl = $state<HTMLInputElement>();
 
+	// Repository access check: runs 600ms after typing stops and on blur; only the result for the current URL shows.
+	let checkingURL = $state('');
+	let result = $state<{ url: string; r: RepoAccess }>();
+	const access = $derived(result && result.url === repoURL.trim() ? result.r : undefined);
+	const checking = $derived(!access && checkingURL !== '' && checkingURL === repoURL.trim());
+	const blocked = $derived(access?.access === 'denied' || access?.access === 'error');
+	const betterBranch = $derived(
+		access?.defaultBranch && access.defaultBranch !== 'main' && targetRevision.trim() === 'main' ? access.defaultBranch : ''
+	);
+	// The URL the user was asked to confirm creating with despite a failed check.
+	let askAccess = $state('');
+
+	async function check() {
+		const url = repoURL.trim();
+		if (!url || url === checkingURL || result?.url === url) return;
+		checkingURL = url;
+		let r: RepoAccess;
+		try {
+			r = await api<RepoAccess>('POST', '/repos/check', { repoURL: url });
+		} catch (err) {
+			r = { access: 'error', message: errMsg(err) };
+		}
+		if (checkingURL !== url) return; // a newer URL is being checked
+		checkingURL = '';
+		result = { url, r };
+		if (r.access === 'denied') cred = { ...prefill(url), password: '', sshPrivateKey: '' };
+	}
+	$effect(() => {
+		if (!repoURL.trim()) return;
+		const t = setTimeout(check, 600);
+		return () => clearTimeout(t);
+	});
+
+	const isSSH = (u: string) => u.startsWith('ssh://') || /^[^/:]+@[^/:]+:/.test(u);
+	// Owner prefix: https://host/owner/ or git@host:owner/; the username defaults to the owner (the SSH user for ssh).
+	function prefill(url: string) {
+		const m = url.match(/^([a-z+]+:\/\/(?:([^@/]+)@)?[^/]+\/([^/]+)\/)/i);
+		if (m) return { urlPrefix: m[1], username: isSSH(url) ? (m[2] ?? 'git') : m[3] };
+		const s = url.match(/^(([^@/:]+)@[^/:]+:([^/]+)\/)/);
+		if (s) return { urlPrefix: s[1], username: s[2] };
+		return { urlPrefix: url, username: '' };
+	}
+
+	let cred = $state({ urlPrefix: '', username: '', password: '', sshPrivateKey: '' });
+	let credBusy = $state(false);
+	let credError = $state('');
+	async function saveCred() {
+		credBusy = true;
+		credError = '';
+		try {
+			// a rejected credential with the same prefix is updated rather than duplicated (prefixes are unique)
+			const existing = ((await get<RepoCredential[]>('/settings/repo-credentials')) ?? []).find((c) => c.urlPrefix === cred.urlPrefix.trim());
+			const body = { ...cred, urlPrefix: cred.urlPrefix.trim() };
+			if (existing) await api('PUT', `/settings/repo-credentials/${existing.id}`, body);
+			else await api('POST', '/settings/repo-credentials', body);
+			result = undefined;
+			checkingURL = '';
+			await check();
+		} catch (err) {
+			credError = errMsg(err);
+		} finally {
+			credBusy = false;
+		}
+	}
+	// Enter in the credential box saves it instead of submitting the Application form.
+	function enterSaves(e: KeyboardEvent) {
+		if (e.key !== 'Enter') return;
+		e.preventDefault();
+		saveCred();
+	}
+
 	const list = (s: string) =>
 		s
 			.split(/[,\n]/)
@@ -54,6 +125,10 @@
 	async function submit(e: SubmitEvent) {
 		e.preventDefault();
 		error = '';
+		if (blocked && askAccess !== repoURL.trim()) {
+			askAccess = repoURL.trim();
+			return;
+		}
 		if (!editing && !path.trim() && !askRoot) {
 			askRoot = true;
 			pathEl?.focus();
@@ -134,7 +209,52 @@ prune: false</pre>
 	</div>
 	<div class="field">
 		<label for="f-repo">Repository URL</label>
-		<input id="f-repo" bind:value={repoURL} required placeholder="https://github.com/org/repo.git" autocomplete="off" />
+		<input id="f-repo" bind:value={repoURL} onblur={check} required placeholder="https://github.com/org/repo.git" autocomplete="off" aria-describedby="f-repo-status" />
+		<span class="access" id="f-repo-status" aria-live="polite">
+			{#if checking}
+				<span class="st muted"><Icon name="notch" size={14} spin />Checking access…</span>
+			{:else if access?.access === 'public'}
+				<span class="st ok"><Icon name="check" size={14} />Public repository — no credentials needed</span>
+			{:else if access?.access === 'credential'}
+				<span class="st ok"><Icon name="key" size={14} />Private — using credential <code>{access.credentialPrefix}</code></span>
+			{:else if access?.access === 'denied'}
+				<span class="st bad"><Icon name="lock" size={14} />Access denied: {access.message}</span>
+			{:else if access?.access === 'error'}
+				<span class="st warn"><Icon name="alert" size={14} />Could not reach the repository: {access.message}</span>
+			{/if}
+		</span>
+		{#if access?.access === 'denied'}
+			{@const ssh = isSSH(repoURL.trim())}
+			<div class="addcred" role="group" aria-labelledby="f-cred-title" transition:slide={{ duration: ms(200) }}>
+				<p class="small"><strong id="f-cred-title">Add credential</strong> <span class="muted">— used for every Repository whose URL starts with the prefix.</span></p>
+				<div class="grid2">
+					<div class="field">
+						<label for="f-cred-prefix">URL prefix</label>
+						<input id="f-cred-prefix" bind:value={cred.urlPrefix} onkeydown={enterSaves} autocomplete="off" />
+					</div>
+					<div class="field">
+						<label for="f-cred-user">Username</label>
+						<input id="f-cred-user" bind:value={cred.username} onkeydown={enterSaves} autocomplete="off" />
+					</div>
+				</div>
+				{#if ssh}
+					<div class="field">
+						<label for="f-cred-ssh">SSH private key</label>
+						<textarea id="f-cred-ssh" bind:value={cred.sshPrivateKey} rows="3" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
+					</div>
+				{:else}
+					<div class="field">
+						<label for="f-cred-pass">Password or token</label>
+						<input id="f-cred-pass" type="password" bind:value={cred.password} onkeydown={enterSaves} autocomplete="new-password" aria-describedby="f-cred-hint" />
+						<span class="hint" id="f-cred-hint">GitHub: fine-grained token with Contents: read-only.</span>
+					</div>
+				{/if}
+				{#if credError}<p class="error" role="alert">{credError}</p>{/if}
+				<button type="button" onclick={saveCred} disabled={credBusy || !cred.urlPrefix.trim() || !(ssh ? cred.sshPrivateKey : cred.password)}>
+					{credBusy ? 'Saving…' : 'Save credential'}
+				</button>
+			</div>
+		{/if}
 	</div>
 	{#if kind === 'compose'}
 	<div class="field">
@@ -165,6 +285,11 @@ prune: false</pre>
 			<label for="f-rev">Target Revision</label>
 			<input id="f-rev" bind:value={targetRevision} placeholder="main" autocomplete="off" />
 			<span class="hint">Branch, tag or commit.</span>
+			{#if betterBranch}
+				<button type="button" class="usebranch" onclick={() => (targetRevision = betterBranch)}>
+					<Icon name="branch" size={13} />Use {betterBranch} <span class="muted">— the Repository's default branch</span>
+				</button>
+			{/if}
 		</div>
 	</div>
 	{#if kind === 'compose'}
@@ -204,8 +329,11 @@ prune: false</pre>
 		{/if}
 	</fieldset>
 
+	{#if blocked && askAccess === repoURL.trim()}
+		<p class="askroot" role="alert"><Icon name="alert" size={14} />OmegaCD can't read this repository yet — {editing ? 'save' : 'create'} anyway? Submit again to confirm.</p>
+	{/if}
 	<div class="row">
-		<button class="primary" type="submit" disabled={busy}>{busy ? 'Saving…' : askRoot && !path.trim() && !editing ? `${submitLabel} with Repository root` : submitLabel}</button>
+		<button class="primary" type="submit" disabled={busy}>{busy ? 'Saving…' : blocked && askAccess === repoURL.trim() ? `${submitLabel} anyway` : askRoot && !path.trim() && !editing ? `${submitLabel} with Repository root` : submitLabel}</button>
 		{#if oncancel}<button type="button" onclick={oncancel}>Cancel</button>{/if}
 	</div>
 </form>
@@ -235,5 +363,14 @@ prune: false</pre>
 	legend { padding: 0 0.4rem; font-weight: 600; }
 	.help p { margin: 0 0 0.4rem; }
 	.help pre { background: var(--crust); border: 1px solid var(--surface0); border-radius: var(--radius); padding: 0.5rem 0.8rem; margin: 0 0 0.8rem; overflow-x: auto; color: var(--text); }
+	.access { min-height: 1.2rem; font-size: 0.82rem; }
+	.st { display: flex; gap: 0.35rem; align-items: center; overflow-wrap: anywhere; }
+	.st :global(svg) { flex: none; }
+	.ok { color: var(--green); }
+	.bad { color: var(--red); }
+	.warn { color: var(--yellow); }
+	.addcred { margin-top: 0.5rem; padding: 0.7rem 0.9rem 0.8rem; border: 1px dashed color-mix(in srgb, var(--accent) 45%, var(--border)); border-radius: var(--radius); background: color-mix(in srgb, var(--accent) 5%, var(--card)); }
+	.addcred p { margin: 0 0 0.5rem; }
+	.usebranch { justify-self: start; display: inline-flex; gap: 0.35rem; align-items: center; font-size: 0.8rem; padding: 0.2rem 0.55rem; }
 	@media (max-width: 640px) { .grid2, .kgrid { grid-template-columns: 1fr; } }
 </style>

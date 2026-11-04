@@ -1384,3 +1384,11 @@ func (c *Controller) TestHost(ctx context.Context, name string) (domain.HostStat
 	}
 	return c.cfg.Engine.HostStatus(ctx, name), nil
 }
+
+func (c *Controller) CheckRepo(ctx context.Context, repoURL string) (domain.RepoAccess, error) {
+	repoURL = strings.TrimSpace(repoURL)
+	if repoURL == "" {
+		return domain.RepoAccess{}, fmt.Errorf("%w: repoURL is required", domain.ErrInvalid)
+	}
+	return c.cfg.Git.CheckAccess(ctx, repoURL)
+}

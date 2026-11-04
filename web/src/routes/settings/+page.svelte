@@ -186,7 +186,7 @@
 	<p class="muted small">Private Git repos (e.g. <code>https://github.com/you/</code> + a token with read access). Used for every Repository whose URL starts with the prefix. Secrets are stored encrypted and never shown.</p>
 	{#if repos.length}
 		<div class="scroll-x"><table>
-			<thead><tr><th>URL prefix</th><th>Username</th><th>Password / token</th><th>SSH key</th><th><span class="sr-only">Actions</span></th></tr></thead>
+			<thead><tr><th>URL prefix</th><th>Username</th><th>Password / token</th><th>SSH key</th><th>Used by</th><th><span class="sr-only">Actions</span></th></tr></thead>
 			<tbody>
 				{#each repos as c (c.id)}
 					<tr>
@@ -194,6 +194,7 @@
 						<td>{c.username || '—'}</td>
 						<td>{c.hasPassword ? 'set' : 'not set'}</td>
 						<td>{c.hasSSHKey ? 'set' : 'not set'}</td>
+						<td>{c.usedBy?.join(', ') || '—'}</td>
 						<td class="right">
 							<button onclick={() => (repoForm = { ...blankRepo(), id: c.id, urlPrefix: c.urlPrefix, username: c.username ?? '' })}>Edit</button>
 							<button class="danger" onclick={() => del('repo-credentials', c.id, c.urlPrefix)}>Delete</button>

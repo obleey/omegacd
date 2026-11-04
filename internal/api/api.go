@@ -60,6 +60,8 @@ func New(cfg Config) http.Handler {
 	mux.HandleFunc("GET /api/apps/{name}/logs/{container}", s.logs)
 	mux.HandleFunc("GET /api/events", s.events)
 
+	mux.HandleFunc("POST /api/repos/check", s.checkRepo)
+
 	mux.HandleFunc("GET /api/settings/repo-credentials", s.listRepoCreds)
 	mux.HandleFunc("POST /api/settings/repo-credentials", s.saveRepoCred)
 	mux.HandleFunc("PUT /api/settings/repo-credentials/{id}", s.saveRepoCred)

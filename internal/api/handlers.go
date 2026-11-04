@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/obleey/omegacd/internal/appdef"
 	"github.com/obleey/omegacd/internal/domain"
+	"github.com/obleey/omegacd/internal/gitsrc"
 )
 
 func (s *server) listApps(w http.ResponseWriter, r *http.Request) {
@@ -259,9 +261,44 @@ func optionalID(r *http.Request) (int64, error) {
 	return pathID(r)
 }
 
+// repoCredView is a RepoCredential plus the Applications whose Repository it serves.
+type repoCredView struct {
+	domain.RepoCredential
+	UsedBy []string `json:"usedBy"`
+}
+
 func (s *server) listRepoCreds(w http.ResponseWriter, r *http.Request) {
 	cs, err := s.Store.ListRepoCredentials(r.Context())
-	respond(w, http.StatusOK, cs, err)
+	var apps []domain.AppView
+	if err == nil {
+		apps, err = s.Controller.ListApps(r.Context())
+	}
+	out := make([]repoCredView, len(cs))
+	for i, c := range cs {
+		out[i] = repoCredView{RepoCredential: c, UsedBy: []string{}}
+	}
+	for _, a := range apps {
+		if c := gitsrc.MatchCredential(cs, a.RepoURL); c != nil {
+			i := slices.IndexFunc(cs, func(x domain.RepoCredential) bool { return x.ID == c.ID })
+			out[i].UsedBy = append(out[i].UsedBy, a.Name)
+		}
+	}
+	for _, v := range out {
+		slices.Sort(v.UsedBy)
+	}
+	respond(w, http.StatusOK, out, err)
+}
+
+func (s *server) checkRepo(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		RepoURL string `json:"repoURL"`
+	}
+	if err := decode(w, r, &req); err != nil {
+		writeError(w, err)
+		return
+	}
+	v, err := s.Controller.CheckRepo(r.Context(), req.RepoURL)
+	respond(w, http.StatusOK, v, err)
 }
 
 func (s *server) saveRepoCred(w http.ResponseWriter, r *http.Request) {

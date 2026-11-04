@@ -106,6 +106,15 @@ export interface RepoCredential {
 	username?: string;
 	hasPassword: boolean;
 	hasSSHKey: boolean;
+	usedBy: string[]; // Applications whose Repository URL this credential serves
+}
+
+/** Whether OmegaCD can read a Repository; see RepoAccess in domain.go. */
+export interface RepoAccess {
+	access: 'public' | 'credential' | 'denied' | 'error';
+	credentialPrefix?: string;
+	defaultBranch?: string;
+	message?: string;
 }
 
 export interface RegistryCredential {
