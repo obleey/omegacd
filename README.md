@@ -232,6 +232,19 @@ prune: false
 
 ![App of Apps](assets/screenshots/app-of-apps.png)
 
+## Where your data lives
+
+OmegaCD writes each Application's files from Git into its work dir on every Sync, so **data must not live there**:
+
+| In your compose file | Where the data is | Kept across reboots, Syncs and deletes? |
+|---|---|---|
+| `- media:/data` (named volume) | Docker's volume storage | ✅ OmegaCD never deletes volumes, not even with Prune |
+| `- /opt/media/torrents:/data` (absolute path) | that folder **on the Host running the container** | ✅ OmegaCD never touches it; a missing folder is created by Docker (as root, so `chown` it for non-root images) |
+| `- ./nginx.conf:/etc/nginx/nginx.conf:ro` | a file from Git | ✅ restored from Git; changing it recreates the container |
+| `- ./data:/data` | the work dir (`/run/omegacd/apps/<app>/data`) | ❌ **lost on reboot** — use a named volume or an absolute path |
+
+Changes *inside* data folders and volumes never count as drift. Back up volumes and data folders yourself (e.g. restic or borg) — OmegaCD doesn't.
+
 ## Git access
 
 Public repositories need no setup. For private ones, add a credential under **Settings → Repository credentials**, matched by URL prefix: a username and password/token for HTTPS, or an SSH private key. Registry credentials for private images are under **Settings → Registry credentials**.

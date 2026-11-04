@@ -580,3 +580,52 @@ func TestForceRecreateReplacesUnchangedContainers(t *testing.T) {
 		t.Fatalf("ForceRecreate kept the old container (err %v)", err)
 	}
 }
+
+func TestAbsoluteBindMountIsLeftAlone(t *testing.T) {
+	ctx := context.Background()
+	e := newTestEngine(t)
+	app := testApp(t, e)
+	dir, data := t.TempDir(), t.TempDir() // data: an absolute host path outside the app dir, like /opt/media
+	write(t, dir, "compose.yaml", fmt.Sprintf(`
+services:
+  web:
+    image: busybox
+    command: ["sh", "-c", "echo from-container > /opt/data/hello.txt; sleep 3600"]
+    volumes: ["%s:/opt/data"]
+`, data))
+	if err := e.Sync(ctx, app, dir, domain.SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	p, err := e.load(ctx, app, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if src := p.Services["web"].Volumes[0].Source; src != data {
+		t.Fatalf("bind source = %q, want the absolute path %q unchanged", src, data)
+	}
+	if _, ok := p.Services["web"].Labels[contentHashLabel]; ok {
+		t.Fatal("a data directory must not be content-hashed")
+	}
+	// data written into the folder is visible on the host and is not drift
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if b, err := os.ReadFile(filepath.Join(data, "hello.txt")); err == nil && strings.TrimSpace(string(b)) == "from-container" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("container did not write into the absolute bind mount")
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	write(t, data, "more.bin", "runtime data")
+	if diffs, _ := e.Diff(ctx, app, dir, ""); len(diffs) != 0 {
+		t.Fatalf("Diff = %+v; files in a data folder must not count as drift", diffs)
+	}
+	// a re-Sync keeps the data
+	if err := e.Sync(ctx, app, dir, domain.SyncOptions{ForceRecreate: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(data, "more.bin")); err != nil {
+		t.Fatal("data lost after re-Sync")
+	}
+}
