@@ -102,7 +102,7 @@
 	}
 </script>
 
-<svelte:head><title>Settings · dockercd</title></svelte:head>
+<svelte:head><title>Settings · OmegaCD</title></svelte:head>
 
 <h1>Settings</h1>
 <p class="muted small sub">Hosts, credentials and API tokens used by every Application.</p>
@@ -150,11 +150,11 @@
 			</div>
 			<div class="field">
 				<label for="h-dir">Work dir</label>
-				<input id="h-dir" bind:value={hostForm.workDir} placeholder="/run/dockercd" autocomplete="off" />
+				<input id="h-dir" bind:value={hostForm.workDir} placeholder="/run/omegacd" autocomplete="off" />
 				<span class="hint">Application files are copied here on the host.</span>
 			</div>
 		</div>
-		<p class="muted small">ssh:// hosts need their key in dockercd's known_hosts file.</p>
+		<p class="muted small">ssh:// hosts need their key in OmegaCD's known_hosts file.</p>
 		<div class="field">
 			<label for="h-ssh">SSH private key <span class="muted">({hostForm.hasSSHKey ? 'set' : 'not set'})</span></label>
 			<textarea id="h-ssh" bind:value={hostForm.sshPrivateKey} rows="3" placeholder={hostForm.hasSSHKey ? 'unchanged' : '-----BEGIN OPENSSH PRIVATE KEY-----'}></textarea>

@@ -18,7 +18,7 @@ import (
 	"github.com/docker/compose/v5/pkg/api"
 	"github.com/moby/moby/client"
 
-	"github.com/obleey/dockercd/internal/domain"
+	"github.com/obleey/omegacd/internal/domain"
 )
 
 const fixture = `
@@ -27,7 +27,7 @@ services:
     image: nginx:alpine
     environment:
       GREETING: ${GREETING}
-      LEAK: ${DOCKERCD_IT_SECRET:-none}
+      LEAK: ${OMEGACD_IT_SECRET:-none}
     volumes: [data:/data]
   once:
     image: busybox
@@ -55,7 +55,7 @@ func (e *Engine) local() *hostConn { return e.conns[domain.LocalHost] }
 
 func testApp(t *testing.T, e *Engine) domain.Application {
 	t.Helper()
-	app := domain.Application{Name: fmt.Sprintf("dockercd-it-%d", rand.IntN(1e9))}
+	app := domain.Application{Name: fmt.Sprintf("omegacd-it-%d", rand.IntN(1e9))}
 	t.Cleanup(func() {
 		_ = e.local().compose.Down(context.Background(), app.Name, api.DownOptions{RemoveOrphans: true, Volumes: true})
 	})
@@ -73,7 +73,7 @@ func TestValidateRejectsBuild(t *testing.T) {
 	e := newTestEngine(t)
 	dir := t.TempDir()
 	write(t, dir, "compose.yaml", "services:\n  app:\n    build: .\n")
-	err := e.Validate(context.Background(), domain.Application{Name: "dockercd-it-build"}, dir)
+	err := e.Validate(context.Background(), domain.Application{Name: "omegacd-it-build"}, dir)
 	if !errors.Is(err, domain.ErrInvalid) {
 		t.Fatalf("Validate = %v, want ErrInvalid", err)
 	}
@@ -86,7 +86,7 @@ func TestLifecycle(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "compose.yaml", fixture)
 	write(t, dir, ".env", "GREETING=hi\n")
-	t.Setenv("DOCKERCD_IT_SECRET", "leaked")
+	t.Setenv("OMEGACD_IT_SECRET", "leaked")
 
 	if err := e.Validate(ctx, app, dir); err != nil {
 		t.Fatal(err)
@@ -213,7 +213,7 @@ func TestProjectExistsUnmanaged(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "compose.yaml", "services:\n  sleeper:\n    image: busybox\n    command: [\"sleep\", \"3600\"]\n")
 
-	// Plain compose SDK, as `docker compose up` would do it: no dockercd label.
+	// Plain compose SDK, as `docker compose up` would do it: no omegacd label.
 	p, err := e.local().compose.LoadProject(ctx, api.ProjectLoadOptions{
 		ProjectName: app.Name, WorkingDir: dir, ConfigPaths: []string{filepath.Join(dir, "compose.yaml")},
 	})
@@ -550,5 +550,24 @@ services:
 	}
 	if diffs, _ := e.Diff(ctx, app, dir, ""); len(diffs) != 0 {
 		t.Fatalf("diff after prune: %+v", diffs)
+	}
+}
+
+func TestForceRecreateReplacesUnchangedContainers(t *testing.T) {
+	ctx := context.Background()
+	e := newTestEngine(t)
+	app := testApp(t, e)
+	dir := t.TempDir()
+	write(t, dir, "compose.yaml", "services:\n  web:\n    image: busybox\n    command: [\"sleep\", \"3600\"]\n")
+	id := func() string { ls, _ := e.Status(ctx, app); return ls.Containers[0].ID }
+	if err := e.Sync(ctx, app, dir, domain.SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	before := id()
+	if err := e.Sync(ctx, app, dir, domain.SyncOptions{}); err != nil || id() != before {
+		t.Fatalf("plain re-sync recreated an unchanged container (err %v)", err)
+	}
+	if err := e.Sync(ctx, app, dir, domain.SyncOptions{ForceRecreate: true}); err != nil || id() == before {
+		t.Fatalf("ForceRecreate kept the old container (err %v)", err)
 	}
 }

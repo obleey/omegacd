@@ -17,7 +17,7 @@
 	let busy = $state<Record<string, boolean>>({});
 
 	// Tiles or list, remembered per browser.
-	const VIEW_KEY = 'dockercd.appsView';
+	const VIEW_KEY = 'omegacd.appsView';
 	let view = $state<'tiles' | 'list'>('tiles');
 	onMount(() => {
 		try {
@@ -98,12 +98,12 @@
 	}
 </script>
 
-<svelte:head><title>Applications · dockercd</title></svelte:head>
+<svelte:head><title>Applications · OmegaCD</title></svelte:head>
 
 <div class="head">
 	<div>
 		<h1>Applications</h1>
-		<p class="muted small sub">{all.length} Application{all.length === 1 ? '' : 's'} managed by dockercd</p>
+		<p class="muted small sub">{all.length} Application{all.length === 1 ? '' : 's'} managed by OmegaCD</p>
 	</div>
 	<span class="spacer"></span>
 	<div class="search">

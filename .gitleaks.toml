@@ -1,0 +1,8 @@
+# Default gitleaks rules, plus an allowlist for the PEM header shown as a form placeholder in the UI.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "PEM placeholders in UI form fields"
+regexTarget = "line"
+regexes = ['''placeholder=\{.*-----BEGIN [A-Z ]*PRIVATE KEY-----''']

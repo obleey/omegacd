@@ -11,8 +11,8 @@ import (
 
 	"filippo.io/age"
 
-	"github.com/obleey/dockercd/internal/crypto"
-	"github.com/obleey/dockercd/internal/domain"
+	"github.com/obleey/omegacd/internal/crypto"
+	"github.com/obleey/omegacd/internal/domain"
 )
 
 var ctx = context.Background()
@@ -23,7 +23,7 @@ func open(t *testing.T) (*Store, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(t.TempDir(), "dockercd.db")
+	path := filepath.Join(t.TempDir(), "omegacd.db")
 	s, err := Open(path, crypto.NewSealer(id))
 	if err != nil {
 		t.Fatal(err)
@@ -215,7 +215,7 @@ func TestTokens(t *testing.T) {
 	s, _ := open(t)
 	tok, plain, err := s.CreateToken(ctx, "ci")
 	must(t, err)
-	if !strings.HasPrefix(plain, "dcd_") || len(plain) != 4+43 || tok.ID == 0 || tok.Hash != hashToken(plain) {
+	if !strings.HasPrefix(plain, "ocd_") || len(plain) != 4+43 || tok.ID == 0 || tok.Hash != hashToken(plain) {
 		t.Fatalf("token: %+v %q", tok, plain)
 	}
 	_, _, err = s.CreateToken(ctx, "ci")
@@ -223,7 +223,7 @@ func TestTokens(t *testing.T) {
 	_, _, err = s.CreateToken(ctx, "")
 	wantErr(t, err, domain.ErrInvalid)
 
-	_, err = s.VerifyToken(ctx, "dcd_wrong")
+	_, err = s.VerifyToken(ctx, "ocd_wrong")
 	wantErr(t, err, domain.ErrNotFound)
 	got, err := s.VerifyToken(ctx, plain)
 	must(t, err)
@@ -317,7 +317,7 @@ func TestHosts(t *testing.T) {
 	must(t, s.SaveHost(ctx, domain.Host{Name: "prod", URL: "tcp://prod:2376", TLSCA: "ca"}))
 	h, err := s.GetHost(ctx, "prod")
 	must(t, err)
-	if h.URL != "tcp://prod:2376" || h.WorkDir != "/run/dockercd" || h.SSHPrivateKey != "key" || h.TLSCA != "ca" ||
+	if h.URL != "tcp://prod:2376" || h.WorkDir != "/run/omegacd" || h.SSHPrivateKey != "key" || h.TLSCA != "ca" ||
 		h.TLSCert != "cert" || h.TLSKey != "tlskey" || !h.HasSSHKey || !h.HasTLS || h.CreatedAt.IsZero() {
 		t.Fatalf("got %+v", h)
 	}

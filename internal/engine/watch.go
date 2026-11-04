@@ -9,7 +9,7 @@ import (
 	"github.com/docker/compose/v5/pkg/api"
 	"github.com/moby/moby/client"
 
-	"github.com/obleey/dockercd/internal/domain"
+	"github.com/obleey/omegacd/internal/domain"
 )
 
 const hostRelist = 30 * time.Second

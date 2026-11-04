@@ -6,6 +6,8 @@
 	import { live, connectEvents, disconnectEvents, loadApps } from '#lib/live.svelte.ts';
 	import Icon from '#lib/Icon.svelte';
 	import Logo from '#lib/Logo.svelte';
+	import ThemeToggle from '#lib/ThemeToggle.svelte';
+	import Version from '#lib/Version.svelte';
 	import Toasts from '#lib/Toasts.svelte';
 
 	let { children } = $props();
@@ -57,7 +59,7 @@
 {:else if live.me}
 	<div class="shell">
 		<aside>
-			<a class="brand" href="/"><Logo size={30} /><span>dockercd</span></a>
+			<a class="brand" href="/"><Logo size={30} /><span>OmegaCD</span></a>
 			<nav aria-label="Main">
 				{#each nav as n (n.href)}
 					<a href={n.href} aria-current={n.match(page.url.pathname) ? 'page' : undefined}
@@ -65,11 +67,13 @@
 					>
 				{/each}
 			</nav>
+			<div class="ver"><Version /></div>
 			<div class="foot">
 				<span class="conn small" class:on={live.connected} title={live.connected ? 'Receiving live updates' : 'Live updates disconnected'}>
 					<span class="dot" aria-hidden="true"></span><span class="lbl">{live.connected ? 'Live' : 'Offline'}</span>
 				</span>
 				<a class="user small" href={pwPath} title="Change password"><Icon name="user" size={15} /><span class="lbl">{live.me.username}</span></a>
+				<ThemeToggle />
 				<button class="ghost sm icon-btn" onclick={logout} title="Log out" aria-label="Log out"><Icon name="logout" size={15} /></button>
 			</div>
 		</aside>
@@ -80,7 +84,7 @@
 		</div>
 	</div>
 {:else if meErr}
-	<p class="error" style="margin: 2rem">Cannot reach dockercd: {meErr}</p>
+	<p class="error" style="margin: 2rem">Cannot reach OmegaCD: {meErr}</p>
 {/if}
 
 <Toasts />
@@ -95,7 +99,7 @@
 	nav a:hover { background: color-mix(in srgb, var(--surface0) 60%, transparent); text-decoration: none; color: var(--text); }
 	nav a[aria-current='page'] { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
 	nav a[aria-current='page']::before { content: ''; position: absolute; left: -0.8rem; top: 20%; bottom: 20%; width: 3px; border-radius: 0 3px 3px 0; background: var(--accent); }
-	.foot { margin-top: auto; display: flex; align-items: center; gap: 0.3rem; flex-wrap: wrap; padding-top: 0.7rem; border-top: 1px solid var(--border); }
+	.foot { margin-top: 0; display: flex; align-items: center; gap: 0.3rem; flex-wrap: wrap; padding-top: 0.7rem; border-top: 1px solid var(--border); }
 	.conn { display: flex; align-items: center; gap: 0.5rem; color: var(--overlay1); padding: 0.3rem 0.5rem; width: 100%; }
 	.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--overlay0); position: relative; flex: none; }
 	.conn.on { color: var(--green); }
@@ -119,6 +123,7 @@
 		nav a { padding: 0.4rem 0.6rem; }
 		nav a[aria-current='page']::before { display: none; }
 		.foot { margin: 0 0 0 auto; padding: 0; border: 0; flex-wrap: nowrap; }
+		.ver { display: none; }
 		.conn { width: auto; padding: 0.3rem; }
 		.lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 		.user { flex: none; padding: 0.4rem; }
@@ -127,4 +132,5 @@
 	@media (max-width: 400px) {
 		nav a span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 	}
+	.ver { margin-top: auto; padding: 0 0.6rem 0.4rem; }
 </style>

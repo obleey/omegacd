@@ -17,7 +17,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
-	"github.com/obleey/dockercd/internal/domain"
+	"github.com/obleey/omegacd/internal/domain"
 )
 
 type fixture struct {

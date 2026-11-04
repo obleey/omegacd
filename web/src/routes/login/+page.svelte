@@ -4,6 +4,7 @@
 	import { live } from '#lib/live.svelte.ts';
 	import Logo from '#lib/Logo.svelte';
 	import Icon from '#lib/Icon.svelte';
+	import Version from '#lib/Version.svelte';
 
 	let username = $state('admin');
 	let password = $state('');
@@ -26,7 +27,7 @@
 	}
 </script>
 
-<svelte:head><title>Log in · dockercd</title></svelte:head>
+<svelte:head><title>Log in · OmegaCD</title></svelte:head>
 
 <div class="wrap">
 	<div class="glow g1" aria-hidden="true"></div>
@@ -34,7 +35,8 @@
 	<form class="card" onsubmit={submit}>
 		<div class="brand">
 			<Logo size={48} />
-			<h1>dockercd</h1>
+			<h1>OmegaCD</h1>
+			<Version />
 			<p class="muted">GitOps continuous delivery for Docker Compose</p>
 		</div>
 		{#if error}<p class="error" role="alert"><Icon name="alert" size={16} />{error}</p>{/if}

@@ -1,5 +1,5 @@
 <script lang="ts">
-	// dockercd mark: a container cube inside a Sync loop.
+	// OmegaCD mark: an Ω drawn as a path (not a font glyph) so it renders the same everywhere.
 	let { size = 28 }: { size?: number } = $props();
 	const uid = $props.id();
 </script>
@@ -12,11 +12,14 @@
 		</linearGradient>
 	</defs>
 	<rect width="32" height="32" rx="8" fill="url(#{uid}-g)" />
-	<g fill="none" stroke="var(--crust)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-		<path d="M16 10.5l5 2.8v5.4l-5 2.8-5-2.8v-5.4Z M11 13.3l5 2.8 5-2.8 M16 16.1v5.4" />
-		<path d="M24.5 13a9 9 0 0 0-15.6-3.6 M7.5 19a9 9 0 0 0 15.6 3.6" opacity="0.85" />
-		<path d="M8.9 6.2v3.2h3.2 M23.1 25.8v-3.2h-3.2" opacity="0.85" />
-	</g>
+	<path
+		d="M8 23.5h4.6a7.6 7.6 0 1 1 6.8 0H24"
+		fill="none"
+		stroke="var(--crust)"
+		stroke-width="2.6"
+		stroke-linecap="round"
+		stroke-linejoin="round"
+	/>
 </svg>
 
 <style>

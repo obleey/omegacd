@@ -20,7 +20,7 @@ import (
 	"github.com/docker/compose/v5/pkg/api"
 	"github.com/moby/moby/client"
 
-	"github.com/obleey/dockercd/internal/domain"
+	"github.com/obleey/omegacd/internal/domain"
 )
 
 type Config struct {
@@ -37,7 +37,7 @@ type hostConn struct {
 	compose api.Compose
 }
 
-const defaultWorkDir = "/run/dockercd"
+const defaultWorkDir = "/run/omegacd"
 
 func hostName(h string) string { return cmp.Or(h, domain.LocalHost) }
 
@@ -156,10 +156,10 @@ func (e *Engine) dial(h domain.Host) (*hostConn, error) {
 	return &hostConn{host: h, cli: dcli, compose: svc}, nil
 }
 
-// sshFlags makes ssh use only dockercd's key and known_hosts, never an agent, ~/.ssh or a prompt.
+// sshFlags makes ssh use only omegacd's key and known_hosts, never an agent, ~/.ssh or a prompt.
 func sshFlags(keyFile, knownHosts string) ([]string, error) {
 	if knownHosts == "" {
-		return nil, errors.New("ssh: no known_hosts file configured (DOCKERCD_SSH_KNOWN_HOSTS)")
+		return nil, errors.New("ssh: no known_hosts file configured (OMEGACD_SSH_KNOWN_HOSTS)")
 	}
 	if _, err := os.Stat(knownHosts); err != nil {
 		return nil, fmt.Errorf("ssh: known_hosts file: %w", err)

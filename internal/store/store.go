@@ -17,8 +17,8 @@ import (
 	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
 
-	"github.com/obleey/dockercd/internal/crypto"
-	"github.com/obleey/dockercd/internal/domain"
+	"github.com/obleey/omegacd/internal/crypto"
+	"github.com/obleey/omegacd/internal/domain"
 )
 
 const historyLimit = 20
@@ -430,7 +430,7 @@ func (s *Store) DeleteRegistryCredential(ctx context.Context, id int64) error {
 
 // ---- hosts ----
 
-const defaultWorkDir = "/run/dockercd"
+const defaultWorkDir = "/run/omegacd"
 
 const hostCols = `name, url, work_dir, ssh_private_key, tls_ca, tls_cert, tls_key, created_at`
 
@@ -533,7 +533,7 @@ func (s *Store) CreateToken(ctx context.Context, name string) (domain.APIToken, 
 	}
 	raw := make([]byte, 32)
 	rand.Read(raw)
-	plaintext := "dcd_" + base64.RawURLEncoding.EncodeToString(raw)
+	plaintext := "ocd_" + base64.RawURLEncoding.EncodeToString(raw)
 	t := domain.APIToken{Name: name, Hash: hashToken(plaintext), CreatedAt: time.Now().UTC()}
 	res, err := s.db.ExecContext(ctx, `INSERT INTO tokens (name, hash, created_at, last_used) VALUES (?,?,?,0)`,
 		t.Name, t.Hash, toUnix(t.CreatedAt))

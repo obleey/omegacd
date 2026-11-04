@@ -9,20 +9,20 @@ import (
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"github.com/obleey/dockercd/internal/domain"
+	"github.com/obleey/omegacd/internal/domain"
 )
 
 var (
 	syncOps = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "dockercd_sync_operations_total",
+		Name: "omegacd_sync_operations_total",
 		Help: "Finished Sync Operations by Application and phase.",
 	}, []string{"app", "phase"})
 	syncDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "dockercd_sync_duration_seconds",
+		Name:    "omegacd_sync_duration_seconds",
 		Help:    "Duration of Sync Operations.",
 		Buckets: []float64{1, 2, 5, 10, 30, 60, 120, 300, 600},
 	}, []string{"app"})
-	appInfoDesc = prometheus.NewDesc("dockercd_app_info", "Application Sync and Health Status (always 1).",
+	appInfoDesc = prometheus.NewDesc("omegacd_app_info", "Application Sync and Health Status (always 1).",
 		[]string{"app", "sync_status", "health"}, nil)
 )
 

@@ -1,4 +1,4 @@
-// Package crypto seals at-rest secrets with the dockercd age identity.
+// Package crypto seals at-rest secrets with the omegacd age identity.
 package crypto
 
 import (

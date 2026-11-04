@@ -18,8 +18,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/obleey/dockercd/internal/appdef"
-	"github.com/obleey/dockercd/internal/domain"
+	"github.com/obleey/omegacd/internal/appdef"
+	"github.com/obleey/omegacd/internal/domain"
 )
 
 const (
@@ -43,7 +43,7 @@ type Config struct {
 	PollInterval time.Duration
 	NormalizeURL func(string) string
 	ObserveSync  func(app string, phase domain.OpPhase, d time.Duration) // may be nil
-	SelfID       string                                                  // dockercd's own container ID or hostname, to refuse managing itself
+	SelfID       string                                                  // omegacd's own container ID or hostname, to refuse managing itself
 	Log          *slog.Logger
 }
 
@@ -77,6 +77,8 @@ func New(cfg Config) *Controller {
 
 // Run reconciles every Application each PollInterval and drives retries until ctx ends.
 func (c *Controller) Run(ctx context.Context) {
+	// restore before watching Docker events, so Self-Heal can't race the restore
+	c.restoreWorkDirs(ctx)
 	go c.watch(ctx)
 	c.reconcileAll(ctx)
 	poll := time.NewTicker(c.cfg.PollInterval)
@@ -93,6 +95,47 @@ func (c *Controller) Run(ctx context.Context) {
 			for _, name := range c.dueRetries() {
 				c.reconcileByName(ctx, name)
 			}
+		}
+	}
+}
+
+const triggerRestore = "restore"
+
+func composeFilesPresent(dir string, files []string) bool {
+	for _, f := range files {
+		if fi, err := os.Stat(filepath.Join(dir, f)); err != nil || !fi.Mode().IsRegular() {
+			return false
+		}
+	}
+	return len(files) > 0
+}
+
+// restoreWorkDirs re-creates the working files of deployed Applications that are gone, typically
+// because WorkDir lives on tmpfs (/run) and the machine rebooted: Docker restarts the containers
+// on its own, but their bind mounts then point at missing files. It re-syncs the deployed
+// Revision (not the target, so nothing new is deployed) and recreates the containers.
+func (c *Controller) restoreWorkDirs(ctx context.Context) {
+	apps, err := c.cfg.Store.ListApps(ctx)
+	if err != nil {
+		c.cfg.Log.Error("list applications", "err", err)
+		return
+	}
+	for _, a := range apps {
+		if a.Kind == domain.KindApps {
+			continue
+		}
+		// the compose files are the signal: after a reboot Docker may already have re-created
+		// missing bind-mount sources as empty directories, so the dir itself can be non-empty
+		if composeFilesPresent(c.appDir(a.Name), a.ComposeFiles) {
+			continue
+		}
+		last, err := c.cfg.Store.LastSucceededOp(ctx, a.Name)
+		if err != nil {
+			continue // never deployed: nothing to restore
+		}
+		c.cfg.Log.Warn("working files missing, restoring the deployed revision", "app", a.Name, "revision", short(last.Revision))
+		if _, err := c.startSync(a, last.Revision, triggerRestore); err != nil {
+			c.cfg.Log.Error("restore", "app", a.Name, "err", err)
 		}
 	}
 }
@@ -450,8 +493,9 @@ func (c *Controller) apply(ctx context.Context, a domain.Application, op domain.
 		return err
 	}
 	return c.cfg.Engine.Sync(ctx, a, dir, domain.SyncOptions{
-		Prune:      a.Prune,
-		Registries: regs,
+		Prune:         a.Prune,
+		ForceRecreate: op.Trigger == triggerRestore,
+		Registries:    regs,
 		Progress: func(p domain.ProgressEvent) {
 			p.OpID = op.ID
 			c.emit(domain.Event{Type: "progress", App: a.Name, Data: p})
@@ -469,7 +513,7 @@ func (c *Controller) refuseSelf(ctx context.Context, a domain.Application) error
 	}
 	for _, ct := range live.Containers {
 		if strings.HasPrefix(ct.ID, c.cfg.SelfID) || ct.Name == c.cfg.SelfID {
-			return fmt.Errorf("%w: application %q contains dockercd itself", domain.ErrInvalid, a.Name)
+			return fmt.Errorf("%w: application %q contains omegacd itself", domain.ErrInvalid, a.Name)
 		}
 	}
 	return nil

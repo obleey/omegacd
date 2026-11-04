@@ -88,7 +88,7 @@ func runHelper(ctx context.Context, hc *hostConn, cmd []string, stage io.Reader)
 	}
 	appsDir := path.Dir(remoteAppDir(hc.host, "x"))
 	created, err := c.ContainerCreate(ctx, client.ContainerCreateOptions{
-		Config: &container.Config{Image: helperImage, Cmd: cmd, Labels: map[string]string{"dev.dockercd.helper": "files"}},
+		Config: &container.Config{Image: helperImage, Cmd: cmd, Labels: map[string]string{"dev.omegacd.helper": "files"}},
 		HostConfig: &container.HostConfig{
 			Binds:       []string{appsDir + ":/apps"},
 			NetworkMode: "none",

@@ -1,4 +1,4 @@
-// Package secrets decrypts SOPS Encrypted Secrets with the dockercd age key.
+// Package secrets decrypts SOPS Encrypted Secrets with the omegacd age key.
 package secrets
 
 import (
@@ -11,7 +11,7 @@ import (
 	"github.com/getsops/sops/v3/cmd/sops/formats"
 	"github.com/getsops/sops/v3/decrypt"
 
-	"github.com/obleey/dockercd/internal/domain"
+	"github.com/obleey/omegacd/internal/domain"
 )
 
 type Decryptor struct{}

@@ -152,7 +152,7 @@ export class ApiError extends Error {
 
 export async function api<T = unknown>(method: string, path: string, body?: unknown): Promise<T> {
 	const headers: Record<string, string> = { Accept: 'application/json' };
-	if (method !== 'GET') headers['X-Requested-With'] = 'dockercd';
+	if (method !== 'GET') headers['X-Requested-With'] = 'omegacd';
 	if (body !== undefined) headers['Content-Type'] = 'application/json';
 	const res = await fetch('/api' + path, {
 		method,

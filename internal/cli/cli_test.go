@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/obleey/dockercd/internal/domain"
+	"github.com/obleey/omegacd/internal/domain"
 )
 
 // fakeAPI serves canned responses keyed by "METHOD path"; a func value is called per request.
@@ -26,7 +26,7 @@ type fakeAPI struct {
 }
 
 func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("Authorization") != "Bearer dcd_good" {
+	if r.Header.Get("Authorization") != "Bearer ocd_good" {
 		w.WriteHeader(http.StatusUnauthorized)
 		json.NewEncoder(w).Encode(map[string]string{"error": "invalid token"})
 		return
@@ -78,11 +78,11 @@ func run(t *testing.T, srv *httptest.Server, env map[string]string, stdin string
 		env["XDG_CONFIG_HOME"] = t.TempDir()
 	}
 	if srv != nil {
-		if _, ok := env["DOCKERCD_SERVER"]; !ok {
-			env["DOCKERCD_SERVER"] = srv.URL
+		if _, ok := env["OMEGACD_SERVER"]; !ok {
+			env["OMEGACD_SERVER"] = srv.URL
 		}
-		if _, ok := env["DOCKERCD_TOKEN"]; !ok {
-			env["DOCKERCD_TOKEN"] = "dcd_good"
+		if _, ok := env["OMEGACD_TOKEN"]; !ok {
+			env["OMEGACD_TOKEN"] = "ocd_good"
 		}
 	}
 	var out, errOut bytes.Buffer
@@ -137,8 +137,8 @@ func TestListAndGet(t *testing.T) {
 
 func TestUnauthorized(t *testing.T) {
 	_, srv := newAPI(t, nil)
-	r := run(t, srv, map[string]string{"DOCKERCD_TOKEN": "dcd_bad"}, "", "app", "list")
-	if r.code != 1 || !strings.Contains(r.stderr, "run dockercd login") {
+	r := run(t, srv, map[string]string{"OMEGACD_TOKEN": "ocd_bad"}, "", "app", "list")
+	if r.code != 1 || !strings.Contains(r.stderr, "run omegacd login") {
 		t.Fatalf("%+v", r)
 	}
 }
@@ -230,34 +230,34 @@ func TestLoginWritesConfigAndEnvOverrides(t *testing.T) {
 		"GET /api/apps":    []domain.AppView{},
 	})
 	cfgDir := t.TempDir()
-	env := map[string]string{"XDG_CONFIG_HOME": cfgDir, "DOCKERCD_SERVER": "", "DOCKERCD_TOKEN": ""}
+	env := map[string]string{"XDG_CONFIG_HOME": cfgDir, "OMEGACD_SERVER": "", "OMEGACD_TOKEN": ""}
 
-	if r := run(t, srv, env, "", "login", "--server", srv.URL, "--token", "dcd_bad"); r.code != 1 {
+	if r := run(t, srv, env, "", "login", "--server", srv.URL, "--token", "ocd_bad"); r.code != 1 {
 		t.Fatalf("bad token login: %+v", r)
 	}
-	r := run(t, srv, env, "", "login", "--server", srv.URL+"/", "--token", "dcd_good")
+	r := run(t, srv, env, "", "login", "--server", srv.URL+"/", "--token", "ocd_good")
 	if r.code != 0 {
 		t.Fatalf("login: %+v", r)
 	}
-	p := filepath.Join(cfgDir, "dockercd", "config.json")
+	p := filepath.Join(cfgDir, "omegacd", "config.json")
 	st, err := os.Stat(p)
 	if err != nil || st.Mode().Perm() != 0o600 {
 		t.Fatalf("config file: %v %v", st, err)
 	}
 	b, _ := os.ReadFile(p)
 	var cfg config
-	if json.Unmarshal(b, &cfg) != nil || cfg.Server != srv.URL || cfg.Token != "dcd_good" {
+	if json.Unmarshal(b, &cfg) != nil || cfg.Server != srv.URL || cfg.Token != "ocd_good" {
 		t.Fatalf("config: %s", b)
 	}
 	if r := run(t, srv, env, "", "app", "list"); r.code != 0 {
 		t.Fatalf("list from config: %+v", r)
 	}
 	// the environment beats the config file
-	env["DOCKERCD_TOKEN"] = "dcd_bad"
-	if r := run(t, srv, env, "", "app", "list"); r.code != 1 || !strings.Contains(r.stderr, "dockercd login") {
+	env["OMEGACD_TOKEN"] = "ocd_bad"
+	if r := run(t, srv, env, "", "app", "list"); r.code != 1 || !strings.Contains(r.stderr, "omegacd login") {
 		t.Fatalf("env override: %+v", r)
 	}
-	env["DOCKERCD_TOKEN"] = ""
+	env["OMEGACD_TOKEN"] = ""
 	if r := run(t, srv, env, "", "logout"); r.code != 0 {
 		t.Fatalf("logout: %+v", r)
 	}

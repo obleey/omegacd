@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/obleey/dockercd/internal/domain"
+	"github.com/obleey/omegacd/internal/domain"
 )
 
 // ---- fakes ----
@@ -210,6 +210,7 @@ type fakeEngine struct {
 	files        []domain.Resource
 	hostsChanged []string
 	lastPrune    bool
+	lastForce    bool
 	onRemove     func(domain.Application) // runs after Remove, outside the lock: simulates Docker events mid-delete
 }
 
@@ -224,6 +225,7 @@ func (e *fakeEngine) Sync(_ context.Context, _ domain.Application, _ string, opt
 	defer e.mu.Unlock()
 	e.syncs++
 	e.lastPrune = opts.Prune
+	e.lastForce = opts.ForceRecreate
 	return e.syncErr
 }
 func (e *fakeEngine) Remove(_ context.Context, a domain.Application) error {
@@ -514,10 +516,10 @@ func TestSyncRefusesSelf(t *testing.T) {
 	r := newRig(t)
 	r.c.cfg.SelfID = "abc123"
 	r.e.live.Containers = []domain.Container{{ID: "abc123def456"}}
-	r.c.CreateApp(t.Context(), app("dockercd"))
-	r.c.Sync(t.Context(), "dockercd", domain.SyncRequest{})
-	r.waitIdle(t, "dockercd")
-	if ops, _ := r.st.ListOps(t.Context(), "dockercd"); ops[0].Phase != domain.OpFailed || r.e.syncCount() != 0 {
+	r.c.CreateApp(t.Context(), app("omegacd"))
+	r.c.Sync(t.Context(), "omegacd", domain.SyncRequest{})
+	r.waitIdle(t, "omegacd")
+	if ops, _ := r.st.ListOps(t.Context(), "omegacd"); ops[0].Phase != domain.OpFailed || r.e.syncCount() != 0 {
 		t.Fatalf("self sync not refused: %+v", ops[0])
 	}
 }
@@ -842,5 +844,35 @@ func TestOneOffPruneIsNotSaved(t *testing.T) {
 	}
 	if got, _ := r.st.GetApp(ctx, "web"); got.Prune {
 		t.Fatal("one-off prune was saved on the Application")
+	}
+}
+
+func TestRestoreWorkDirsAfterReboot(t *testing.T) {
+	r := newRig(t)
+	ctx := t.Context()
+	r.c.CreateApp(ctx, app("web"))
+	r.c.CreateApp(ctx, app("intact"))
+	for _, n := range []string{"web", "intact"} {
+		r.c.Sync(ctx, n, domain.SyncRequest{})
+		r.waitIdle(t, n)
+	}
+	r.g.set("bbbbbbbb")             // a newer target must NOT be deployed by a restore
+	os.RemoveAll(r.c.appDir("web")) // tmpfs wiped by a reboot
+	// ...and Docker re-created a missing bind-mount source as an empty directory
+	os.MkdirAll(filepath.Join(r.c.appDir("web"), "nginx", "default.conf"), 0o755)
+	os.MkdirAll(r.c.appDir("never"), 0o750)
+	syncs := r.e.syncCount()
+
+	r.c.restoreWorkDirs(ctx)
+	r.waitIdle(t, "web")
+	if r.e.syncCount() != syncs+1 {
+		t.Fatalf("restores: %d, want 1 (only web)", r.e.syncCount()-syncs)
+	}
+	ops, _ := r.st.ListOps(ctx, "web")
+	if ops[0].Trigger != triggerRestore || ops[0].Revision != "aaaaaaaa" || ops[0].Phase != domain.OpSucceeded {
+		t.Fatalf("restore op = %+v", ops[0])
+	}
+	if !r.e.lastForce {
+		t.Fatal("restore did not force-recreate containers")
 	}
 }

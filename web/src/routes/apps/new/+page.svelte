@@ -5,7 +5,7 @@
 	import AppForm from '#lib/AppForm.svelte';
 </script>
 
-<svelte:head><title>New Application · dockercd</title></svelte:head>
+<svelte:head><title>New Application · OmegaCD</title></svelte:head>
 
 <nav class="crumbs small" aria-label="Breadcrumb"><a href="/">Applications</a> / <span aria-current="page">New</span></nav>
 <h1>New Application</h1>

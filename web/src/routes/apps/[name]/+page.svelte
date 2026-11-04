@@ -155,7 +155,7 @@
 	}
 </script>
 
-<svelte:head><title>{name} · dockercd</title></svelte:head>
+<svelte:head><title>{name} · OmegaCD</title></svelte:head>
 
 <nav class="crumbs small" aria-label="Breadcrumb">
 	<a href="/">Applications</a>
@@ -337,7 +337,7 @@
 	</Dialog>
 
 	<Dialog bind:open={delOpen} title="Delete {app.name}?">
-		<p>The Application is removed from dockercd.</p>
+		<p>The Application is removed from omegacd.</p>
 		<div class="check">
 			<input id="cascade" type="checkbox" bind:checked={cascade} />
 			<label for="cascade">Also remove containers and networks</label>

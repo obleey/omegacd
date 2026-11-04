@@ -29,7 +29,7 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 
-	"github.com/obleey/dockercd/internal/domain"
+	"github.com/obleey/omegacd/internal/domain"
 )
 
 var _ domain.Engine = (*Engine)(nil)
@@ -89,7 +89,7 @@ func (e *Engine) load(ctx context.Context, app domain.Application, dir string) (
 	for i, f := range files {
 		paths[i] = filepath.Join(dir, f)
 	}
-	// Interpolation sees dir/.env only, never dockercd's process env (unlike compose's
+	// Interpolation sees dir/.env only, never omegacd's process env (unlike compose's
 	// default WithOsEnv): the Desired State must come from Git alone, and our env holds secrets.
 	opts, err := cli.NewProjectOptions(paths,
 		cli.WithWorkingDirectory(dir),
@@ -127,7 +127,7 @@ func (e *Engine) load(ctx context.Context, app domain.Application, dir string) (
 // contentHashLabel carries a hash of the files a service reads but compose does not hash:
 // file-based configs and secrets, and bind-mounted regular files inside the project dir.
 // Labels are part of the config hash, so a content change recreates the container.
-const contentHashLabel = "dev.dockercd.content-hash"
+const contentHashLabel = "dev.omegacd.content-hash"
 
 func addContentHashes(p *types.Project) error {
 	for name, s := range p.Services {
@@ -401,9 +401,13 @@ func (e *Engine) Sync(ctx context.Context, app domain.Application, dir string, o
 	}
 	// Up pulls by each service's pull_policy (default: only missing images), so a registry outage
 	// doesn't fail Syncs and Self-Heals whose images are already present.
+	recreate := api.RecreateDiverged
+	if opts.ForceRecreate {
+		recreate = api.RecreateForce
+	}
 	err = svc.Up(ctx, p, api.UpOptions{Create: api.CreateOptions{
 		RemoveOrphans:        opts.Prune,
-		Recreate:             api.RecreateDiverged,
+		Recreate:             recreate,
 		RecreateDependencies: api.RecreateDiverged,
 	}})
 	if err != nil {
@@ -682,7 +686,7 @@ func projectFilter(project string) client.Filters {
 	return make(client.Filters).Add("label", api.ProjectLabel+"="+project)
 }
 
-// authCLI hands compose a config file holding only dockercd's registry credentials.
+// authCLI hands compose a config file holding only omegacd's registry credentials.
 type authCLI struct {
 	command.Cli
 	cf *configfile.ConfigFile

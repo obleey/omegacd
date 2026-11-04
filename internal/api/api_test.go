@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/obleey/omegacd/internal/version"
 	"io"
 	"log/slog"
 	"net/http"
@@ -20,7 +21,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/obleey/dockercd/internal/domain"
+	"github.com/obleey/omegacd/internal/domain"
 )
 
 type fakeStore struct {
@@ -251,7 +252,7 @@ func (e *env) do(method, path, body string, hdr ...string) (int, string) {
 	e.t.Helper()
 	req, _ := http.NewRequest(method, e.srv.URL+path, strings.NewReader(body))
 	if method != http.MethodGet {
-		req.Header.Set("X-Requested-With", "dockercd")
+		req.Header.Set("X-Requested-With", "omegacd")
 	}
 	for i := 0; i+1 < len(hdr); i += 2 {
 		req.Header.Set(hdr[i], hdr[i+1])
@@ -553,4 +554,13 @@ func TestHostsAPI(t *testing.T) {
 		t.Fatal(b)
 	}
 	e.expect("DELETE", "/api/settings/hosts/prod", "", 204)
+}
+
+func TestVersionIsPublic(t *testing.T) {
+	e := newEnv(t, false)
+	version.Version = "v1.2.3"
+	t.Cleanup(func() { version.Version = "" })
+	if b := e.expect("GET", "/api/version", "", 200); !strings.Contains(b, `"version":"v1.2.3"`) {
+		t.Fatal(b)
+	}
 }

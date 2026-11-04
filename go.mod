@@ -1,4 +1,4 @@
-module github.com/obleey/dockercd
+module github.com/obleey/omegacd
 
 go 1.26.10
 

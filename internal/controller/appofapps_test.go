@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/obleey/dockercd/internal/domain"
+	"github.com/obleey/omegacd/internal/domain"
 )
 
 func parentApp(name string) domain.Application {

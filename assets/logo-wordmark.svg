@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="80" viewBox="0 0 360 80" role="img" aria-label="OmegaCD">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#cba6f7"/>
+      <stop offset="1" stop-color="#89b4fa"/>
+    </linearGradient>
+    <linearGradient id="t" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#a476e8"/>
+      <stop offset="1" stop-color="#5b8def"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(4 4) scale(2.25)">
+    <rect width="32" height="32" rx="8" fill="url(#g)"/>
+    <path d="M8 23.5h4.6a7.6 7.6 0 1 1 6.8 0H24" fill="none" stroke="#11111b" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <!-- mid-tone gradient text stays readable on both GitHub light and dark backgrounds -->
+  <text x="94" y="55" font-family="Inter, 'Segoe UI', -apple-system, Helvetica, Arial, sans-serif" font-size="44" font-weight="700" letter-spacing="-0.5" fill="url(#t)">OmegaCD</text>
+</svg>

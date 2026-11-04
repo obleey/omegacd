@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/obleey/dockercd/internal/domain"
+	"github.com/obleey/omegacd/internal/domain"
 )
 
 func TestParse(t *testing.T) {

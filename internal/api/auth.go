@@ -17,12 +17,12 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/obleey/dockercd/internal/domain"
+	"github.com/obleey/omegacd/internal/domain"
 )
 
 const (
 	adminUser     = "admin"
-	sessionCookie = "dockercd_session"
+	sessionCookie = "omegacd_session"
 	sessionTTL    = 24 * time.Hour
 	maxBackoff    = 5 * time.Minute
 	maxLogins     = 10000 // tracked client IPs
@@ -140,7 +140,7 @@ func (s *server) auth(next http.Handler) http.Handler {
 			writeStatus(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
-		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Header.Get("X-Requested-With") != "dockercd" {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Header.Get("X-Requested-With") != "omegacd" {
 			writeStatus(w, http.StatusForbidden, "missing X-Requested-With header")
 			return
 		}

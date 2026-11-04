@@ -27,7 +27,7 @@ import (
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
 
-	"github.com/obleey/dockercd/internal/domain"
+	"github.com/obleey/omegacd/internal/domain"
 )
 
 var _ domain.Git = (*Git)(nil)
@@ -134,7 +134,7 @@ func (g *Git) auth(ctx context.Context, url string) (transport.AuthMethod, error
 			return nil, fmt.Errorf("ssh key for %s: %w", best.URLPrefix, err)
 		}
 		if g.KnownHostsFile == "" {
-			return nil, fmt.Errorf("ssh to %s: no known_hosts file configured (DOCKERCD_SSH_KNOWN_HOSTS)", url)
+			return nil, fmt.Errorf("ssh to %s: no known_hosts file configured (OMEGACD_SSH_KNOWN_HOSTS)", url)
 		}
 		if keys.HostKeyCallback, err = gitssh.NewKnownHostsCallback(g.KnownHostsFile); err != nil {
 			return nil, fmt.Errorf("load known_hosts: %w", err)

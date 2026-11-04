@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/obleey/dockercd/internal/appdef"
-	"github.com/obleey/dockercd/internal/domain"
+	"github.com/obleey/omegacd/internal/appdef"
+	"github.com/obleey/omegacd/internal/domain"
 )
 
 func (c *CLI) appList(ctx context.Context, args []string) error {
@@ -291,7 +291,7 @@ func (c *CLI) appRollback(ctx context.Context, args []string) error {
 	}
 	id, err := strconv.ParseInt(pos[1], 10, 64)
 	if err != nil {
-		return fmt.Errorf("OP_ID %q is not a number (see dockercd app history %s)", pos[1], pos[0])
+		return fmt.Errorf("OP_ID %q is not a number (see omegacd app history %s)", pos[1], pos[0])
 	}
 	cl, err := c.client(o)
 	if err != nil {

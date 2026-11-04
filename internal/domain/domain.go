@@ -1,4 +1,4 @@
-// Package domain holds the types and ports shared by every dockercd package.
+// Package domain holds the types and ports shared by every omegacd package.
 // Terms follow GLOSSARY.md: Application, Host, Repository, Revision, Sync, ...
 package domain
 
@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// LocalHost is the built-in Host: the Docker engine dockercd talks to via DOCKER_HOST / the socket.
+// LocalHost is the built-in Host: the Docker engine omegacd talks to via DOCKER_HOST / the socket.
 const LocalHost = "local"
 
 // Application kinds.
@@ -18,14 +18,14 @@ const (
 	KindApps    = "apps"
 )
 
-// ManagedLabel is set on every container dockercd creates; its value is the Application name.
-const ManagedLabel = "dev.dockercd.application"
+// ManagedLabel is set on every container omegacd creates; its value is the Application name.
+const ManagedLabel = "dev.omegacd.application"
 
 var (
 	ErrNotFound      = errors.New("not found")
 	ErrAlreadyExists = errors.New("already exists")
 	ErrInvalid       = errors.New("invalid")
-	ErrUnmanaged     = errors.New("compose project exists and is not managed by dockercd")
+	ErrUnmanaged     = errors.New("compose project exists and is not managed by omegacd")
 	ErrBusy          = errors.New("a sync operation is already running")
 )
 
@@ -101,7 +101,7 @@ type RepoCredential struct {
 type Host struct {
 	Name          string    `json:"name"`
 	URL           string    `json:"url"`     // ssh://user@server[:port] or tcp://server:2376
-	WorkDir       string    `json:"workDir"` // Application files are copied here on the host; default /run/dockercd
+	WorkDir       string    `json:"workDir"` // Application files are copied here on the host; default /run/omegacd
 	SSHPrivateKey string    `json:"-"`
 	TLSCA         string    `json:"-"` // PEM; TLS is used when TLSCert and TLSKey are set
 	TLSCert       string    `json:"-"`
@@ -306,6 +306,9 @@ type SyncOptions struct {
 	Prune      bool
 	Registries []RegistryCredential
 	Progress   func(ProgressEvent) // may be nil
+	// ForceRecreate recreates every container even if its config is unchanged
+	// (after a restore, bind mounts must be re-attached to the restored files).
+	ForceRecreate bool
 }
 
 // Engine runs Compose projects on a Host. dir is the Application's stable working directory
@@ -322,7 +325,7 @@ type Engine interface {
 	Remove(ctx context.Context, app Application) error
 	// Status returns the Live State, including Health per container and overall.
 	Status(ctx context.Context, app Application) (LiveState, error)
-	// ProjectExists reports whether a Compose project with this name has containers on host, and whether dockercd manages it.
+	// ProjectExists reports whether a Compose project with this name has containers on host, and whether omegacd manages it.
 	ProjectExists(ctx context.Context, host, name string) (exists, managed bool, err error)
 	// HostStatus contacts the host's Docker engine.
 	HostStatus(ctx context.Context, host string) HostStatus

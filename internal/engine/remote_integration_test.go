@@ -18,7 +18,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/obleey/dockercd/internal/domain"
+	"github.com/obleey/omegacd/internal/domain"
 )
 
 // dind is a docker:dind container serving its engine over TLS and, if openssh could be installed, over ssh.
@@ -73,7 +73,7 @@ func startDind(t *testing.T) dind {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	d.tls = domain.Host{Name: "dind-tls", URL: "tcp://127.0.0.1:" + port("2376"), WorkDir: "/srv/dockercd",
+	d.tls = domain.Host{Name: "dind-tls", URL: "tcp://127.0.0.1:" + port("2376"), WorkDir: "/srv/omegacd",
 		TLSCA: read("ca.pem"), TLSCert: read("cert.pem"), TLSKey: read("key.pem")}
 
 	// ssh: openssh in the dind container, root logs in with a generated key; dial-stdio uses the local socket.
@@ -98,7 +98,7 @@ cat /etc/ssh/ssh_host_ed25519_key.pub`
 		sshPort := port("22")
 		d.knownHosts = filepath.Join(t.TempDir(), "known_hosts")
 		os.WriteFile(d.knownHosts, []byte("[127.0.0.1]:"+sshPort+" "+out[strings.LastIndex(out, "ssh-ed25519"):]+"\n"), 0o600)
-		d.ssh = domain.Host{Name: "dind-ssh", URL: "ssh://root@127.0.0.1:" + sshPort, WorkDir: "/srv/dockercd-ssh",
+		d.ssh = domain.Host{Name: "dind-ssh", URL: "ssh://root@127.0.0.1:" + sshPort, WorkDir: "/srv/omegacd-ssh",
 			SSHPrivateKey: string(pem.EncodeToMemory(block))}
 	}
 	return d
@@ -158,7 +158,7 @@ func remoteLifecycle(t *testing.T, e *Engine, d dind, h domain.Host) {
 	if st := e.HostStatus(ctx, h.Name); !st.Connected || st.ServerVersion == "" || st.Name != h.Name {
 		t.Fatalf("HostStatus = %+v", st)
 	}
-	app := domain.Application{Name: fmt.Sprintf("dockercd-it-%d", mrand.IntN(1e9)), Host: h.Name}
+	app := domain.Application{Name: fmt.Sprintf("omegacd-it-%d", mrand.IntN(1e9)), Host: h.Name}
 	t.Cleanup(func() { e.Remove(context.Background(), app) })
 	remote := remoteAppDir(h, app.Name)
 	inDind := func(args ...string) (string, error) { return dockerCmd(append([]string{"exec", d.id}, args...)...) }
@@ -210,7 +210,7 @@ secrets:
 	if out, err := exec.Command("cp", "-a", dir+"/.", stage).CombinedOutput(); err != nil {
 		t.Fatal(string(out))
 	}
-	if diffs, err := e.Diff(ctx, app, stage, "/var/lib/dockercd/apps/"+app.Name); err != nil || len(diffs) != 0 {
+	if diffs, err := e.Diff(ctx, app, stage, "/var/lib/omegacd/apps/"+app.Name); err != nil || len(diffs) != 0 {
 		t.Fatalf("Diff from staging = %+v, %v; want empty", diffs, err)
 	}
 	if exists, managed, err := e.ProjectExists(ctx, h.Name, app.Name); err != nil || !exists || !managed {

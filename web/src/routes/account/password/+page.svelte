@@ -29,7 +29,7 @@
 	}
 </script>
 
-<svelte:head><title>Change password · dockercd</title></svelte:head>
+<svelte:head><title>Change password · OmegaCD</title></svelte:head>
 
 <h1>Change password</h1>
 {#if live.me?.mustChangePassword}

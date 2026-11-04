@@ -4,7 +4,15 @@
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='4' fill='%23cba6f7'/></svg>" />
-		<title>dockercd</title>
+		<title>OmegaCD</title>
+		<script>
+			// apply the stored theme before first paint (see ThemeToggle.svelte)
+			try {
+				const t = localStorage.getItem('omegacd.theme');
+				if (t === 'light') document.documentElement.setAttribute('data-theme', 'latte');
+				if (t === 'dark') document.documentElement.setAttribute('data-theme', 'mocha');
+			} catch {}
+		</script>
 		%sveltekit.head%
 	</head>
 	<body>

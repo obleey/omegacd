@@ -14,7 +14,7 @@ import (
 	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/moby/moby/client"
 
-	"github.com/obleey/dockercd/internal/domain"
+	"github.com/obleey/omegacd/internal/domain"
 )
 
 func (e *Engine) ProjectFiles(ctx context.Context, app domain.Application, dir string) ([]domain.Resource, error) {

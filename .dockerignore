@@ -1,0 +1,18 @@
+# Never send local state or secrets into the build context
+data/
+*.agekey
+*.db
+.env
+
+# Build outputs and dependencies are rebuilt inside the image
+bin/
+dist/
+web/node_modules/
+web/build/
+web/.svelte-kit/
+
+.git/
+.github/
+GLOSSARY.md
+docs/
+assets/

@@ -25,3 +25,16 @@ web/build/
 .DS_Store
 .idea/
 .vscode/
+
+# Keys and credentials: never commit, whatever their location
+*.key
+*.pem
+*.p12
+*.pfx
+*.agekey
+id_rsa*
+id_ed25519*
+id_ecdsa*
+known_hosts
+.env.*
+keys/

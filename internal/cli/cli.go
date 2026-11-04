@@ -1,4 +1,4 @@
-// Package cli is the dockercd command-line client. It talks to a dockercd server over its HTTP API
+// Package cli is the omegacd command-line client. It talks to a omegacd server over its HTTP API
 // with an API token.
 package cli
 
@@ -11,13 +11,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/obleey/omegacd/internal/version"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"runtime/debug"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -57,7 +57,7 @@ type exitError struct {
 
 func (e *exitError) Error() string { return e.msg }
 
-var errUnauthorized = errors.New("not logged in or token invalid — run dockercd login")
+var errUnauthorized = errors.New("not logged in or token invalid — run omegacd login")
 
 type command struct {
 	usage string
@@ -92,11 +92,11 @@ var order = []string{"login", "logout", "version", "app list", "app get", "app c
 	"app diff", "app history", "app rollback", "app wait", "app logs", "app export", "host list", "host test"}
 
 func (c *CLI) usage() {
-	fmt.Fprintln(c.Stderr, "Usage: dockercd [server]   run the server\n       dockercd COMMAND   talk to a server\n\nCommands:")
+	fmt.Fprintln(c.Stderr, "Usage: omegacd [server]   run the server\n       omegacd COMMAND   talk to a server\n\nCommands:")
 	for _, k := range order {
 		fmt.Fprintln(c.Stderr, "  "+commands[k].usage)
 	}
-	fmt.Fprintln(c.Stderr, "\nEvery command takes --server URL, --token TOKEN (or DOCKERCD_SERVER, DOCKERCD_TOKEN) and -o table|json.")
+	fmt.Fprintln(c.Stderr, "\nEvery command takes --server URL, --token TOKEN (or OMEGACD_SERVER, OMEGACD_TOKEN) and -o table|json.")
 }
 
 // Run runs one CLI command and returns the exit code.
@@ -145,8 +145,8 @@ type opts struct {
 func (c *CLI) flags(name string, o *opts) *flag.FlagSet {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(c.Stderr)
-	fs.Usage = func() { fmt.Fprintln(c.Stderr, "Usage: dockercd "+commands[name].usage); fs.PrintDefaults() }
-	fs.StringVar(&o.server, "server", "", "dockercd server URL")
+	fs.Usage = func() { fmt.Fprintln(c.Stderr, "Usage: omegacd "+commands[name].usage); fs.PrintDefaults() }
+	fs.StringVar(&o.server, "server", "", "omegacd server URL")
 	fs.StringVar(&o.token, "token", "", "API token")
 	fs.StringVar(&o.output, "output", "table", "output format: table or json")
 	fs.StringVar(&o.output, "o", "table", "shorthand for --output")
@@ -199,7 +199,7 @@ func (c *CLI) configPath() (string, error) {
 		}
 		dir = filepath.Join(home, ".config")
 	}
-	return filepath.Join(dir, "dockercd", "config.json"), nil
+	return filepath.Join(dir, "omegacd", "config.json"), nil
 }
 
 // client resolves server and token: flag, then environment, then the config file.
@@ -212,8 +212,8 @@ func (c *CLI) client(o opts) (*client, error) {
 			}
 		}
 	}
-	server := first(o.server, c.Getenv("DOCKERCD_SERVER"), cfg.Server)
-	token := first(o.token, c.Getenv("DOCKERCD_TOKEN"), cfg.Token)
+	server := first(o.server, c.Getenv("OMEGACD_SERVER"), cfg.Server)
+	token := first(o.token, c.Getenv("OMEGACD_TOKEN"), cfg.Token)
 	if server == "" || token == "" {
 		return nil, errUnauthorized
 	}
@@ -280,11 +280,7 @@ func (c *CLI) logout(ctx context.Context, args []string) error {
 }
 
 func (c *CLI) version(ctx context.Context, args []string) error {
-	v := "(devel)"
-	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" {
-		v = bi.Main.Version
-	}
-	fmt.Fprintln(c.Stdout, "dockercd "+v)
+	fmt.Fprintln(c.Stdout, "omegacd "+version.String())
 	return nil
 }
 

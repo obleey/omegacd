@@ -1,10 +1,11 @@
-// Package api serves the dockercd HTTP API, webhooks, metrics and the embedded UI.
+// Package api serves the omegacd HTTP API, webhooks, metrics and the embedded UI.
 package api
 
 import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/obleey/omegacd/internal/version"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -14,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/obleey/dockercd/internal/domain"
+	"github.com/obleey/omegacd/internal/domain"
 )
 
 type Config struct {
@@ -82,6 +83,10 @@ func New(cfg Config) http.Handler {
 	})
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
+	// public, like /healthz: the version is printed on the login page and by `omegacd version`
+	mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"version": version.String()})
+	})
 	mux.Handle("GET /metrics", metricsHandler(cfg.Controller))
 	mux.Handle("/", uiHandler(cfg.UI))
 
@@ -89,7 +94,7 @@ func New(cfg Config) http.Handler {
 }
 
 func isPublic(p string) bool {
-	return !strings.HasPrefix(p, "/api/") || p == "/api/auth/login" || strings.HasPrefix(p, "/api/webhooks/")
+	return !strings.HasPrefix(p, "/api/") || p == "/api/auth/login" || p == "/api/version" || strings.HasPrefix(p, "/api/webhooks/")
 }
 
 type statusWriter struct {
@@ -158,7 +163,7 @@ func decode(w http.ResponseWriter, r *http.Request, v any) error {
 	return nil
 }
 
-const placeholder = `<!doctype html><title>dockercd</title><p>dockercd is running. The UI is not embedded in this build; use the <a href="/api/apps">API</a>.</p>`
+const placeholder = `<!doctype html><title>omegacd</title><p>omegacd is running. The UI is not embedded in this build; use the <a href="/api/apps">API</a>.</p>`
 
 func uiHandler(ui fs.FS) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

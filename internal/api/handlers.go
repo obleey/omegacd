@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/obleey/dockercd/internal/appdef"
-	"github.com/obleey/dockercd/internal/domain"
+	"github.com/obleey/omegacd/internal/appdef"
+	"github.com/obleey/omegacd/internal/domain"
 )
 
 func (s *server) listApps(w http.ResponseWriter, r *http.Request) {

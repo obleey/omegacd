@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/obleey/dockercd/internal/domain"
+	"github.com/obleey/omegacd/internal/domain"
 )
 
 func TestSSHFlags(t *testing.T) {
@@ -72,7 +72,7 @@ func TestConnRouting(t *testing.T) {
 }
 
 func TestRemoteAppDir(t *testing.T) {
-	if got := remoteAppDir(domain.Host{}, "web"); got != "/run/dockercd/apps/web" {
+	if got := remoteAppDir(domain.Host{}, "web"); got != "/run/omegacd/apps/web" {
 		t.Errorf("default = %s", got)
 	}
 	if got := remoteAppDir(domain.Host{WorkDir: "/srv/cd/"}, "web"); got != "/srv/cd/apps/web" {
@@ -84,7 +84,7 @@ func TestRemoteAppDir(t *testing.T) {
 func TestPlaceForRemote(t *testing.T) {
 	remote := &hostConn{host: domain.Host{Name: "edge", WorkDir: "/srv"}}
 	app := domain.Application{Name: "web"}
-	for _, asDir := range []string{"", "/var/lib/dockercd/apps/web"} {
+	for _, asDir := range []string{"", "/var/lib/omegacd/apps/web"} {
 		dir := t.TempDir()
 		write := func(name, content string) { os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644) }
 		write("compose.yaml", `

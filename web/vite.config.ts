@@ -4,6 +4,6 @@ import { defineConfig } from 'vite';
 
 export default defineConfig({
 	plugins: [sveltekit({ adapter: adapter({ fallback: 'index.html' }) })],
-	// `npm run dev` talks to a dockercd running locally
+	// `npm run dev` talks to a omegacd running locally
 	server: { proxy: { '/api': 'http://localhost:8080' } }
 });

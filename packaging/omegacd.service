@@ -1,0 +1,47 @@
+# OmegaCD as a systemd service. See README.md, "Binary + systemd".
+# Install: cp omegacd.service /etc/systemd/system/ && systemctl daemon-reload && systemctl enable --now omegacd
+[Unit]
+Description=OmegaCD - GitOps continuous delivery for Docker Compose
+Documentation=https://github.com/obleey/omegacd
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=omegacd
+Group=omegacd
+# Docker socket access comes from the docker group
+SupplementaryGroups=docker
+ExecStart=/usr/local/bin/omegacd server
+Restart=on-failure
+RestartSec=5
+
+Environment=OMEGACD_ADDR=:8080
+Environment=OMEGACD_DATA=/var/lib/omegacd
+Environment=OMEGACD_WORKDIR=/run/omegacd
+Environment=OMEGACD_AGE_KEY_FILE=/etc/omegacd/age.key
+Environment=OMEGACD_SSH_KNOWN_HOSTS=/etc/omegacd/known_hosts
+# Optional settings (webhook secret, trusted proxies, ...) go here, mode 0600:
+EnvironmentFile=-/etc/omegacd/omegacd.env
+
+# /var/lib/omegacd and /run/omegacd, owned by the service user
+StateDirectory=omegacd
+StateDirectoryMode=0750
+RuntimeDirectory=omegacd
+RuntimeDirectoryMode=0750
+# Running containers bind-mount files from /run/omegacd: keep it across service restarts
+RuntimeDirectoryPreserve=yes
+
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

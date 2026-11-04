@@ -1,4 +1,4 @@
-// Command dockercd is GitOps continuous delivery for Docker Compose.
+// Command omegacd is GitOps continuous delivery for Docker Compose.
 package main
 
 import (
@@ -14,15 +14,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/obleey/dockercd/internal/api"
-	"github.com/obleey/dockercd/internal/cli"
-	"github.com/obleey/dockercd/internal/controller"
-	"github.com/obleey/dockercd/internal/crypto"
-	"github.com/obleey/dockercd/internal/engine"
-	"github.com/obleey/dockercd/internal/gitsrc"
-	"github.com/obleey/dockercd/internal/secrets"
-	"github.com/obleey/dockercd/internal/store"
-	"github.com/obleey/dockercd/web"
+	"github.com/obleey/omegacd/internal/api"
+	"github.com/obleey/omegacd/internal/cli"
+	"github.com/obleey/omegacd/internal/controller"
+	"github.com/obleey/omegacd/internal/crypto"
+	"github.com/obleey/omegacd/internal/engine"
+	"github.com/obleey/omegacd/internal/gitsrc"
+	"github.com/obleey/omegacd/internal/secrets"
+	"github.com/obleey/omegacd/internal/store"
+	"github.com/obleey/omegacd/web"
 )
 
 func main() {
@@ -39,12 +39,12 @@ func main() {
 
 func run(log *slog.Logger) error {
 	var (
-		addr       = cmp.Or(os.Getenv("DOCKERCD_ADDR"), ":8080")
-		dataDir    = cmp.Or(os.Getenv("DOCKERCD_DATA"), "/data")
-		workDir    = cmp.Or(os.Getenv("DOCKERCD_WORKDIR"), "/run/dockercd")
-		ageKeyFile = cmp.Or(os.Getenv("DOCKERCD_AGE_KEY_FILE"), "/etc/dockercd/age.key")
+		addr       = cmp.Or(os.Getenv("OMEGACD_ADDR"), ":8080")
+		dataDir    = cmp.Or(os.Getenv("OMEGACD_DATA"), "/data")
+		workDir    = cmp.Or(os.Getenv("OMEGACD_WORKDIR"), "/run/omegacd")
+		ageKeyFile = cmp.Or(os.Getenv("OMEGACD_AGE_KEY_FILE"), "/etc/omegacd/age.key")
 	)
-	poll, err := time.ParseDuration(cmp.Or(os.Getenv("DOCKERCD_POLL_INTERVAL"), "3m"))
+	poll, err := time.ParseDuration(cmp.Or(os.Getenv("OMEGACD_POLL_INTERVAL"), "3m"))
 	if err != nil {
 		return err
 	}
@@ -61,7 +61,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	st, err := store.Open(filepath.Join(dataDir, "dockercd.db"), crypto.NewSealer(id))
+	st, err := store.Open(filepath.Join(dataDir, "omegacd.db"), crypto.NewSealer(id))
 	if err != nil {
 		return err
 	}
@@ -70,7 +70,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	knownHosts := cmp.Or(os.Getenv("DOCKERCD_SSH_KNOWN_HOSTS"), "/etc/dockercd/known_hosts")
+	knownHosts := cmp.Or(os.Getenv("OMEGACD_SSH_KNOWN_HOSTS"), "/etc/omegacd/known_hosts")
 	eng, err := engine.New(engine.Config{
 		Hosts:          st.GetHost,
 		ListHosts:      st.ListHosts,
@@ -94,10 +94,10 @@ func run(log *slog.Logger) error {
 		Log:          log,
 	})
 
-	if err := api.EnsureAdmin(ctx, st, os.Getenv("DOCKERCD_ADMIN_PASSWORD"), log); err != nil {
+	if err := api.EnsureAdmin(ctx, st, os.Getenv("OMEGACD_ADMIN_PASSWORD"), log); err != nil {
 		return err
 	}
-	proxies, err := api.ParseTrustedProxies(os.Getenv("DOCKERCD_TRUSTED_PROXIES"))
+	proxies, err := api.ParseTrustedProxies(os.Getenv("OMEGACD_TRUSTED_PROXIES"))
 	if err != nil {
 		return err
 	}
@@ -110,7 +110,7 @@ func run(log *slog.Logger) error {
 		Handler: api.New(api.Config{
 			Controller:     ctl,
 			Store:          st,
-			WebhookSecret:  os.Getenv("DOCKERCD_WEBHOOK_SECRET"),
+			WebhookSecret:  os.Getenv("OMEGACD_WEBHOOK_SECRET"),
 			WebhookParse:   gitsrc.ParseWebhook,
 			TrustedProxies: proxies,
 			UI:             ui,
@@ -125,7 +125,7 @@ func run(log *slog.Logger) error {
 		defer cancel()
 		srv.Shutdown(shutdown)
 	}()
-	log.Info("dockercd listening", "addr", addr, "data", dataDir, "workdir", workDir, "poll", poll)
+	log.Info("omegacd listening", "addr", addr, "data", dataDir, "workdir", workDir, "poll", poll)
 	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
