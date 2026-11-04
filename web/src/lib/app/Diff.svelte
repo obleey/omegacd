@@ -1,8 +1,10 @@
 <script lang="ts">
+	import type { GitWeb } from '../gitweb.ts';
+	import GitLink from '../GitLink.svelte';
 	import { short, type DiffView } from '../api.ts';
 
 	// apps: an App of Apps, whose diff entries are Child Applications rather than services
-	let { diff, apps = false }: { diff: DiffView | null; apps?: boolean } = $props();
+	let { diff, apps = false, web }: { diff: DiffView | null; apps?: boolean; web?: GitWeb | null } = $props();
 
 	const cls = (l: string) =>
 		l.startsWith('+++') || l.startsWith('---') || l.startsWith('diff ') || l.startsWith('index ')
@@ -40,7 +42,12 @@
 		</p>
 	{/if}
 
-	<h3>Git diff <span class="muted small mono">{short(diff.fromSHA)} → {short(diff.toSHA)}</span></h3>
+	<h3>
+		Git diff <span class="muted small mono"
+			><GitLink href={diff.fromSHA && web?.commit(diff.fromSHA)}>{short(diff.fromSHA)}</GitLink> → <GitLink href={web?.commit(diff.toSHA)}>{short(diff.toSHA)}</GitLink>{#if web && diff.fromSHA}
+				· <a href={web.compare(diff.fromSHA, diff.toSHA)} target="_blank" rel="noopener noreferrer">compare on the Git host</a>{/if}</span
+		>
+	</h3>
 	{#if lines.length}
 		<pre class="diff" aria-label="Unified diff">{#each lines as l, i (i)}<span class={cls(l)}>{l || ' '}</span>{'\n'}{/each}</pre>
 	{:else}

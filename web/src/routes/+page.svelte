@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { gitWeb } from '#lib/gitweb.ts';
+	import GitLink from '#lib/GitLink.svelte';
 	import { onMount } from 'svelte';
 	import { flip } from 'svelte/animate';
 	import { fly, slide } from 'svelte/transition';
@@ -248,13 +250,13 @@
 								{#if a.notInGit}<span class="tag warn">not in Git</span>{/if}
 							</div>
 							<div class="muted small mono trunc" title="{a.repoURL} {a.path}">
-								{a.repoURL.replace(/^https?:\/\//, '')}{a.path && a.path !== '.' ? ` · ${a.path}` : ''}
+								<GitLink href={gitWeb(a.repoURL)?.repo}>{a.repoURL.replace(/^https?:\/\//, '')}</GitLink>{a.path && a.path !== '.' ? ` · ${a.path}` : ''}
 							</div>
 						</td>
 						<td class="mono small">{a.kind === 'apps' ? '—' : a.host || 'local'}</td>
 						<td class="mono small">
 							{a.targetRevision}
-							<div class="muted">{short(a.targetSHA)}</div>
+							<div class="muted"><GitLink href={a.targetSHA && gitWeb(a.repoURL)?.commit(a.targetSHA)}>{short(a.targetSHA)}</GitLink></div>
 						</td>
 						<td>
 							<Badge status={shownSync(a)} label="Sync Status" />

@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { gitWeb } from '#lib/gitweb.ts';
+	import GitLink from '#lib/GitLink.svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import {
@@ -67,6 +69,7 @@
 	let error = $state('');
 	let notFound = $state(false);
 	let busy = $state('');
+	let web = $derived(app ? gitWeb(app.repoURL) : null);
 	let editing = $state(false);
 	// The form opens below the header and status panels, often outside the viewport: bring it into view.
 	let editEl = $state<HTMLElement>();
@@ -216,7 +219,7 @@
 				<span class="plabel">Sync Status</span>
 				<Badge status={shownSync(app)} size="lg" label="Sync Status" />
 				<span class="muted small">
-					to <span class="mono">{app.targetRevision}</span> ({short(app.targetSHA)})
+					to <span class="mono">{app.targetRevision}</span> (<GitLink href={app.targetSHA && web?.commit(app.targetSHA)} title="Open commit {app.targetSHA}">{short(app.targetSHA)}</GitLink>)
 					{#if app.autoSync}· Auto-Sync{/if}
 				</span>
 			</section>
@@ -224,7 +227,7 @@
 				<span class="plabel">Last Sync</span>
 				{#if op}
 					<Badge status={op.phase} size="lg" label="Last Sync Operation" text={op.phase === 'Running' ? 'Syncing' : op.phase === 'Succeeded' ? 'Sync OK' : 'Sync failed'} />
-					<span class="muted small">{op.trigger} · {ago(op.finishedAt || op.startedAt)} · <span class="mono">{short(op.revision)}</span></span>
+					<span class="muted small">{op.trigger} · {ago(op.finishedAt || op.startedAt)} · <span class="mono"><GitLink href={op.revision && web?.commit(op.revision)} title="Open commit {op.revision}">{short(op.revision)}</GitLink></span></span>
 				{:else}
 					<Badge status="Unknown" size="lg" text="Never synced" />
 					<span class="muted small">Sync to deploy the Desired State</span>
@@ -234,10 +237,10 @@
 
 		<dl class="meta">
 			{#if !isApps}<div><dt><Icon name="server" size={12} />Host</dt><dd class="mono">{app.host || 'local'}</dd></div>{/if}
-			<div class="wide"><dt><Icon name="folder" size={12} />Repository</dt><dd class="mono">{app.repoURL}</dd></div>
-			<div><dt><Icon name="folder" size={12} />Path</dt><dd class="mono">{app.path || '.'}</dd></div>
-			<div><dt><Icon name="branch" size={12} />Target Revision</dt><dd class="mono">{app.targetRevision} <span class="muted">({short(app.targetSHA)})</span></dd></div>
-			<div><dt><Icon name="commit" size={12} />Deployed Revision</dt><dd class="mono">{short(app.deployedSHA)}</dd></div>
+			<div class="wide"><dt><Icon name="folder" size={12} />Repository</dt><dd class="mono"><GitLink href={web?.repo} title="Open the Repository">{app.repoURL}</GitLink></dd></div>
+			<div><dt><Icon name="folder" size={12} />Path</dt><dd class="mono"><GitLink href={web && (app.deployedSHA || app.targetSHA) ? web.tree(app.deployedSHA || app.targetSHA!, app.path || '') : null} title="Open this folder in the Repository">{app.path || '.'}</GitLink></dd></div>
+			<div><dt><Icon name="branch" size={12} />Target Revision</dt><dd class="mono">{app.targetRevision} <span class="muted">(<GitLink href={app.targetSHA && web?.commit(app.targetSHA)} title="Open commit {app.targetSHA}">{short(app.targetSHA)}</GitLink>)</span></dd></div>
+			<div><dt><Icon name="commit" size={12} />Deployed Revision</dt><dd class="mono"><GitLink href={app.deployedSHA && web?.commit(app.deployedSHA)} title="Open commit {app.deployedSHA}">{short(app.deployedSHA)}</GitLink></dd></div>
 		</dl>
 		{#if app.syncMessage}<p class="small syncmsg"><Icon name="info" size={14} />{app.syncMessage}</p>{/if}
 		<SyncPolicy {app} />
@@ -306,7 +309,7 @@
 			{:else if tab === 'resources'}
 				<Resources name={app.name} state={liveState} syncStatus={shownSync(app)} prunePending={app.prunePending} onlogs={showLogs} />
 			{:else if tab === 'diff'}
-				<Diff {diff} apps={isApps} />
+				<Diff {diff} apps={isApps} {web} />
 			{:else if tab === 'history'}
 				{#if app.parent}
 					<p class="muted small">
@@ -316,6 +319,7 @@
 				{/if}
 				<History
 					{ops}
+					{web}
 					onrollback={app.parent
 						? undefined
 						: (o) => {

@@ -1,11 +1,13 @@
 <script lang="ts">
+	import type { GitWeb } from '../gitweb.ts';
+	import GitLink from '../GitLink.svelte';
 	import { ago, short, type SyncOperation } from '../api.ts';
 	import Empty from '../Empty.svelte';
 	import Icon from '../Icon.svelte';
 	import Badge from '../Badge.svelte';
 
 	// onrollback is omitted for Child Applications: their Revision is pinned in Git, not rolled back here.
-	let { ops, onrollback }: { ops: SyncOperation[] | null; onrollback?: (op: SyncOperation) => void } = $props();
+	let { ops, onrollback, web }: { ops: SyncOperation[] | null; onrollback?: (op: SyncOperation) => void; web?: GitWeb | null } = $props();
 
 	// The current deployment is the newest Succeeded op; rolling back to it is a no-op.
 	let currentID = $derived(ops?.find((o) => o.phase === 'Succeeded')?.id);
@@ -34,7 +36,7 @@
 			<tbody>
 				{#each ops as o (o.id)}
 					<tr>
-						<td class="mono" title={o.revision}>{short(o.revision)}</td>
+						<td class="mono"><GitLink href={web?.commit(o.revision)} title="Open commit {o.revision}">{short(o.revision)}</GitLink></td>
 						<td>{o.trigger}</td>
 						<td><Badge status={o.phase} label="Phase" /></td>
 						<td class="msg small">{o.message || '—'}</td>

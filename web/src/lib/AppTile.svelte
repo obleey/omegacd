@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { gitWeb } from './gitweb.ts';
+	import GitLink from './GitLink.svelte';
 	import { ago, enc, short, type AppView } from './api.ts';
 	import Badge from './Badge.svelte';
 	import Icon from './Icon.svelte';
@@ -17,6 +19,7 @@
 		await (what === 'sync' ? syncApp(a.name) : refreshApp(a.name));
 		busy = '';
 	}
+	let web = $derived(gitWeb(a.repoURL));
 </script>
 
 <article class="tile {appTone(a)}" class:running>
@@ -41,10 +44,10 @@
 		{/if}
 		<dt><Icon name="folder" size={13} />Repository</dt>
 		<dd class="mono trunc" title="{a.repoURL} {a.path}">
-			{a.repoURL.replace(/^https?:\/\//, '').replace(/\.git$/, '')}{a.path && a.path !== '.' ? ` · ${a.path}` : ''}
+			<GitLink href={web?.repo}>{a.repoURL.replace(/^https?:\/\//, '').replace(/\.git$/, '')}</GitLink>{#if a.path && a.path !== '.'} · <GitLink href={web && a.targetSHA ? web.tree(a.targetSHA, a.path) : null}>{a.path}</GitLink>{/if}
 		</dd>
 		<dt><Icon name="branch" size={13} />Revision</dt>
-		<dd class="mono">{a.targetRevision} <span class="muted">{short(a.targetSHA)}</span></dd>
+		<dd class="mono">{a.targetRevision} <span class="muted"><GitLink href={a.targetSHA && web?.commit(a.targetSHA)} title="Open commit {a.targetSHA}">{short(a.targetSHA)}</GitLink></span></dd>
 		<dt><Icon name="clock" size={13} />Last Sync</dt>
 		<dd>
 			{#if op}
