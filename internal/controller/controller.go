@@ -172,10 +172,6 @@ func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fe
 		c.mu.Lock()
 		v.Health = c.worstHealth(children)
 		c.mu.Unlock()
-	} else if live, err := c.cfg.Engine.Status(ctx, a); err == nil {
-		v.Health = live.Health
-	} else {
-		c.cfg.Log.Warn("live state", "app", a.Name, "err", err)
 	}
 
 	sha, targetTree, err := c.target(ctx, a, fetch)
@@ -221,6 +217,15 @@ func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fe
 			} else {
 				v.SyncStatus = domain.Synced
 			}
+		}
+	}
+
+	// after Diff: loading the project tells the engine which services are declared
+	if a.Kind != domain.KindApps {
+		if live, err := c.cfg.Engine.Status(ctx, a); err == nil {
+			v.Health = live.Health
+		} else {
+			c.cfg.Log.Warn("live state", "app", a.Name, "err", err)
 		}
 	}
 

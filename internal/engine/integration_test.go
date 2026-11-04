@@ -509,6 +509,7 @@ services:
     image: busybox
     command: ["sleep", "3600"]
     profiles: [debug]
+    restart: unless-stopped
 `)
 	state := func() map[string]string {
 		ls, _ := e.Status(ctx, app)
@@ -530,6 +531,10 @@ services:
 	}
 	if s := state(); s["adminer"] != "exited" || s["web"] != "running" {
 		t.Fatalf("without prune: %v", s)
+	}
+	// stopped on purpose: must not make the app Degraded despite its restart policy
+	if ls, _ := e.Status(ctx, app); ls.Health != domain.Healthy {
+		t.Fatalf("health with a stopped undeclared service = %s, want Healthy", ls.Health)
 	}
 	diffs, _ := e.Diff(ctx, app, dir, "")
 	if len(diffs) != 1 || diffs[0].Change != "removed" || !slices.Contains(diffs[0].Fields, domain.FieldStopped) {

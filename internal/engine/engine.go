@@ -536,7 +536,6 @@ func (e *Engine) Status(ctx context.Context, app domain.Application) (domain.Liv
 			Health:   containerHealth(string(st.Status), health, st.ExitCode, insp.Container.RestartCount, keepsRunning(string(insp.Container.HostConfig.RestartPolicy.Name))),
 		}
 		ls.Containers = append(ls.Containers, dc)
-		ls.Health = worst(ls.Health, dc.Health)
 		seen[dc.Service] = true
 	}
 	e.mu.Lock()
@@ -544,6 +543,12 @@ func (e *Engine) Status(ctx context.Context, app domain.Application) (domain.Liv
 	e.mu.Unlock()
 	if ls.Services == nil {
 		ls.Services = slices.Sorted(maps.Keys(seen))
+	}
+	// only declared services count: undeclared ones are stopped on purpose (prune pending), not broken
+	for _, c := range ls.Containers {
+		if slices.Contains(ls.Services, c.Service) {
+			ls.Health = worst(ls.Health, c.Health)
+		}
 	}
 	for _, s := range ls.Services {
 		if !seen[s] {
