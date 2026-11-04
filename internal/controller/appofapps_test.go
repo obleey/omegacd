@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/obleey/omegacd/internal/domain"
 )
@@ -200,5 +201,53 @@ func TestDeleteAppOfApps(t *testing.T) {
 		case !cascade && (err != nil || web.Parent != "" || r.e.removed):
 			t.Fatalf("orphan: %+v %v removed=%v", web, err, r.e.removed)
 		}
+	}
+}
+
+// waitOp waits until app has a finished Sync Operation with the given trigger.
+func (r rig) waitOp(t *testing.T, app, trigger string) domain.SyncOperation {
+	t.Helper()
+	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		ops, _ := r.st.ListOps(t.Context(), app)
+		if len(ops) > 0 && ops[0].Trigger == trigger && ops[0].Phase != domain.OpRunning {
+			return ops[0]
+		}
+	}
+	t.Fatalf("%s: no finished %q Sync Operation", app, trigger)
+	return domain.SyncOperation{}
+}
+
+func TestManualParentSyncDeploysPendingChildren(t *testing.T) {
+	r := newRig(t)
+	ctx := t.Context()
+	r.c.CreateApp(ctx, parentApp("root"))
+	r.g.define("aaaaaaaa", "name: web\nrepoURL: x\n---\nname: api\nrepoURL: x\n")
+
+	// first manual Sync: both children are new (never synced) and get deployed
+	r.mustSync(t, "root")
+	for _, n := range []string{"web", "api"} {
+		if op := r.waitOp(t, n, triggerParent); op.Phase != domain.OpSucceeded {
+			t.Fatalf("%s: %+v", n, op)
+		}
+	}
+
+	// web's next Sync fails (say, a dependency is missing); api stays Synced
+	r.e.mu.Lock()
+	r.e.syncErr = errors.New("network web declared as external, but could not be found")
+	r.e.mu.Unlock()
+	r.c.Sync(ctx, "web", domain.SyncRequest{})
+	r.waitIdle(t, "web")
+	r.e.mu.Lock()
+	r.e.syncErr = nil
+	r.e.mu.Unlock()
+	apiOps, _ := r.st.ListOps(ctx, "api")
+
+	// a manual Sync of the parent retries web, and leaves the Synced api alone
+	r.mustSync(t, "root")
+	if op := r.waitOp(t, "web", triggerParent); op.Phase != domain.OpSucceeded {
+		t.Fatalf("web was not re-synced by the parent: %+v", op)
+	}
+	if again, _ := r.st.ListOps(ctx, "api"); len(again) != len(apiOps) {
+		t.Fatal("a Synced child was synced again")
 	}
 }

@@ -165,7 +165,8 @@ func (g *fakeGit) TreeHash(_ context.Context, _, sha, _ string) (string, error) 
 func (g *fakeGit) Export(_ context.Context, _, _, _, dest string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.files == nil {
+	// definitions belong to the App of Apps (named "root" in the tests); every other app gets a compose file
+	if g.files == nil || filepath.Base(dest) != "root" {
 		return os.WriteFile(filepath.Join(dest, "compose.yaml"), []byte("services: {}\n"), 0o644)
 	}
 	if err := os.RemoveAll(dest); err != nil {

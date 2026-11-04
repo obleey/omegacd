@@ -454,8 +454,41 @@ func (c *Controller) runSync(a domain.Application, op domain.SyncOperation) {
 	if done, gerr := c.cfg.Store.GetOp(ctx, op.ID); gerr == nil {
 		c.emit(domain.Event{Type: "op", App: a.Name, Data: done})
 	}
+	if err == nil && a.Kind == domain.KindApps && op.Trigger == "manual" {
+		c.syncPendingChildren(ctx, a.Name)
+	}
 	if fresh, gerr := c.cfg.Store.GetApp(ctx, a.Name); gerr == nil {
 		c.reconcile(ctx, fresh)
+	}
+}
+
+const triggerParent = "app-of-apps"
+
+// syncPendingChildren is what a manual Sync of an App of Apps means to a person: deploy what isn't
+// deployed. Children that are OutOfSync or whose last Sync failed get a Sync with a fresh retry
+// budget (e.g. after they gave up waiting for a dependency); Synced ones are left alone.
+func (c *Controller) syncPendingChildren(ctx context.Context, parent string) {
+	children, err := c.children(ctx, parent)
+	if err != nil {
+		c.cfg.Log.Error("list child applications", "app", parent, "err", err)
+		return
+	}
+	for _, ch := range children {
+		if ch.NotInGit {
+			continue
+		}
+		v := c.reconcile(ctx, ch)
+		failed := v.LastOperation != nil && v.LastOperation.Phase == domain.OpFailed
+		if (v.SyncStatus != domain.OutOfSync && !failed) || v.SyncStatus == domain.Unknown || v.TargetSHA == "" {
+			continue
+		}
+		c.mu.Lock()
+		s := c.state(ch.Name)
+		s.retries, s.nextRetry, s.failedTree = 0, time.Time{}, ""
+		c.mu.Unlock()
+		if _, err := c.startSync(ch, v.TargetSHA, triggerParent); err != nil && !errors.Is(err, domain.ErrBusy) {
+			c.cfg.Log.Error("sync child application", "app", ch.Name, "parent", parent, "err", err)
+		}
 	}
 }
 
