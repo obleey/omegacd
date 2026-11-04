@@ -1,0 +1,27 @@
+# Design notes kept local
+GLOSSARY.md
+docs/
+
+# Go
+/bin/
+/dist/
+*.test
+*.out
+coverage.*
+
+# Frontend
+web/node_modules/
+web/.svelte-kit/
+web/build/
+
+# Runtime data
+/data/
+*.db
+*.db-*
+*.agekey
+.env
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
