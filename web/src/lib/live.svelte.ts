@@ -38,6 +38,12 @@ export function putApp(a: AppView) {
 }
 
 let es: EventSource | null = null;
+// Events sent while the stream was down are lost (OmegaCD restarted, network blip): resync on reconnect.
+let openedBefore = false;
+let watchingVisibility = false;
+const resync = () => {
+	if (live.loaded) loadApps().catch(() => {});
+};
 
 // Data is a domain.Event ({type, app, data}); tolerate a bare payload too.
 function unwrap(raw: string): { app: string; data: unknown } {
@@ -49,7 +55,18 @@ function unwrap(raw: string): { app: string; data: unknown } {
 export function connectEvents() {
 	if (es) return;
 	es = new EventSource('/api/events', { withCredentials: true });
-	es.onopen = () => (live.connected = true);
+	es.onopen = () => {
+		live.connected = true;
+		if (openedBefore) resync();
+		openedBefore = true;
+	};
+	if (!watchingVisibility) {
+		watchingVisibility = true;
+		// background tabs may sleep or drop events: catch up when the tab is shown again
+		document.addEventListener('visibilitychange', () => {
+			if (document.visibilityState === 'visible') resync();
+		});
+	}
 	es.onerror = () => {
 		live.connected = false;
 		if (es?.readyState === EventSource.CLOSED) {

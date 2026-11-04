@@ -16,7 +16,8 @@ const hostRelist = 30 * time.Second
 
 // Watch keeps one Docker event stream per Host (local and every stored Host, re-listed every 30s) and calls
 // changed with the Host and Compose project name whenever a container of a Compose project starts, stops,
-// dies, is removed, pauses or changes health. It blocks until ctx ends.
+// dies, is removed, pauses or changes health. After a Host's stream reconnects it calls changed(host, "")
+// once: events during the break are lost, so everything on that Host may have changed. It blocks until ctx ends.
 func (e *Engine) Watch(ctx context.Context, changed func(host, project string)) error {
 	streams := map[string]context.CancelFunc{}
 	defer func() {
@@ -71,6 +72,7 @@ func (e *Engine) watchHost(ctx context.Context, host string, changed func(host, 
 			if down {
 				slog.Info("watch: host reachable again", "host", host)
 				down = false
+				changed(host, "") // resync: containers may have started or stopped while we weren't listening
 			}
 		})
 		if ctx.Err() != nil {

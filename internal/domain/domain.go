@@ -350,7 +350,8 @@ type Engine interface {
 	ProjectFiles(ctx context.Context, app Application, dir string) ([]Resource, error)
 	// Inspect describes a volume or network of the project.
 	Inspect(ctx context.Context, app Application, kind, name string) (map[string]string, error)
-	// Watch calls changed with the Host and Compose project name whenever a container on any Host changes state.
+	// Watch calls changed with the Host and Compose project name whenever a container on any Host changes state,
+	// and with an empty project after reconnecting to a Host (events may have been missed: resync all of it).
 	// It blocks, reconnecting as needed, until ctx ends.
 	Watch(ctx context.Context, changed func(host, project string)) error
 	Close() error

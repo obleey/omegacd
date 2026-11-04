@@ -343,6 +343,10 @@ func (c *Controller) watch(ctx context.Context) {
 			if busy {
 				return // the Sync reconciles when it finishes
 			}
+			if project == "" {
+				c.reconcileHost(ctx, host)
+				return
+			}
 			if a, err := c.cfg.Store.GetApp(ctx, project); err == nil && a.Host == host {
 				c.reconcileWith(ctx, a, false)
 			}
@@ -350,6 +354,21 @@ func (c *Controller) watch(ctx context.Context) {
 	})
 	if err != nil {
 		c.cfg.Log.Error("watch docker events", "err", err)
+	}
+}
+
+// reconcileHost re-checks every compose Application on host without a Git fetch, e.g. after its Docker
+// engine was unreachable and container events were missed.
+func (c *Controller) reconcileHost(ctx context.Context, host string) {
+	apps, err := c.cfg.Store.ListApps(ctx)
+	if err != nil {
+		c.cfg.Log.Error("list applications", "err", err)
+		return
+	}
+	for _, a := range apps {
+		if a.Kind == domain.KindCompose && a.Host == host {
+			c.reconcileWith(ctx, a, false)
+		}
 	}
 }
 

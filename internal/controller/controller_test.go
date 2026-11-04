@@ -891,3 +891,51 @@ func TestCheckRepo(t *testing.T) {
 		t.Fatalf("got %+v, %v", got, err)
 	}
 }
+
+func TestHostReconnectResyncsAllItsApps(t *testing.T) {
+	r := newRig(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	r.c.CreateApp(ctx, app("web"))
+	r.c.CreateApp(ctx, app("api"))
+	go r.c.watch(ctx)
+	var changed func(string, string)
+	for changed == nil {
+		r.e.mu.Lock()
+		changed = r.e.changed
+		r.e.mu.Unlock()
+		time.Sleep(5 * time.Millisecond)
+	}
+	events, unsub := r.c.Subscribe()
+	defer unsub()
+	r.g.mu.Lock()
+	before := r.g.resolves
+	r.g.mu.Unlock()
+
+	// Docker came back: its containers restarted while nobody listened
+	r.e.mu.Lock()
+	r.e.live.Health = domain.Degraded
+	r.e.mu.Unlock()
+	changed(domain.LocalHost, "")
+	changed("other-host", "") // nothing of ours runs there
+
+	seen := map[string]domain.HealthStatus{}
+	for len(seen) < 2 {
+		select {
+		case e := <-events:
+			if v, ok := e.Data.(domain.AppView); ok && e.Type == "app" {
+				seen[v.Name] = v.Health
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatalf("not every app was resynced after the reconnect: %v", seen)
+		}
+	}
+	if seen["web"] != domain.Degraded || seen["api"] != domain.Degraded {
+		t.Fatalf("stale health after resync: %v", seen)
+	}
+	r.g.mu.Lock()
+	defer r.g.mu.Unlock()
+	if r.g.resolves != before {
+		t.Fatal("a reconnect resync must not fetch Git")
+	}
+}
