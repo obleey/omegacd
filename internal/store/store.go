@@ -77,6 +77,11 @@ CREATE TABLE admin (
 	password_hash TEXT NOT NULL,
 	must_change INTEGER NOT NULL
 );
+`, `
+CREATE TABLE sessions (
+	hash TEXT PRIMARY KEY,
+	expires_at INTEGER NOT NULL
+);
 `}
 
 type Store struct {
@@ -482,5 +487,36 @@ func (s *Store) AdminPasswordHash(ctx context.Context) (string, bool, error) {
 func (s *Store) SetAdminPassword(ctx context.Context, hash string, mustChange bool) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO admin (id, password_hash, must_change) VALUES (1, ?, ?)
 		ON CONFLICT (id) DO UPDATE SET password_hash = excluded.password_hash, must_change = excluded.must_change`, hash, mustChange)
+	return err
+}
+
+// ---- sessions ----
+
+func (s *Store) CreateSession(ctx context.Context, tokenHash string, expires time.Time) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE expires_at <= ?`, time.Now().UnixNano()); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO sessions (hash, expires_at) VALUES (?, ?)`, tokenHash, toUnix(expires))
+	return mapErr(err)
+}
+
+func (s *Store) GetSession(ctx context.Context, tokenHash string) (time.Time, error) {
+	var exp int64
+	err := s.db.QueryRowContext(ctx, `SELECT expires_at FROM sessions WHERE hash = ? AND expires_at > ?`,
+		tokenHash, time.Now().UnixNano()).Scan(&exp)
+	return fromUnix(exp), mapErr(err)
+}
+
+func (s *Store) ExtendSession(ctx context.Context, tokenHash string, expires time.Time) error {
+	return affected(s.db.ExecContext(ctx, `UPDATE sessions SET expires_at = ? WHERE hash = ?`, toUnix(expires), tokenHash))
+}
+
+func (s *Store) DeleteSession(ctx context.Context, tokenHash string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE hash = ?`, tokenHash)
+	return err
+}
+
+func (s *Store) DeleteSessionsExcept(ctx context.Context, keepHash string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE hash != ?`, keepHash)
 	return err
 }

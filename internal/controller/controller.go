@@ -20,12 +20,13 @@ import (
 )
 
 const (
-	maxRetries   = 5
-	retryBase    = 5 * time.Second
-	retryMax     = 3 * time.Minute
-	retryTick    = 5 * time.Second
-	syncTimeout  = 30 * time.Minute
-	subscriberCh = 64
+	maxRetries    = 5
+	retryBase     = 5 * time.Second
+	retryMax      = 3 * time.Minute
+	retryTick     = 5 * time.Second
+	syncTimeout   = 30 * time.Minute
+	subscriberCh  = 64
+	watchDebounce = time.Second
 )
 
 var nameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
@@ -72,6 +73,7 @@ func New(cfg Config) *Controller {
 
 // Run reconciles every Application each PollInterval and drives retries until ctx ends.
 func (c *Controller) Run(ctx context.Context) {
+	go c.watch(ctx)
 	c.reconcileAll(ctx)
 	poll := time.NewTicker(c.cfg.PollInterval)
 	retry := time.NewTicker(retryTick)
@@ -137,6 +139,12 @@ func (c *Controller) appDir(name string) string {
 
 // reconcile recomputes the status of one Application, publishes it, and triggers automatic Syncs.
 func (c *Controller) reconcile(ctx context.Context, a domain.Application) domain.AppView {
+	return c.reconcileWith(ctx, a, true)
+}
+
+// reconcileWith skips the Git fetch when fetch is false and a target is already known,
+// so live container changes can be reflected immediately and cheaply.
+func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fetch bool) domain.AppView {
 	v := domain.AppView{Application: a, SyncStatus: domain.Unknown, Health: domain.Missing, ReconciledAt: time.Now()}
 	var targetTree string
 	var drift bool
@@ -158,13 +166,9 @@ func (c *Controller) reconcile(ctx context.Context, a domain.Application) domain
 		c.cfg.Log.Warn("live state", "app", a.Name, "err", err)
 	}
 
-	sha, err := c.cfg.Git.Resolve(ctx, a.RepoURL, a.TargetRevision)
+	sha, targetTree, err := c.target(ctx, a, fetch)
 	if err == nil {
 		v.TargetSHA = sha
-		targetTree, err = c.cfg.Git.TreeHash(ctx, a.RepoURL, sha, a.Path)
-		if err == nil && targetTree == "" {
-			err = fmt.Errorf("path %q not found at %s", a.Path, short(sha))
-		}
 	}
 	switch {
 	case err != nil:
@@ -207,6 +211,59 @@ func (c *Controller) reconcile(ctx context.Context, a domain.Application) domain
 		}
 	}
 	return v
+}
+
+// target resolves the Application's target Revision and its tree hash, from cache when !fetch.
+func (c *Controller) target(ctx context.Context, a domain.Application, fetch bool) (sha, tree string, err error) {
+	if !fetch {
+		c.mu.Lock()
+		s := c.state(a.Name)
+		sha, tree = s.view.TargetSHA, s.targetTree
+		c.mu.Unlock()
+		if tree != "" {
+			return sha, tree, nil
+		}
+	}
+	if sha, err = c.cfg.Git.Resolve(ctx, a.RepoURL, a.TargetRevision); err != nil {
+		return "", "", err
+	}
+	if tree, err = c.cfg.Git.TreeHash(ctx, a.RepoURL, sha, a.Path); err == nil && tree == "" {
+		err = fmt.Errorf("path %q not found at %s", a.Path, short(sha))
+	}
+	return sha, tree, err
+}
+
+// watch reconciles an Application without a Git fetch whenever its containers change,
+// debounced so a burst of Docker events causes one reconcile.
+func (c *Controller) watch(ctx context.Context) {
+	var mu sync.Mutex
+	pending := map[string]bool{}
+	err := c.cfg.Engine.Watch(ctx, func(project string) {
+		mu.Lock()
+		defer mu.Unlock()
+		if pending[project] {
+			return
+		}
+		pending[project] = true
+		time.AfterFunc(watchDebounce, func() {
+			mu.Lock()
+			delete(pending, project)
+			mu.Unlock()
+			c.mu.Lock()
+			st, ok := c.apps[project]
+			busy := ok && st.syncing
+			c.mu.Unlock()
+			if busy {
+				return // the Sync reconciles when it finishes
+			}
+			if a, err := c.cfg.Store.GetApp(ctx, project); err == nil {
+				c.reconcileWith(ctx, a, false)
+			}
+		})
+	})
+	if err != nil {
+		c.cfg.Log.Error("watch docker events", "err", err)
+	}
 }
 
 // autoTrigger decides whether policy wants a Sync now. Caller holds c.mu.

@@ -154,14 +154,14 @@ func TestOps(t *testing.T) {
 
 func TestRepoCredentials(t *testing.T) {
 	s, _ := open(t)
-	id, err := s.SaveRepoCredential(ctx, domain.RepoCredential{URLPrefix: "https://git.example.com/", Username: "u", Password: "pw", SSHPrivateKey: "key"})
+	id, err := s.SaveRepoCredential(ctx, domain.RepoCredential{URLPrefix: "https://git.example.com/", Username: "u", Password: secretPW, SSHPrivateKey: "key"})
 	must(t, err)
 	_, err = s.SaveRepoCredential(ctx, domain.RepoCredential{URLPrefix: "https://git.example.com/"})
 	wantErr(t, err, domain.ErrAlreadyExists)
 
 	var raw string
 	must(t, s.db.QueryRow(`SELECT password FROM repo_credentials WHERE id = ?`, id).Scan(&raw))
-	if raw == "" || strings.Contains(raw, "pw") {
+	if raw == "" || strings.Contains(raw, secretPW) {
 		t.Fatalf("password not sealed: %q", raw)
 	}
 
@@ -170,7 +170,7 @@ func TestRepoCredentials(t *testing.T) {
 	must(t, err)
 	creds, err := s.ListRepoCredentials(ctx)
 	must(t, err)
-	want := domain.RepoCredential{ID: id, URLPrefix: "https://git.example.com/x", Username: "u2", Password: "pw", SSHPrivateKey: "key", HasPassword: true, HasSSHKey: true}
+	want := domain.RepoCredential{ID: id, URLPrefix: "https://git.example.com/x", Username: "u2", Password: secretPW, SSHPrivateKey: "key", HasPassword: true, HasSSHKey: true}
 	if len(creds) != 1 || creds[0] != want {
 		t.Fatalf("got %+v", creds)
 	}
@@ -254,3 +254,48 @@ func TestAdmin(t *testing.T) {
 		t.Fatalf("got %q %v", h, mc)
 	}
 }
+
+func TestSessions(t *testing.T) {
+	s, path := open(t)
+	exp := time.Now().Add(time.Hour).Truncate(time.Microsecond).UTC()
+	must(t, s.CreateSession(ctx, "a", exp))
+	must(t, s.CreateSession(ctx, "b", exp))
+	must(t, s.CreateSession(ctx, "c", exp))
+	wantErr(t, s.CreateSession(ctx, "a", exp), domain.ErrAlreadyExists)
+	got, err := s.GetSession(ctx, "a")
+	must(t, err)
+	if !got.Equal(exp) {
+		t.Fatalf("expires %v, want %v", got, exp)
+	}
+	_, err = s.GetSession(ctx, "nope")
+	wantErr(t, err, domain.ErrNotFound)
+
+	must(t, s.ExtendSession(ctx, "a", time.Now().Add(-time.Second)))
+	_, err = s.GetSession(ctx, "a")
+	wantErr(t, err, domain.ErrNotFound)
+	wantErr(t, s.ExtendSession(ctx, "nope", exp), domain.ErrNotFound)
+	must(t, s.CreateSession(ctx, "d", exp)) // purges expired "a"
+	var n int
+	must(t, s.db.QueryRow(`SELECT count(*) FROM sessions WHERE hash = 'a'`).Scan(&n))
+	if n != 0 {
+		t.Fatal("expired session not purged")
+	}
+
+	must(t, s.DeleteSession(ctx, "d"))
+	_, err = s.GetSession(ctx, "d")
+	wantErr(t, err, domain.ErrNotFound)
+
+	must(t, s.DeleteSessionsExcept(ctx, "b"))
+	_, err = s.GetSession(ctx, "c")
+	wantErr(t, err, domain.ErrNotFound)
+
+	s.Close()
+	s2, err := Open(path, s.sealer)
+	must(t, err)
+	defer s2.Close()
+	_, err = s2.GetSession(ctx, "b")
+	must(t, err)
+}
+
+// long enough that random sealed base64 never contains it by chance
+const secretPW = "correct-horse-battery-staple"

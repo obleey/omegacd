@@ -108,15 +108,17 @@ func (s *fakeStore) ListRegistryCredentials(context.Context) ([]domain.RegistryC
 }
 
 type fakeGit struct {
-	mu   sync.Mutex
-	sha  string
-	tree string
-	err  error
+	mu       sync.Mutex
+	sha      string
+	tree     string
+	err      error
+	resolves int
 }
 
 func (g *fakeGit) Resolve(context.Context, string, string) (string, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	g.resolves++
 	return g.sha, g.err
 }
 func (g *fakeGit) TreeHash(_ context.Context, _, sha, _ string) (string, error) {
@@ -143,6 +145,7 @@ type fakeEngine struct {
 	managed bool
 	live    domain.LiveState
 	removed bool
+	changed func(string)
 }
 
 func (e *fakeEngine) Validate(context.Context, domain.Application, string) error { return nil }
@@ -167,8 +170,15 @@ func (e *fakeEngine) ProjectExists(context.Context, string) (bool, bool, error) 
 	return e.exists, e.managed, nil
 }
 func (e *fakeEngine) Logs(context.Context, string, bool, int, io.Writer) error { return nil }
-func (e *fakeEngine) Close() error                                             { return nil }
-func (e *fakeEngine) syncCount() int                                           { e.mu.Lock(); defer e.mu.Unlock(); return e.syncs }
+func (e *fakeEngine) Watch(ctx context.Context, changed func(string)) error {
+	e.mu.Lock()
+	e.changed = changed
+	e.mu.Unlock()
+	<-ctx.Done()
+	return nil
+}
+func (e *fakeEngine) Close() error   { return nil }
+func (e *fakeEngine) syncCount() int { e.mu.Lock(); defer e.mu.Unlock(); return e.syncs }
 
 type rig struct {
 	c  *Controller
@@ -439,5 +449,47 @@ func TestBackoff(t *testing.T) {
 		if got := backoff(i + 1); got != w {
 			t.Errorf("backoff(%d)=%v want %v", i+1, got, w)
 		}
+	}
+}
+
+func TestDockerEventsRefreshHealthWithoutGitFetch(t *testing.T) {
+	r := newRig(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	r.c.CreateApp(ctx, app("web"))
+	go r.c.watch(ctx)
+	events, unsub := r.c.Subscribe()
+	defer unsub()
+
+	var changed func(string)
+	for changed == nil {
+		r.e.mu.Lock()
+		changed = r.e.changed
+		r.e.mu.Unlock()
+		time.Sleep(5 * time.Millisecond)
+	}
+	r.g.mu.Lock()
+	before := r.g.resolves
+	r.g.mu.Unlock()
+	r.e.mu.Lock()
+	r.e.live.Health = domain.Degraded
+	r.e.mu.Unlock()
+	for range 3 { // a burst of events is debounced into one reconcile
+		changed("web")
+	}
+	changed("not-an-app")
+
+	select {
+	case e := <-events:
+		if v := e.Data.(domain.AppView); v.Health != domain.Degraded {
+			t.Fatalf("health = %s, want Degraded", v.Health)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("no app event after docker event")
+	}
+	r.g.mu.Lock()
+	defer r.g.mu.Unlock()
+	if r.g.resolves != before {
+		t.Fatalf("docker event caused %d git resolves", r.g.resolves-before)
 	}
 }

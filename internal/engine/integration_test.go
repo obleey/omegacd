@@ -297,3 +297,58 @@ services:
 		t.Fatalf("after re-sync Diff = %+v; want empty", diffs)
 	}
 }
+
+func TestDiffResolvesServiceReferences(t *testing.T) {
+	ctx := context.Background()
+	e := newTestEngine(t)
+	app := testApp(t, e)
+	dir := t.TempDir()
+	write(t, dir, "compose.yaml", `
+services:
+  db:
+    image: busybox
+    command: ["sleep", "3600"]
+    volumes: [/data]
+    ipc: shareable
+  app:
+    image: busybox
+    command: ["sleep", "3600"]
+    network_mode: "service:db"
+    ipc: "service:db"
+    pid: "service:db"
+    volumes_from: [db]
+`)
+	if err := e.Sync(ctx, app, dir, domain.SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if diffs, err := e.Diff(ctx, app, dir, ""); err != nil || len(diffs) != 0 {
+		t.Fatalf("Diff after sync = %+v, %v; want empty", diffs, err)
+	}
+}
+
+func TestWatchReportsContainerChanges(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	e := newTestEngine(t)
+	app := testApp(t, e)
+	dir := t.TempDir()
+	write(t, dir, "compose.yaml", "services:\n  web:\n    image: busybox\n    command: [\"sleep\", \"3600\"]\n")
+
+	seen := make(chan string, 64)
+	go e.Watch(ctx, func(p string) { seen <- p })
+	time.Sleep(500 * time.Millisecond) // let the event stream connect
+	if err := e.Sync(ctx, app, dir, domain.SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.After(10 * time.Second)
+	for {
+		select {
+		case p := <-seen:
+			if p == app.Name {
+				return
+			}
+		case <-deadline:
+			t.Fatal("no docker event for the project")
+		}
+	}
+}

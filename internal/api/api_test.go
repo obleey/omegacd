@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -27,6 +28,52 @@ type fakeStore struct {
 	hash         string
 	mustChange   bool
 	tokens       map[string]domain.APIToken
+	sessions     map[string]time.Time
+}
+
+func (s *fakeStore) CreateSession(_ context.Context, h string, exp time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessions[h] = exp
+	return nil
+}
+
+func (s *fakeStore) GetSession(_ context.Context, h string) (time.Time, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	exp, ok := s.sessions[h]
+	if !ok || time.Now().After(exp) {
+		return time.Time{}, domain.ErrNotFound
+	}
+	return exp, nil
+}
+
+func (s *fakeStore) ExtendSession(_ context.Context, h string, exp time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.sessions[h]; !ok {
+		return domain.ErrNotFound
+	}
+	s.sessions[h] = exp
+	return nil
+}
+
+func (s *fakeStore) DeleteSession(_ context.Context, h string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.sessions, h)
+	return nil
+}
+
+func (s *fakeStore) DeleteSessionsExcept(_ context.Context, keep string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for h := range s.sessions {
+		if h != keep {
+			delete(s.sessions, h)
+		}
+	}
+	return nil
 }
 
 func (s *fakeStore) AdminPasswordHash(context.Context) (string, bool, error) {
@@ -130,7 +177,7 @@ type env struct {
 }
 
 func newEnv(t *testing.T, mustChange bool) *env {
-	store := &fakeStore{tokens: map[string]domain.APIToken{}}
+	store := &fakeStore{tokens: map[string]domain.APIToken{}, sessions: map[string]time.Time{}}
 	hash, _ := bcrypt.GenerateFromPassword([]byte("secret123"), bcrypt.MinCost)
 	store.hash, store.mustChange = string(hash), mustChange
 	ctrl := &fakeController{apps: map[string]domain.AppView{}, events: make(chan domain.Event, 1), changed: make(chan string, 4)}
@@ -211,6 +258,40 @@ func TestMustChangePassword(t *testing.T) {
 	e.expect("POST", "/api/auth/password", `{"currentPassword":"wrong","newPassword":"newsecret1"}`, 400)
 	e.expect("POST", "/api/auth/password", `{"currentPassword":"secret123","newPassword":"newsecret1"}`, 204)
 	e.expect("GET", "/api/apps", "", 200)
+}
+
+func TestPasswordChangeRevokesOtherSessions(t *testing.T) {
+	e := newEnv(t, false)
+	e.login()
+	other := *e
+	jar, _ := cookiejar.New(nil)
+	other.c = &http.Client{Jar: jar}
+	other.login()
+	e.expect("POST", "/api/auth/password", `{"currentPassword":"secret123","newPassword":"newsecret1"}`, 204)
+	e.expect("GET", "/api/auth/me", "", 200)
+	other.expect("GET", "/api/auth/me", "", 401)
+}
+
+func TestSessionSlidingExpiry(t *testing.T) {
+	e := newEnv(t, false)
+	e.login()
+	var h string
+	for k := range e.store.sessions {
+		h = k
+	}
+	if len(h) != 64 {
+		t.Fatalf("session key %q is not a sha256 hex", h)
+	}
+	fresh := e.store.sessions[h]
+	e.expect("GET", "/api/auth/me", "", 200)
+	if !e.store.sessions[h].Equal(fresh) {
+		t.Fatal("fresh session was rewritten")
+	}
+	e.store.sessions[h] = time.Now().Add(time.Hour)
+	e.expect("GET", "/api/auth/me", "", 200)
+	if time.Until(e.store.sessions[h]) < 23*time.Hour {
+		t.Fatal("stale session was not extended")
+	}
 }
 
 func TestBearerToken(t *testing.T) {
@@ -331,5 +412,56 @@ func TestEnsureAdmin(t *testing.T) {
 	EnsureAdmin(context.Background(), s, "other", slog.New(slog.DiscardHandler))
 	if s.hash != old {
 		t.Fatal("existing admin overwritten")
+	}
+}
+
+func TestClientIP(t *testing.T) {
+	trusted, err := ParseTrustedProxies(" 10.0.0.0/8, 192.168.1.1 ,::1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(trusted) != 3 || trusted[1].Bits() != 32 || trusted[2].Bits() != 128 {
+		t.Fatal(trusted)
+	}
+	if _, err := ParseTrustedProxies("10.0.0.0/8,nope"); err == nil {
+		t.Fatal("want error")
+	}
+	s := &server{Config: Config{TrustedProxies: trusted}}
+	for _, tc := range []struct{ remote, xff, want string }{
+		{"203.0.113.9:1234", "1.2.3.4", "203.0.113.9"},                // untrusted peer: XFF ignored
+		{"10.1.2.3:1234", "1.2.3.4", "1.2.3.4"},                       // trusted proxy
+		{"10.1.2.3:1234", "6.6.6.6, 1.2.3.4, 192.168.1.1", "1.2.3.4"}, // spoofed left-most entry ignored
+		{"10.1.2.3:1234", "", "10.1.2.3"},
+		{"10.1.2.3:1234", "10.9.9.9", "10.1.2.3"},
+		{"[::1]:1234", "2001:db8::1", "2001:db8::1"},
+	} {
+		r := httptest.NewRequest("POST", "/api/auth/login", nil)
+		r.RemoteAddr = tc.remote
+		if tc.xff != "" {
+			r.Header.Set("X-Forwarded-For", tc.xff)
+		}
+		if got := s.clientIP(r); got != tc.want {
+			t.Errorf("%s %q: got %s, want %s", tc.remote, tc.xff, got, tc.want)
+		}
+	}
+}
+
+func TestLoginBackoffPruned(t *testing.T) {
+	s := &server{logins: map[string]loginState{
+		"old":    {fails: 3, until: time.Now().Add(-maxBackoff - time.Second)},
+		"recent": {fails: 3, until: time.Now().Add(-time.Second)},
+	}}
+	s.recordFailure("new")
+	if _, ok := s.logins["old"]; ok {
+		t.Fatal("idle entry not pruned")
+	}
+	if s.logins["recent"].fails != 3 || s.logins["new"].fails != 1 {
+		t.Fatal(s.logins)
+	}
+	for i := range maxLogins + 10 {
+		s.recordFailure(strconv.Itoa(i))
+	}
+	if len(s.logins) > maxLogins {
+		t.Fatalf("%d entries, want <= %d", len(s.logins), maxLogins)
 	}
 }

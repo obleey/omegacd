@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"path"
 	"strings"
 	"sync"
@@ -22,17 +23,19 @@ type Config struct {
 	WebhookSecret string
 	WebhookParse  func(provider string, h http.Header, body []byte, secret string) ([]string, error)
 	UI            fs.FS
+	// TrustedProxies may set X-Forwarded-For; see ParseTrustedProxies.
+	TrustedProxies []netip.Prefix
 }
 
 type server struct {
 	Config
-	mu       sync.Mutex
-	sessions map[string]time.Time  // token → expiry
-	logins   map[string]loginState // client IP → failed login backoff
+	mu        sync.Mutex
+	logins    map[string]loginState // client IP → failed login backoff
+	lastSweep time.Time
 }
 
 func New(cfg Config) http.Handler {
-	s := &server{Config: cfg, sessions: map[string]time.Time{}, logins: map[string]loginState{}}
+	s := &server{Config: cfg, logins: map[string]loginState{}}
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("POST /api/auth/login", s.login)

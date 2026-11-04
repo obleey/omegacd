@@ -3,13 +3,14 @@ package api
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
+	"net/netip"
 	"path"
 	"strings"
 	"time"
@@ -23,6 +24,8 @@ const (
 	adminUser     = "admin"
 	sessionCookie = "dockercd_session"
 	sessionTTL    = 24 * time.Hour
+	maxBackoff    = 5 * time.Minute
+	maxLogins     = 10000 // tracked client IPs
 )
 
 // EnsureAdmin initialises the admin account on first start.
@@ -53,12 +56,68 @@ type loginState struct {
 	until time.Time
 }
 
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
+// ParseTrustedProxies parses a comma-separated list of CIDRs or bare IPs.
+func ParseTrustedProxies(v string) ([]netip.Prefix, error) {
+	var out []netip.Prefix
+	for f := range strings.SplitSeq(v, ",") {
+		if f = strings.TrimSpace(f); f == "" {
+			continue
+		}
+		if strings.Contains(f, "/") {
+			p, err := netip.ParsePrefix(f)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, p.Masked())
+			continue
+		}
+		a, err := netip.ParseAddr(f)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, netip.PrefixFrom(a.Unmap(), a.Unmap().BitLen()))
+	}
+	return out, nil
+}
+
+func (s *server) trusted(a netip.Addr) bool {
+	for _, p := range s.TrustedProxies {
+		if p.Contains(a.Unmap()) {
+			return true
+		}
+	}
+	return false
+}
+
+// clientIP is RemoteAddr, or behind a trusted proxy the rightmost untrusted X-Forwarded-For entry.
+func (s *server) clientIP(r *http.Request) string {
+	ap, err := netip.ParseAddrPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
 	}
-	return host
+	remote := ap.Addr().Unmap()
+	if !s.trusted(remote) {
+		return remote.String()
+	}
+	var hops []string
+	for _, h := range r.Header.Values("X-Forwarded-For") {
+		hops = append(hops, strings.Split(h, ",")...)
+	}
+	for i := len(hops) - 1; i >= 0; i-- {
+		a, err := netip.ParseAddr(strings.TrimSpace(hops[i]))
+		if err != nil {
+			break // garbage from the client side of the chain; don't trust anything left of it
+		}
+		if !s.trusted(a) {
+			return a.Unmap().String()
+		}
+	}
+	return remote.String()
+}
+
+func sessionHash(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
 }
 
 func (s *server) auth(next http.Handler) http.Handler {
@@ -77,7 +136,7 @@ func (s *server) auth(next http.Handler) http.Handler {
 			return
 		}
 		c, err := r.Cookie(sessionCookie)
-		if err != nil || !s.touchSession(c.Value) {
+		if err != nil || !s.touchSession(r.Context(), c.Value) {
 			writeStatus(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
@@ -100,17 +159,45 @@ func (s *server) auth(next http.Handler) http.Handler {
 	})
 }
 
-// touchSession reports whether token is a live session and extends it.
-func (s *server) touchSession(token string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	exp, ok := s.sessions[token]
-	if !ok || time.Now().After(exp) {
-		delete(s.sessions, token)
+// touchSession reports whether token is a live session and slides its expiry, writing at most hourly.
+func (s *server) touchSession(ctx context.Context, token string) bool {
+	h := sessionHash(token)
+	exp, err := s.Store.GetSession(ctx, h)
+	if err != nil {
+		if !errors.Is(err, domain.ErrNotFound) {
+			slog.Error("get session", "err", err)
+		}
 		return false
 	}
-	s.sessions[token] = time.Now().Add(sessionTTL)
+	if time.Until(exp) < sessionTTL-time.Hour {
+		if err := s.Store.ExtendSession(ctx, h, time.Now().Add(sessionTTL)); err != nil {
+			slog.Error("extend session", "err", err)
+		}
+	}
 	return true
+}
+
+// recordFailure bumps ip's backoff and drops entries idle longer than maxBackoff, so escalation survives
+// between attempts while memory stays bounded.
+func (s *server) recordFailure(ip string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	if now.Sub(s.lastSweep) > time.Minute || len(s.logins) >= maxLogins {
+		for k, v := range s.logins {
+			if now.After(v.until.Add(maxBackoff)) {
+				delete(s.logins, k)
+			}
+		}
+		s.lastSweep = now
+	}
+	st, ok := s.logins[ip]
+	if !ok && len(s.logins) >= maxLogins {
+		return
+	}
+	st.fails++
+	st.until = now.Add(min(time.Second<<min(st.fails, 9), maxBackoff))
+	s.logins[ip] = st
 }
 
 func (s *server) login(w http.ResponseWriter, r *http.Request) {
@@ -119,8 +206,7 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	ip := clientIP(r)
-	// shortcut: in-memory per-IP backoff, never pruned and unaware of proxies; fine for one admin, upgrade if exposed publicly.
+	ip := s.clientIP(r)
 	s.mu.Lock()
 	st := s.logins[ip]
 	s.mu.Unlock()
@@ -136,20 +222,19 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 	userOK := subtle.ConstantTimeCompare([]byte(req.Username), []byte(adminUser)) == 1
 	passOK := bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)) == nil
 	if !userOK || !passOK {
-		st.fails++
-		st.until = time.Now().Add(min(time.Second<<min(st.fails, 9), 5*time.Minute))
-		s.mu.Lock()
-		s.logins[ip] = st
-		s.mu.Unlock()
+		s.recordFailure(ip)
 		writeStatus(w, http.StatusUnauthorized, "invalid username or password")
 		return
 	}
 	b := make([]byte, 32)
 	rand.Read(b)
 	token := hex.EncodeToString(b)
+	if err := s.Store.CreateSession(r.Context(), sessionHash(token), time.Now().Add(sessionTTL)); err != nil {
+		writeError(w, err)
+		return
+	}
 	s.mu.Lock()
 	delete(s.logins, ip)
-	s.sessions[token] = time.Now().Add(sessionTTL)
 	s.mu.Unlock()
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookie, Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode,
@@ -160,9 +245,10 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) logout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(sessionCookie); err == nil {
-		s.mu.Lock()
-		delete(s.sessions, c.Value)
-		s.mu.Unlock()
+		if err := s.Store.DeleteSession(r.Context(), sessionHash(c.Value)); err != nil {
+			writeError(w, err)
+			return
+		}
 	}
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode})
 	w.WriteHeader(http.StatusNoContent)
@@ -202,6 +288,14 @@ func (s *server) changePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Store.SetAdminPassword(r.Context(), string(newHash), false); err != nil {
+		writeError(w, err)
+		return
+	}
+	keep := ""
+	if c, err := r.Cookie(sessionCookie); err == nil {
+		keep = sessionHash(c.Value)
+	}
+	if err := s.Store.DeleteSessionsExcept(r.Context(), keep); err != nil {
 		writeError(w, err)
 		return
 	}

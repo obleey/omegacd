@@ -50,6 +50,14 @@ docker compose logs dockercd | grep "initial admin password"
 
 Open http://localhost:8080, log in as `admin`, and change the password.
 
+### Git over SSH
+
+SSH host keys are always verified. Mount a `known_hosts` file at `/etc/dockercd/known_hosts` (or set `DOCKERCD_SSH_KNOWN_HOSTS`):
+
+```sh
+ssh-keyscan github.com gitlab.com >> known_hosts   # verify the fingerprints against your provider's docs
+```
+
 ## Development
 
 Requires Go, Node.js and a running Docker engine.

@@ -71,6 +71,7 @@ func run(log *slog.Logger) error {
 	}
 	defer eng.Close()
 	git := gitsrc.New(filepath.Join(dataDir, "repos"), st.ListRepoCredentials)
+	git.KnownHostsFile = cmp.Or(os.Getenv("DOCKERCD_SSH_KNOWN_HOSTS"), "/etc/dockercd/known_hosts")
 
 	selfID, _ := os.Hostname() // inside a container this is the container ID prefix
 	ctl := controller.New(controller.Config{
@@ -85,6 +86,10 @@ func run(log *slog.Logger) error {
 	if err := api.EnsureAdmin(ctx, st, os.Getenv("DOCKERCD_ADMIN_PASSWORD"), log); err != nil {
 		return err
 	}
+	proxies, err := api.ParseTrustedProxies(os.Getenv("DOCKERCD_TRUSTED_PROXIES"))
+	if err != nil {
+		return err
+	}
 	ui, err := fs.Sub(web.Build, "build")
 	if err != nil {
 		return err
@@ -92,11 +97,12 @@ func run(log *slog.Logger) error {
 	srv := &http.Server{
 		Addr: addr,
 		Handler: api.New(api.Config{
-			Controller:    ctl,
-			Store:         st,
-			WebhookSecret: os.Getenv("DOCKERCD_WEBHOOK_SECRET"),
-			WebhookParse:  gitsrc.ParseWebhook,
-			UI:            ui,
+			Controller:     ctl,
+			Store:          st,
+			WebhookSecret:  os.Getenv("DOCKERCD_WEBHOOK_SECRET"),
+			WebhookParse:   gitsrc.ParseWebhook,
+			TrustedProxies: proxies,
+			UI:             ui,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}

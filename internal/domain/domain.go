@@ -203,6 +203,13 @@ type Store interface {
 	AdminPasswordHash(ctx context.Context) (hash string, mustChange bool, err error) // ErrNotFound if not initialised
 	SetAdminPassword(ctx context.Context, hash string, mustChange bool) error
 
+	// UI sessions keyed by sha256 hex of the cookie value. CreateSession also purges expired sessions.
+	CreateSession(ctx context.Context, tokenHash string, expires time.Time) error
+	GetSession(ctx context.Context, tokenHash string) (expires time.Time, err error) // ErrNotFound if missing or expired
+	ExtendSession(ctx context.Context, tokenHash string, expires time.Time) error
+	DeleteSession(ctx context.Context, tokenHash string) error
+	DeleteSessionsExcept(ctx context.Context, keepHash string) error
+
 	Close() error
 }
 
@@ -249,6 +256,9 @@ type Engine interface {
 	ProjectExists(ctx context.Context, name string) (exists, managed bool, err error)
 	// Logs streams container logs (stdout+stderr, demultiplexed, with timestamps) to w until ctx ends or, if !follow, EOF.
 	Logs(ctx context.Context, containerID string, follow bool, tail int, w io.Writer) error
+	// Watch calls changed with a Compose project name whenever one of its containers changes state.
+	// It blocks, reconnecting as needed, until ctx ends.
+	Watch(ctx context.Context, changed func(project string)) error
 	Close() error
 }
 

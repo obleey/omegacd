@@ -112,3 +112,11 @@ func TestServiceHashGolden(t *testing.T) {
 		t.Fatalf("serviceHash = %s, want %s", got, want)
 	}
 }
+
+func TestResolveRefsMissingContainer(t *testing.T) {
+	var s types.ServiceConfig
+	s.NetworkMode = "service:db"
+	if _, ok := resolveRefs(s, nil); ok {
+		t.Fatal("resolveRefs with no db container = ok; want not ok")
+	}
+}

@@ -177,8 +177,13 @@ func (e *Engine) Diff(ctx context.Context, app domain.Application, dir, asDir st
 			diffs = append(diffs, domain.ServiceDiff{Service: name, Change: "added"})
 			continue
 		}
-		// shortcut: network_mode/ipc/pid "service:x" and use_api_socket are hashed by compose after resolution, so such services always show as changed.
-		hash, err := serviceHash(svc)
+		// shortcut: use_api_socket is hashed after compose adds a socket mount and, given registry credentials Diff does not see, a config; such services always show as changed.
+		resolved, ok := resolveRefs(svc, byService)
+		if !ok { // referenced service has no container: compose will recreate this one
+			diffs = append(diffs, domain.ServiceDiff{Service: name, Change: "changed", Fields: []string{"config"}})
+			continue
+		}
+		hash, err := serviceHash(resolved)
 		if err != nil {
 			return nil, fmt.Errorf("hash service %q: %w", name, err)
 		}
@@ -204,6 +209,55 @@ func (e *Engine) Diff(ctx context.Context, app domain.Application, dir, asDir st
 		}
 	}
 	return diffs, nil
+}
+
+// resolveRefs mirrors compose's resolveServiceReferences (pkg/compose/service_containers.go), applied before
+// it hashes a service: service:x in volumes_from, network_mode, ipc and pid points at x's first container.
+func resolveRefs(s types.ServiceConfig, byService map[string][]container.Summary) (types.ServiceConfig, bool) {
+	first := func(name string) (string, bool) {
+		if len(byService[name]) == 0 {
+			return "", false
+		}
+		return slices.MinFunc(byService[name], func(a, b container.Summary) int {
+			return strings.Compare(canonicalName(a), canonicalName(b))
+		}).ID, true
+	}
+	s.VolumesFrom = slices.Clone(s.VolumesFrom)
+	for i, v := range s.VolumesFrom {
+		spec := strings.Split(v, ":")
+		if spec[0] == "container" && len(spec) > 1 {
+			s.VolumesFrom[i] = spec[1]
+			continue
+		}
+		id, ok := first(spec[0])
+		if !ok {
+			return s, false
+		}
+		s.VolumesFrom[i] = id
+	}
+	for _, mode := range []*string{&s.NetworkMode, &s.Ipc, &s.Pid} {
+		if name, found := strings.CutPrefix(*mode, types.NetworkModeServicePrefix); found {
+			id, ok := first(name)
+			if !ok {
+				return s, false
+			}
+			*mode = types.ContainerPrefix + id
+		}
+	}
+	return s, true
+}
+
+// canonicalName copies compose's internal naming.CanonicalContainerName: the name without slash or link aliases.
+func canonicalName(c container.Summary) string {
+	if len(c.Names) == 0 {
+		return c.ID[:12]
+	}
+	for _, n := range c.Names {
+		if strings.LastIndex(n, "/") == 0 {
+			return n[1:]
+		}
+	}
+	return strings.TrimPrefix(c.Names[0], "/")
 }
 
 func (e *Engine) Sync(ctx context.Context, app domain.Application, dir string, opts domain.SyncOptions) error {
