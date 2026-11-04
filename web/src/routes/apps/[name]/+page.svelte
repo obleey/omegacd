@@ -25,6 +25,7 @@
 	import { ms, shownSync } from '#lib/status.ts';
 	import { toastError } from '#lib/toast.svelte.ts';
 	import AppForm from '#lib/AppForm.svelte';
+	import { refreshApp } from '#lib/actions.ts';
 	import Resources from '#lib/app/Resources.svelte';
 	import Diff from '#lib/app/Diff.svelte';
 	import History from '#lib/app/History.svelte';
@@ -132,7 +133,7 @@
 		syncOpen = false;
 		act('sync', () => api('POST', `${base}/sync`, { prune: syncPrune }));
 	}
-	const refresh = () => act('refresh', async () => putApp(await api<AppView>('POST', `${base}/refresh`)));
+	const refresh = () => act('refresh', () => refreshApp(name));
 
 	function del() {
 		delOpen = false;

@@ -274,7 +274,7 @@
 								><Icon name="sync" size={14} spin={isSyncing(a)} />{isSyncing(a) ? 'Syncing' : 'Sync'}</button
 							>
 							<button class="sm ghost icon-btn" onclick={() => rowAction(a.name, refreshApp)} disabled={busy[a.name]} aria-label="Refresh {a.name}" title="Refresh"
-								><Icon name="refresh" size={14} /></button
+								><Icon name="refresh" size={14} spin={busy[a.name]} /></button
 							>
 						</td>
 					</tr>
