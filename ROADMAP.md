@@ -33,9 +33,9 @@ OmegaCD is early. This is the plan, most important first — it changes as real 
 
 ## v0.4 — teams
 
-- Multiple users, SSO (OIDC), RBAC (e.g. access per customer)
+- **SSO** via OpenID Connect (Google, GitHub, GitLab, Microsoft Entra, Keycloak, Authentik, …), multiple users, RBAC (e.g. access per customer / App of Apps)
 - Audit log
-- More Secret Sources: Vault, 1Password, Bitwarden
+- **External secret managers** as Secret Sources next to SOPS: HashiCorp Vault / OpenBao, 1Password, Bitwarden, Infisical, AWS Secrets Manager, Google Secret Manager, Azure Key Vault — referenced from compose, resolved at Sync time, never stored in Git
 - Postgres as an alternative to SQLite
 
 ## Later
