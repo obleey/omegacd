@@ -66,6 +66,14 @@
 	let notFound = $state(false);
 	let busy = $state('');
 	let editing = $state(false);
+	// The form opens below the header and status panels, often outside the viewport: bring it into view.
+	let editEl = $state<HTMLElement>();
+	$effect(() => {
+		if (!editing || !editEl) return;
+		const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+		editEl.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+		editEl.querySelector<HTMLElement>('input:not([disabled]), select:not([disabled]), textarea')?.focus({ preventScroll: true });
+	});
 	let liveState = $state<LiveState | null>(null);
 	let diff = $state<DiffView | null>(null);
 	let ops = $state<SyncOperation[] | null>(null);
@@ -262,7 +270,7 @@
 	{/if}
 
 	{#if editing && !app.parent}
-		<section class="card">
+		<section class="card" bind:this={editEl}>
 			<h2 class="mb">Edit settings</h2>
 			<AppForm
 				initial={app}
