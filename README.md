@@ -396,6 +396,11 @@ make docker             # build the container image
 
 Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
+
+## Roadmap
+
+See [ROADMAP.md](ROADMAP.md) — next up: sync hooks and notifications.
+
 ## License
 
 [Apache-2.0](LICENSE)
