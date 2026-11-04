@@ -182,8 +182,8 @@
 </section>
 
 <section class="card">
-	<h2><span class="hicon"><Icon name="folder" size={17} /></span>Repository credentials</h2>
-	<p class="muted small">Used for every Repository whose URL starts with the prefix. Secrets are stored encrypted and never shown.</p>
+	<h2><span class="hicon"><Icon name="folder" size={17} /></span>Repository credentials <span class="muted small">— for reading Git repositories</span></h2>
+	<p class="muted small">Private Git repos (e.g. <code>https://github.com/you/</code> + a token with read access). Used for every Repository whose URL starts with the prefix. Secrets are stored encrypted and never shown.</p>
 	{#if repos.length}
 		<div class="scroll-x"><table>
 			<thead><tr><th>URL prefix</th><th>Username</th><th>Password / token</th><th>SSH key</th><th><span class="sr-only">Actions</span></th></tr></thead>
@@ -231,8 +231,8 @@
 </section>
 
 <section class="card">
-	<h2><span class="hicon"><Icon name="container" size={17} /></span>Registry credentials</h2>
-	<p class="muted small">Used to pull images during Sync.</p>
+	<h2><span class="hicon"><Icon name="container" size={17} /></span>Registry credentials <span class="muted small">— for pulling Docker images</span></h2>
+	<p class="muted small">Private image registries (e.g. <code>ghcr.io</code>, <code>registry.example.com:5000</code>) — a host, not a URL. For Git repositories use Repository credentials above.</p>
 	{#if regs.length}
 		<div class="scroll-x"><table>
 			<thead><tr><th>Registry</th><th>Username</th><th>Password</th><th><span class="sr-only">Actions</span></th></tr></thead>
@@ -256,7 +256,7 @@
 		<div class="grid">
 			<div class="field">
 				<label for="rg-host">Registry</label>
-				<input id="rg-host" bind:value={regForm.registry} required placeholder="ghcr.io" autocomplete="off" />
+				<input id="rg-host" bind:value={regForm.registry} required placeholder="ghcr.io" pattern="[^/:\s]+(:[0-9]+)?" title="A registry host like ghcr.io or registry.example.com:5000 — not a URL. Git repositories go under Repository credentials." autocomplete="off" />
 			</div>
 			<div class="field">
 				<label for="rg-user">Username</label>

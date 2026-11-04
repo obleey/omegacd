@@ -360,6 +360,10 @@ func (s *server) saveRegistryCred(w http.ResponseWriter, r *http.Request) {
 	if err == nil && req.Registry == "" {
 		err = fmt.Errorf("%w: registry is required", domain.ErrInvalid)
 	}
+	// a registry is a host like ghcr.io; a URL here is almost always a Git credential in the wrong form
+	if err == nil && (strings.Contains(req.Registry, "://") || strings.Contains(req.Registry, "/")) {
+		err = fmt.Errorf("%w: registry must be a host like ghcr.io or registry.example.com:5000 — to read a Git repository, add it under Repository credentials", domain.ErrInvalid)
+	}
 	if err == nil {
 		id, err = s.Store.SaveRegistryCredential(r.Context(), domain.RegistryCredential{
 			ID: id, Registry: req.Registry, Username: req.Username, Password: req.Password,

@@ -564,3 +564,13 @@ func TestVersionIsPublic(t *testing.T) {
 		t.Fatal(b)
 	}
 }
+
+func TestRegistryCredentialRejectsGitURL(t *testing.T) {
+	e := newEnv(t, false)
+	e.login()
+	for _, reg := range []string{"https://github.com/obleey/", "github.com/obleey"} {
+		if b := e.expect("POST", "/api/settings/registry-credentials", `{"registry":"`+reg+`","username":"u","password":"p"}`, 400); !strings.Contains(b, "Repository credentials") {
+			t.Fatalf("%s: %s", reg, b)
+		}
+	}
+}
