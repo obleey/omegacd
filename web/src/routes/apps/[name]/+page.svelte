@@ -143,6 +143,7 @@
 			<button class="danger" onclick={() => (delOpen = true)} disabled={!!busy}>Delete</button>
 		</div>
 		<dl class="meta">
+			<div><dt>Host</dt><dd class="mono">{app.host || 'local'}</dd></div>
 			<div><dt>Repository</dt><dd class="mono">{app.repoURL}</dd></div>
 			<div><dt>Path</dt><dd class="mono">{app.path || '.'}</dd></div>
 			<div><dt>Target Revision</dt><dd class="mono">{app.targetRevision} <span class="muted">({short(app.targetSHA)})</span></dd></div>

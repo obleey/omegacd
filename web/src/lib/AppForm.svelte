@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { errMsg, type Application } from './api';
+	import { onMount } from 'svelte';
+	import { errMsg, get, type Application, type HostView } from './api';
 
 	let {
 		initial,
@@ -27,6 +28,13 @@
 	let selfHeal = $state(init?.selfHeal ?? false);
 	let prune = $state(init?.prune ?? false);
 	let adopt = $state(init?.adopt ?? false);
+	let host = $state(init?.host || 'local');
+	let hosts = $state<string[]>([init?.host || 'local']);
+	onMount(() => {
+		get<HostView[]>('/settings/hosts')
+			.then((hs) => (hosts = hs.map((h) => h.name)))
+			.catch(() => {}); // the select keeps the current Host
+	});
 	let error = $state('');
 	let busy = $state(false);
 
@@ -49,6 +57,7 @@
 				targetRevision: targetRevision.trim() || 'main',
 				composeFiles: list(composeFiles).length ? list(composeFiles) : ['compose.yaml'],
 				profiles: list(profiles),
+				host,
 				autoSync,
 				selfHeal,
 				prune,
@@ -73,6 +82,15 @@
 	<div class="field">
 		<label for="f-repo">Repository URL</label>
 		<input id="f-repo" bind:value={repoURL} required placeholder="https://github.com/org/repo.git" autocomplete="off" />
+	</div>
+	<div class="field">
+		<label for="f-host">Host</label>
+		<select id="f-host" bind:value={host} disabled={editing}>
+			{#each hosts as h (h)}<option value={h}>{h}</option>{/each}
+		</select>
+		<span class="hint">
+			{editing ? 'To move the Application to another Host, delete and recreate it.' : 'The Docker engine to deploy to. Add Hosts in Settings.'}
+		</span>
 	</div>
 	<div class="grid2">
 		<div class="field">

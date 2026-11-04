@@ -2,40 +2,118 @@ package engine
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/docker/compose/v5/pkg/api"
 	"github.com/moby/moby/client"
+
+	"github.com/obleey/dockercd/internal/domain"
 )
 
-// Watch calls changed with the Compose project name whenever a container of any Compose project
-// starts, stops, dies, is removed, pauses or changes health. It reconnects until ctx ends.
-func (e *Engine) Watch(ctx context.Context, changed func(project string)) error {
-	filters := make(client.Filters).Add("type", "container").Add("label", api.ProjectLabel)
-	for ctx.Err() == nil {
-		res := e.cli.Client().Events(ctx, client.EventsListOptions{Filters: filters})
-	stream:
-		for {
-			select {
-			case <-ctx.Done():
-				return nil
-			case <-res.Err:
-				break stream
-			case m := <-res.Messages:
-				// healthchecks fire exec_* events every interval; they say nothing about state
-				if strings.HasPrefix(string(m.Action), "exec_") {
-					continue
+const hostRelist = 30 * time.Second
+
+// Watch keeps one Docker event stream per Host (local and every stored Host, re-listed every 30s) and calls
+// changed with the Host and Compose project name whenever a container of a Compose project starts, stops,
+// dies, is removed, pauses or changes health. It blocks until ctx ends.
+func (e *Engine) Watch(ctx context.Context, changed func(host, project string)) error {
+	streams := map[string]context.CancelFunc{}
+	defer func() {
+		for _, cancel := range streams {
+			cancel()
+		}
+	}()
+	for {
+		want := map[string]bool{domain.LocalHost: true}
+		if e.cfg.ListHosts != nil {
+			hosts, err := e.cfg.ListHosts(ctx)
+			if err != nil {
+				for name := range streams { // keep what runs
+					want[name] = true
 				}
-				if p := m.Actor.Attributes[api.ProjectLabel]; p != "" {
-					changed(p)
+				if ctx.Err() == nil {
+					slog.Warn("watch: list hosts", "err", err)
 				}
+			}
+			for _, h := range hosts {
+				want[h.Name] = true
+			}
+		}
+		for name, cancel := range streams {
+			if !want[name] {
+				cancel()
+				delete(streams, name)
+			}
+		}
+		for name := range want {
+			if streams[name] == nil {
+				hctx, cancel := context.WithCancel(ctx)
+				streams[name] = cancel
+				go e.watchHost(hctx, name, changed)
 			}
 		}
 		select {
 		case <-ctx.Done():
-		case <-time.After(5 * time.Second):
+			return nil
+		case <-time.After(hostRelist):
 		}
 	}
-	return nil
+}
+
+// watchHost streams one Host's events, reconnecting with backoff. It logs only when the Host goes down or comes back.
+func (e *Engine) watchHost(ctx context.Context, host string, changed func(host, project string)) {
+	filters := make(client.Filters).Add("type", "container").Add("label", api.ProjectLabel)
+	backoff, down := time.Second, false
+	for ctx.Err() == nil {
+		err := e.streamEvents(ctx, host, filters, changed, func() {
+			backoff = time.Second
+			if down {
+				slog.Info("watch: host reachable again", "host", host)
+				down = false
+			}
+		})
+		if ctx.Err() != nil {
+			return
+		}
+		if !down {
+			slog.Warn("watch: host unreachable, retrying", "host", host, "err", err)
+			down = true
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(backoff):
+		}
+		backoff = min(backoff*2, time.Minute)
+	}
+}
+
+// streamEvents runs one event stream until it fails; connected is called once the Host answered.
+func (e *Engine) streamEvents(ctx context.Context, host string, filters client.Filters, changed func(host, project string), connected func()) error {
+	hc, err := e.conn(ctx, host)
+	if err != nil {
+		return err
+	}
+	c := hc.cli.Client()
+	if _, err := c.Ping(ctx, client.PingOptions{}); err != nil {
+		return err
+	}
+	connected()
+	res := c.Events(ctx, client.EventsListOptions{Filters: filters})
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case err := <-res.Err:
+			return err
+		case m := <-res.Messages:
+			// healthchecks fire exec_* events every interval; they say nothing about state
+			if strings.HasPrefix(string(m.Action), "exec_") {
+				continue
+			}
+			if p := m.Actor.Attributes[api.ProjectLabel]; p != "" {
+				changed(host, p)
+			}
+		}
+	}
 }

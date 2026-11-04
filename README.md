@@ -58,6 +58,15 @@ SSH host keys are always verified. Mount a `known_hosts` file at `/etc/dockercd/
 ssh-keyscan github.com gitlab.com >> known_hosts   # verify the fingerprints against your provider's docs
 ```
 
+### Remote Hosts
+
+Applications deploy to the built-in `local` Host (the mounted Docker socket) by default. Add more Docker engines under **Settings → Hosts** and pick one when creating an Application:
+
+- `ssh://deploy@server[:port]` — give the Host an SSH private key; the server's host key must be in the same `known_hosts` file as above (`ssh-keyscan server >> known_hosts`).
+- `tcp://server:2376` — Docker over TLS; give the Host its CA, client certificate and key (PEM).
+
+On sync, the Application's files are copied to the Host's work dir (default `/run/dockercd`) so bind mounts, configs and secrets resolve there. To move an Application to another Host, delete and recreate it.
+
 ## Development
 
 Requires Go, Node.js and a running Docker engine.

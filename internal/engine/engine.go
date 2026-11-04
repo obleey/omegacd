@@ -35,15 +35,16 @@ import (
 var _ domain.Engine = (*Engine)(nil)
 
 type Engine struct {
-	cli     command.Cli
-	compose api.Compose
+	cfg Config
 
 	mu      sync.Mutex
-	desired map[string][]string // app name -> service names of the last loaded project
+	conns   map[string]*hostConn // host name -> connection, created lazily (local in New)
+	desired map[string][]string  // app name -> service names of the last loaded project
 }
 
-// New connects to the Docker host the way the docker CLI does (DOCKER_HOST, contexts).
-func New() (*Engine, error) {
+// New connects to the local Docker host the way the docker CLI does (DOCKER_HOST, contexts).
+// Remote Hosts are connected on first use.
+func New(cfg Config) (*Engine, error) {
 	dcli, err := command.NewDockerCli()
 	if err != nil {
 		return nil, fmt.Errorf("docker cli: %w", err)
@@ -55,10 +56,23 @@ func New() (*Engine, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Engine{cli: dcli, compose: svc, desired: map[string][]string{}}, nil
+	return &Engine{
+		cfg:     cfg,
+		conns:   map[string]*hostConn{domain.LocalHost: {host: domain.Host{Name: domain.LocalHost}, cli: dcli, compose: svc}},
+		desired: map[string][]string{},
+	}, nil
 }
 
-func (e *Engine) Close() error { return e.cli.Client().Close() }
+func (e *Engine) Close() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	var errs []error
+	for name, hc := range e.conns {
+		errs = append(errs, hc.cli.Client().Close())
+		delete(e.conns, name)
+	}
+	return errors.Join(errs...)
+}
 
 func newCompose(c command.Cli, progress func(domain.ProgressEvent)) (api.Compose, error) {
 	return compose.NewComposeService(c,
@@ -189,7 +203,8 @@ func (e *Engine) Validate(ctx context.Context, app domain.Application, dir strin
 	return checkNoBuild(p)
 }
 
-// rebase rewrites hashed path fields of a project loaded from a staging dir as if it had been loaded from to.
+// rebase rewrites path fields of a project loaded from dir from as if it had been loaded from dir to:
+// a staging dir to the app's working dir, or the local working dir to the app dir on a remote Host.
 func rebase(p *types.Project, from, to string) {
 	re := func(path string) string {
 		if rel, err := filepath.Rel(from, path); err == nil && !strings.HasPrefix(rel, "..") {
@@ -209,6 +224,29 @@ func rebase(p *types.Project, from, to string) {
 		}
 		p.Services[name] = s
 	}
+	for name, c := range p.Configs {
+		if c.File != "" {
+			c.File = re(c.File)
+			p.Configs[name] = c
+		}
+	}
+	for name, c := range p.Secrets {
+		if c.File != "" {
+			c.File = re(c.File)
+			p.Secrets[name] = c
+		}
+	}
+}
+
+// placeFor rebases p, loaded from dir, to where its files are on the app's Host: asDir (if set) locally,
+// the remote app dir on any other Host. Content hashes were computed from the local files already.
+func placeFor(p *types.Project, hc *hostConn, app, dir, asDir string) {
+	switch {
+	case hc.host.Name != domain.LocalHost:
+		rebase(p, dir, remoteAppDir(hc.host, app))
+	case asDir != "":
+		rebase(p, dir, asDir)
+	}
 }
 
 func checkNoBuild(p *types.Project) error {
@@ -221,16 +259,19 @@ func checkNoBuild(p *types.Project) error {
 }
 
 func (e *Engine) Diff(ctx context.Context, app domain.Application, dir, asDir string) ([]domain.ServiceDiff, error) {
+	hc, err := e.conn(ctx, app.Host)
+	if err != nil {
+		return nil, err
+	}
 	p, err := e.load(ctx, app, dir)
 	if err != nil {
 		return nil, err
 	}
-	if asDir != "" {
-		rebase(p, dir, asDir)
-	} else {
+	if asDir == "" {
 		e.remember(app, p)
 	}
-	ctrs, err := e.containers(ctx, app.Name)
+	placeFor(p, hc, app.Name, dir, asDir)
+	ctrs, err := containers(ctx, hc.cli.Client(), app.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -331,6 +372,10 @@ func canonicalName(c container.Summary) string {
 }
 
 func (e *Engine) Sync(ctx context.Context, app domain.Application, dir string, opts domain.SyncOptions) error {
+	hc, err := e.conn(ctx, app.Host)
+	if err != nil {
+		return err
+	}
 	p, err := e.load(ctx, app, dir)
 	if err != nil {
 		return fmt.Errorf("load compose project: %w", err)
@@ -339,7 +384,13 @@ func (e *Engine) Sync(ctx context.Context, app domain.Application, dir string, o
 		return err
 	}
 	e.remember(app, p)
-	svc, err := newCompose(authCLI{Cli: e.cli, cf: registryConfig(opts.Registries)}, opts.Progress)
+	if hc.host.Name != domain.LocalHost {
+		placeFor(p, hc, app.Name, dir, "")
+		if err := e.pushFiles(ctx, hc, app.Name, dir); err != nil {
+			return fmt.Errorf("copy files to host %s: %w", hc.host.Name, err)
+		}
+	}
+	svc, err := newCompose(authCLI{Cli: hc.cli, cf: registryConfig(opts.Registries)}, opts.Progress)
 	if err != nil {
 		return err
 	}
@@ -355,14 +406,14 @@ func (e *Engine) Sync(ctx context.Context, app domain.Application, dir string, o
 		return fmt.Errorf("compose up: %w", err)
 	}
 	if opts.Prune {
-		return e.pruneNetworks(ctx, p)
+		return pruneNetworks(ctx, hc.cli.Client(), p)
 	}
 	return nil
 }
 
 // pruneNetworks removes project networks no longer declared; compose up only prunes containers.
-func (e *Engine) pruneNetworks(ctx context.Context, p *types.Project) error {
-	nets, err := e.cli.Client().NetworkList(ctx, client.NetworkListOptions{Filters: projectFilter(p.Name)})
+func pruneNetworks(ctx context.Context, c client.APIClient, p *types.Project) error {
+	nets, err := c.NetworkList(ctx, client.NetworkListOptions{Filters: projectFilter(p.Name)})
 	if err != nil {
 		return fmt.Errorf("list networks: %w", err)
 	}
@@ -371,16 +422,26 @@ func (e *Engine) pruneNetworks(ctx context.Context, p *types.Project) error {
 		if _, ok := p.Networks[n.Labels[api.NetworkLabel]]; ok {
 			continue
 		}
-		if _, err := e.cli.Client().NetworkRemove(ctx, n.ID, client.NetworkRemoveOptions{}); err != nil {
+		if _, err := c.NetworkRemove(ctx, n.ID, client.NetworkRemoveOptions{}); err != nil {
 			errs = append(errs, fmt.Errorf("prune network %s: %w", n.Name, err))
 		}
 	}
 	return errors.Join(errs...)
 }
 
+// Remove also deletes the app dir on a remote Host.
 func (e *Engine) Remove(ctx context.Context, app domain.Application) error {
-	if err := e.compose.Down(ctx, app.Name, api.DownOptions{RemoveOrphans: true}); err != nil {
+	hc, err := e.conn(ctx, app.Host)
+	if err != nil {
+		return err
+	}
+	if err := hc.compose.Down(ctx, app.Name, api.DownOptions{RemoveOrphans: true}); err != nil {
 		return fmt.Errorf("compose down: %w", err)
+	}
+	if hc.host.Name != domain.LocalHost {
+		if err := e.removeFiles(ctx, hc, app.Name); err != nil {
+			return fmt.Errorf("remove files on host %s: %w", hc.host.Name, err)
+		}
 	}
 	e.mu.Lock()
 	delete(e.desired, app.Name)
@@ -391,7 +452,12 @@ func (e *Engine) Remove(ctx context.Context, app domain.Application) error {
 // Status derives the desired services from the project last loaded for app (Validate/Diff/Sync).
 // Until one was loaded in this process, it falls back to the services seen on containers, so Missing cannot show.
 func (e *Engine) Status(ctx context.Context, app domain.Application) (domain.LiveState, error) {
-	ctrs, err := e.containers(ctx, app.Name)
+	hc, err := e.conn(ctx, app.Host)
+	if err != nil {
+		return domain.LiveState{}, err
+	}
+	c := hc.cli.Client()
+	ctrs, err := containers(ctx, c, app.Name)
 	if err != nil {
 		return domain.LiveState{}, err
 	}
@@ -404,20 +470,20 @@ func (e *Engine) Status(ctx context.Context, app domain.Application) (domain.Liv
 			slices.Sort(usedBy[key])
 		}
 	}
-	for _, c := range ctrs {
-		for _, m := range c.Mounts {
+	for _, ct := range ctrs {
+		for _, m := range ct.Mounts {
 			if m.Name != "" {
-				use("volume/"+m.Name, c.Labels[api.ServiceLabel])
+				use("volume/"+m.Name, ct.Labels[api.ServiceLabel])
 			}
 		}
-		if c.NetworkSettings != nil {
-			for n := range c.NetworkSettings.Networks {
-				use("network/"+n, c.Labels[api.ServiceLabel])
+		if ct.NetworkSettings != nil {
+			for n := range ct.NetworkSettings.Networks {
+				use("network/"+n, ct.Labels[api.ServiceLabel])
 			}
 		}
-		insp, err := e.cli.Client().ContainerInspect(ctx, c.ID, client.ContainerInspectOptions{})
+		insp, err := c.ContainerInspect(ctx, ct.ID, client.ContainerInspectOptions{})
 		if err != nil {
-			return domain.LiveState{}, fmt.Errorf("inspect container %s: %w", c.ID, err)
+			return domain.LiveState{}, fmt.Errorf("inspect container %s: %w", ct.ID, err)
 		}
 		st := insp.Container.State
 		health := ""
@@ -425,12 +491,12 @@ func (e *Engine) Status(ctx context.Context, app domain.Application) (domain.Liv
 			health = string(st.Health.Status)
 		}
 		dc := domain.Container{
-			ID:       c.ID,
+			ID:       ct.ID,
 			Name:     strings.TrimPrefix(insp.Container.Name, "/"),
-			Service:  c.Labels[api.ServiceLabel],
-			Image:    c.Image,
+			Service:  ct.Labels[api.ServiceLabel],
+			Image:    ct.Image,
 			State:    string(st.Status),
-			Status:   c.Status,
+			Status:   ct.Status,
 			ExitCode: st.ExitCode,
 			Health:   containerHealth(string(st.Status), health, st.ExitCode, insp.Container.RestartCount, keepsRunning(string(insp.Container.HostConfig.RestartPolicy.Name))),
 		}
@@ -453,14 +519,14 @@ func (e *Engine) Status(ctx context.Context, app domain.Application) (domain.Liv
 		ls.Health = domain.Missing
 	}
 
-	nets, err := e.cli.Client().NetworkList(ctx, client.NetworkListOptions{Filters: projectFilter(app.Name)})
+	nets, err := c.NetworkList(ctx, client.NetworkListOptions{Filters: projectFilter(app.Name)})
 	if err != nil {
 		return domain.LiveState{}, fmt.Errorf("list networks: %w", err)
 	}
 	for _, n := range nets.Items {
 		ls.Resources = append(ls.Resources, domain.Resource{Kind: "network", Name: n.Name, Services: usedBy["network/"+n.Name]})
 	}
-	vols, err := e.cli.Client().VolumeList(ctx, client.VolumeListOptions{Filters: projectFilter(app.Name)})
+	vols, err := c.VolumeList(ctx, client.VolumeListOptions{Filters: projectFilter(app.Name)})
 	if err != nil {
 		return domain.LiveState{}, fmt.Errorf("list volumes: %w", err)
 	}
@@ -511,8 +577,12 @@ func worst(a, b domain.HealthStatus) domain.HealthStatus {
 	return a
 }
 
-func (e *Engine) ProjectExists(ctx context.Context, name string) (exists, managed bool, err error) {
-	ctrs, err := e.containers(ctx, name)
+func (e *Engine) ProjectExists(ctx context.Context, host, name string) (exists, managed bool, err error) {
+	hc, err := e.conn(ctx, host)
+	if err != nil {
+		return false, false, err
+	}
+	ctrs, err := containers(ctx, hc.cli.Client(), name)
 	if err != nil {
 		return false, false, err
 	}
@@ -524,8 +594,13 @@ func (e *Engine) ProjectExists(ctx context.Context, name string) (exists, manage
 	return len(ctrs) > 0, managed, nil
 }
 
-func (e *Engine) Logs(ctx context.Context, containerID string, follow bool, tail int, w io.Writer) error {
-	insp, err := e.cli.Client().ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
+func (e *Engine) Logs(ctx context.Context, host, containerID string, follow bool, tail int, w io.Writer) error {
+	hc, err := e.conn(ctx, host)
+	if err != nil {
+		return err
+	}
+	c := hc.cli.Client()
+	insp, err := c.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if err != nil {
 		return err
 	}
@@ -533,7 +608,7 @@ func (e *Engine) Logs(ctx context.Context, containerID string, follow bool, tail
 	if tail > 0 {
 		t = strconv.Itoa(tail)
 	}
-	rc, err := e.cli.Client().ContainerLogs(ctx, containerID, client.ContainerLogsOptions{
+	rc, err := c.ContainerLogs(ctx, containerID, client.ContainerLogsOptions{
 		ShowStdout: true, ShowStderr: true, Timestamps: true, Follow: follow, Tail: t,
 	})
 	if err != nil {
@@ -552,8 +627,8 @@ func (e *Engine) Logs(ctx context.Context, containerID string, follow bool, tail
 }
 
 // containers lists the project's service containers, stopped ones included, one-off `run` containers excluded.
-func (e *Engine) containers(ctx context.Context, project string) ([]container.Summary, error) {
-	res, err := e.cli.Client().ContainerList(ctx, client.ContainerListOptions{
+func containers(ctx context.Context, c client.APIClient, project string) ([]container.Summary, error) {
+	res, err := c.ContainerList(ctx, client.ContainerListOptions{
 		All:     true,
 		Filters: projectFilter(project).Add("label", api.OneoffLabel+"=False"),
 	})

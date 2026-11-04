@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -22,9 +23,39 @@ type fakeStore struct {
 	mu           sync.Mutex
 	apps         map[string]domain.Application
 	ops          []domain.SyncOperation
+	hosts        map[string]domain.Host
 }
 
-func newStore() *fakeStore { return &fakeStore{apps: map[string]domain.Application{}} }
+func newStore() *fakeStore {
+	return &fakeStore{apps: map[string]domain.Application{}, hosts: map[string]domain.Host{}}
+}
+
+func (s *fakeStore) ListHosts(context.Context) ([]domain.Host, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Collect(maps.Values(s.hosts)), nil
+}
+func (s *fakeStore) GetHost(_ context.Context, n string) (domain.Host, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	h, ok := s.hosts[n]
+	if !ok {
+		return h, domain.ErrNotFound
+	}
+	return h, nil
+}
+func (s *fakeStore) SaveHost(_ context.Context, h domain.Host) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.hosts[h.Name] = h
+	return nil
+}
+func (s *fakeStore) DeleteHost(_ context.Context, n string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.hosts, n)
+	return nil
+}
 
 func (s *fakeStore) ListApps(context.Context) ([]domain.Application, error) {
 	s.mu.Lock()
@@ -142,16 +173,17 @@ type fakeSecrets struct{}
 func (fakeSecrets) DecryptDir(string) ([]string, error) { return nil, nil }
 
 type fakeEngine struct {
-	mu      sync.Mutex
-	syncErr error
-	syncs   int
-	drift   []domain.ServiceDiff
-	exists  bool
-	managed bool
-	live    domain.LiveState
-	removed bool
-	changed func(string)
-	files   []domain.Resource
+	mu           sync.Mutex
+	syncErr      error
+	syncs        int
+	drift        []domain.ServiceDiff
+	exists       bool
+	managed      bool
+	live         domain.LiveState
+	removed      bool
+	changed      func(string, string)
+	files        []domain.Resource
+	hostsChanged []string
 }
 
 func (e *fakeEngine) Validate(context.Context, domain.Application, string) error { return nil }
@@ -172,8 +204,16 @@ func (e *fakeEngine) Status(context.Context, domain.Application) (domain.LiveSta
 	defer e.mu.Unlock()
 	return e.live, nil
 }
-func (e *fakeEngine) ProjectExists(context.Context, string) (bool, bool, error) {
+func (e *fakeEngine) ProjectExists(context.Context, string, string) (bool, bool, error) {
 	return e.exists, e.managed, nil
+}
+func (e *fakeEngine) HostStatus(_ context.Context, host string) domain.HostStatus {
+	return domain.HostStatus{Name: host, Connected: true}
+}
+func (e *fakeEngine) HostChanged(host string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.hostsChanged = append(e.hostsChanged, host)
 }
 func (e *fakeEngine) ProjectFiles(context.Context, domain.Application, string) ([]domain.Resource, error) {
 	return slices.Clone(e.files), nil
@@ -181,8 +221,8 @@ func (e *fakeEngine) ProjectFiles(context.Context, domain.Application, string) (
 func (e *fakeEngine) Inspect(_ context.Context, _ domain.Application, kind, name string) (map[string]string, error) {
 	return map[string]string{"inspected": kind + "/" + name}, nil
 }
-func (e *fakeEngine) Logs(context.Context, string, bool, int, io.Writer) error { return nil }
-func (e *fakeEngine) Watch(ctx context.Context, changed func(string)) error {
+func (e *fakeEngine) Logs(context.Context, string, string, bool, int, io.Writer) error { return nil }
+func (e *fakeEngine) Watch(ctx context.Context, changed func(string, string)) error {
 	e.mu.Lock()
 	e.changed = changed
 	e.mu.Unlock()
@@ -473,7 +513,7 @@ func TestDockerEventsRefreshHealthWithoutGitFetch(t *testing.T) {
 	events, unsub := r.c.Subscribe()
 	defer unsub()
 
-	var changed func(string)
+	var changed func(string, string)
 	for changed == nil {
 		r.e.mu.Lock()
 		changed = r.e.changed
@@ -487,9 +527,9 @@ func TestDockerEventsRefreshHealthWithoutGitFetch(t *testing.T) {
 	r.e.live.Health = domain.Degraded
 	r.e.mu.Unlock()
 	for range 3 { // a burst of events is debounced into one reconcile
-		changed("web")
+		changed(domain.LocalHost, "web")
 	}
-	changed("not-an-app")
+	changed(domain.LocalHost, "not-an-app")
 
 	select {
 	case e := <-events:
@@ -500,9 +540,86 @@ func TestDockerEventsRefreshHealthWithoutGitFetch(t *testing.T) {
 		t.Fatal("no app event after docker event")
 	}
 	r.g.mu.Lock()
-	defer r.g.mu.Unlock()
 	if r.g.resolves != before {
 		t.Fatalf("docker event caused %d git resolves", r.g.resolves-before)
+	}
+	r.g.mu.Unlock()
+
+	changed("remote", "web") // same project name on another Host
+	select {
+	case e := <-events:
+		t.Fatalf("event for another host's project reconciled the app: %+v", e)
+	case <-time.After(watchDebounce + 500*time.Millisecond):
+	}
+}
+
+func TestAppHostMustExistAndCannotChange(t *testing.T) {
+	r := newRig(t)
+	a := app("web")
+	a.Host = "prod"
+	if _, err := r.c.CreateApp(t.Context(), a); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("unknown host: want ErrInvalid, got %v", err)
+	}
+	if _, err := r.c.SaveHost(t.Context(), domain.Host{Name: "prod", URL: "ssh://deploy@prod"}, true); err != nil {
+		t.Fatal(err)
+	}
+	if v, err := r.c.CreateApp(t.Context(), a); err != nil || v.Host != "prod" {
+		t.Fatalf("got %v %v", v.Host, err)
+	}
+	a.Host = domain.LocalHost
+	if _, err := r.c.UpdateApp(t.Context(), a); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("host change: want ErrInvalid, got %v", err)
+	}
+}
+
+func TestHosts(t *testing.T) {
+	r := newRig(t)
+	ctx := t.Context()
+	for _, h := range []domain.Host{
+		{Name: domain.LocalHost, URL: "tcp://x"},
+		{Name: "Bad Name", URL: "tcp://x"},
+		{Name: "prod", URL: "http://x"},
+	} {
+		if _, err := r.c.SaveHost(ctx, h, true); !errors.Is(err, domain.ErrInvalid) {
+			t.Errorf("%+v: want ErrInvalid, got %v", h, err)
+		}
+	}
+	prod := domain.Host{Name: "prod", URL: "tcp://prod:2376"}
+	if _, err := r.c.SaveHost(ctx, prod, false); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("update missing: got %v", err)
+	}
+	if _, err := r.c.SaveHost(ctx, prod, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.c.SaveHost(ctx, prod, true); !errors.Is(err, domain.ErrAlreadyExists) {
+		t.Fatalf("create twice: got %v", err)
+	}
+	a := app("web")
+	a.Host = "prod"
+	if _, err := r.c.CreateApp(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+
+	hosts, err := r.c.ListHosts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hosts) != 2 || hosts[0].Name != domain.LocalHost || hosts[1].Name != "prod" ||
+		!slices.Equal(hosts[1].Apps, []string{"web"}) || !hosts[1].Status.Connected {
+		t.Fatalf("got %+v", hosts)
+	}
+
+	if err := r.c.DeleteHost(ctx, "prod"); !errors.Is(err, domain.ErrInvalid) || !strings.Contains(err.Error(), "web") {
+		t.Fatalf("delete in use: got %v", err)
+	}
+	if err := r.c.DeleteApp(ctx, "web", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.c.DeleteHost(ctx, "prod"); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(r.e.hostsChanged, []string{"prod", "prod"}) {
+		t.Fatalf("HostChanged calls: %v", r.e.hostsChanged)
 	}
 }
 

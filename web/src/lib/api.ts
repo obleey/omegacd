@@ -110,6 +110,25 @@ export interface RegistryCredential {
 	hasPassword: boolean;
 }
 
+export interface HostStatus {
+	name: string;
+	connected: boolean;
+	error?: string;
+	serverVersion?: string;
+	os?: string;
+	containers: number;
+}
+
+export interface HostView {
+	name: string;
+	url: string; // "" for the built-in local Host
+	workDir: string;
+	hasSSHKey: boolean;
+	hasTLS: boolean;
+	status: HostStatus;
+	apps: string[];
+}
+
 export interface APIToken {
 	id: number;
 	name: string;

@@ -65,13 +65,19 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	eng, err := engine.New()
+	knownHosts := cmp.Or(os.Getenv("DOCKERCD_SSH_KNOWN_HOSTS"), "/etc/dockercd/known_hosts")
+	eng, err := engine.New(engine.Config{
+		Hosts:          st.GetHost,
+		ListHosts:      st.ListHosts,
+		KnownHostsFile: knownHosts,
+		KeyDir:         filepath.Join(dataDir, "keys"),
+	})
 	if err != nil {
 		return err
 	}
 	defer eng.Close()
 	git := gitsrc.New(filepath.Join(dataDir, "repos"), st.ListRepoCredentials)
-	git.KnownHostsFile = cmp.Or(os.Getenv("DOCKERCD_SSH_KNOWN_HOSTS"), "/etc/dockercd/known_hosts")
+	git.KnownHostsFile = knownHosts
 
 	selfID, _ := os.Hostname() // inside a container this is the container ID prefix
 	ctl := controller.New(controller.Config{

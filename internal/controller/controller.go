@@ -238,18 +238,20 @@ func (c *Controller) target(ctx context.Context, a domain.Application, fetch boo
 // watch reconciles an Application without a Git fetch whenever its containers change,
 // debounced so a burst of Docker events causes one reconcile.
 func (c *Controller) watch(ctx context.Context) {
+	type key struct{ host, project string }
 	var mu sync.Mutex
-	pending := map[string]bool{}
-	err := c.cfg.Engine.Watch(ctx, func(project string) {
+	pending := map[key]bool{}
+	err := c.cfg.Engine.Watch(ctx, func(host, project string) {
+		k := key{host, project}
 		mu.Lock()
 		defer mu.Unlock()
-		if pending[project] {
+		if pending[k] {
 			return
 		}
-		pending[project] = true
+		pending[k] = true
 		time.AfterFunc(watchDebounce, func() {
 			mu.Lock()
-			delete(pending, project)
+			delete(pending, k)
 			mu.Unlock()
 			c.mu.Lock()
 			st, ok := c.apps[project]
@@ -258,7 +260,7 @@ func (c *Controller) watch(ctx context.Context) {
 			if busy {
 				return // the Sync reconciles when it finishes
 			}
-			if a, err := c.cfg.Store.GetApp(ctx, project); err == nil {
+			if a, err := c.cfg.Store.GetApp(ctx, project); err == nil && a.Host == host {
 				c.reconcileWith(ctx, a, false)
 			}
 		})
@@ -407,7 +409,7 @@ func (c *Controller) apply(ctx context.Context, a domain.Application, op domain.
 }
 
 func (c *Controller) refuseSelf(ctx context.Context, a domain.Application) error {
-	if c.cfg.SelfID == "" {
+	if c.cfg.SelfID == "" || a.Host != domain.LocalHost {
 		return nil
 	}
 	live, err := c.cfg.Engine.Status(ctx, a)
@@ -484,7 +486,10 @@ func (c *Controller) CreateApp(ctx context.Context, a domain.Application) (domai
 	if err := normalize(&a); err != nil {
 		return domain.AppView{}, err
 	}
-	exists, managed, err := c.cfg.Engine.ProjectExists(ctx, a.Name)
+	if err := c.checkHost(ctx, a.Host); err != nil {
+		return domain.AppView{}, err
+	}
+	exists, managed, err := c.cfg.Engine.ProjectExists(ctx, a.Host, a.Name)
 	if err != nil {
 		return domain.AppView{}, err
 	}
@@ -506,6 +511,9 @@ func (c *Controller) UpdateApp(ctx context.Context, a domain.Application) (domai
 	}
 	if err := normalize(&a); err != nil {
 		return domain.AppView{}, err
+	}
+	if a.Host != old.Host {
+		return domain.AppView{}, fmt.Errorf("%w: delete and recreate the Application to move it to another Host", domain.ErrInvalid)
 	}
 	a.CreatedAt, a.Adopt = old.CreatedAt, old.Adopt
 	a.RolledBack = old.RolledBack && !a.AutoSync
@@ -771,7 +779,7 @@ func (c *Controller) Logs(ctx context.Context, name, containerID string, follow 
 	if !slices.ContainsFunc(live.Containers, func(ct domain.Container) bool { return ct.ID == containerID || ct.Name == containerID }) {
 		return fmt.Errorf("container %q: %w", containerID, domain.ErrNotFound)
 	}
-	return c.cfg.Engine.Logs(ctx, containerID, follow, tail, w)
+	return c.cfg.Engine.Logs(ctx, a.Host, containerID, follow, tail, w)
 }
 
 func (c *Controller) RepoChanged(ctx context.Context, repoURL string) {
@@ -842,6 +850,122 @@ func normalize(a *domain.Application) error {
 			return fmt.Errorf("%w: compose file %q must be relative to the path", domain.ErrInvalid, f)
 		}
 	}
-	a.Host = domain.LocalHost
+	a.Host = cmp.Or(strings.TrimSpace(a.Host), domain.LocalHost)
 	return nil
+}
+
+func (c *Controller) checkHost(ctx context.Context, name string) error {
+	if name == domain.LocalHost {
+		return nil
+	}
+	_, err := c.cfg.Store.GetHost(ctx, name)
+	if errors.Is(err, domain.ErrNotFound) {
+		return fmt.Errorf("%w: host %q does not exist", domain.ErrInvalid, name)
+	}
+	return err
+}
+
+// ---- Hosts ----
+
+func (c *Controller) ListHosts(ctx context.Context) ([]domain.HostView, error) {
+	hosts, err := c.cfg.Store.ListHosts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	byHost, err := c.appsByHost(ctx)
+	if err != nil {
+		return nil, err
+	}
+	hosts = append([]domain.Host{{Name: domain.LocalHost}}, hosts...)
+	views := make([]domain.HostView, len(hosts))
+	var wg sync.WaitGroup
+	for i, h := range hosts {
+		wg.Go(func() { views[i] = c.hostView(ctx, h, byHost[h.Name]) })
+	}
+	wg.Wait()
+	return views, nil
+}
+
+func (c *Controller) hostView(ctx context.Context, h domain.Host, apps []string) domain.HostView {
+	if apps == nil {
+		apps = []string{}
+	}
+	return domain.HostView{Host: h, Status: c.cfg.Engine.HostStatus(ctx, h.Name), Apps: apps}
+}
+
+func (c *Controller) appsByHost(ctx context.Context) (map[string][]string, error) {
+	apps, err := c.cfg.Store.ListApps(ctx)
+	if err != nil {
+		return nil, err
+	}
+	m := map[string][]string{}
+	for _, a := range apps {
+		m[a.Host] = append(m[a.Host], a.Name)
+	}
+	return m, nil
+}
+
+func (c *Controller) SaveHost(ctx context.Context, h domain.Host, create bool) (domain.HostView, error) {
+	h.Name, h.URL, h.WorkDir = strings.TrimSpace(h.Name), strings.TrimSpace(h.URL), strings.TrimSpace(h.WorkDir)
+	if !nameRE.MatchString(h.Name) {
+		return domain.HostView{}, fmt.Errorf("%w: name must be lowercase letters, digits, '-' or '_'", domain.ErrInvalid)
+	}
+	if h.Name == domain.LocalHost {
+		return domain.HostView{}, fmt.Errorf("%w: %q is the built-in Host", domain.ErrInvalid, domain.LocalHost)
+	}
+	if !strings.HasPrefix(h.URL, "ssh://") && !strings.HasPrefix(h.URL, "tcp://") {
+		return domain.HostView{}, fmt.Errorf("%w: URL must start with ssh:// or tcp://", domain.ErrInvalid)
+	}
+	if h.WorkDir != "" && !strings.HasPrefix(h.WorkDir, "/") {
+		return domain.HostView{}, fmt.Errorf("%w: work dir must be an absolute path", domain.ErrInvalid)
+	}
+	old, err := c.cfg.Store.GetHost(ctx, h.Name)
+	switch {
+	case err == nil && create:
+		return domain.HostView{}, fmt.Errorf("host %q: %w", h.Name, domain.ErrAlreadyExists)
+	case errors.Is(err, domain.ErrNotFound) && !create:
+		return domain.HostView{}, fmt.Errorf("host %q: %w", h.Name, domain.ErrNotFound)
+	case err != nil && !errors.Is(err, domain.ErrNotFound):
+		return domain.HostView{}, err
+	}
+	h.CreatedAt = old.CreatedAt
+	if err := c.cfg.Store.SaveHost(ctx, h); err != nil {
+		return domain.HostView{}, err
+	}
+	c.cfg.Engine.HostChanged(h.Name)
+	if h, err = c.cfg.Store.GetHost(ctx, h.Name); err != nil {
+		return domain.HostView{}, err
+	}
+	byHost, err := c.appsByHost(ctx)
+	if err != nil {
+		return domain.HostView{}, err
+	}
+	return c.hostView(ctx, h, byHost[h.Name]), nil
+}
+
+func (c *Controller) DeleteHost(ctx context.Context, name string) error {
+	if name == domain.LocalHost {
+		return fmt.Errorf("%w: the built-in Host cannot be deleted", domain.ErrInvalid)
+	}
+	byHost, err := c.appsByHost(ctx)
+	if err != nil {
+		return err
+	}
+	if apps := byHost[name]; len(apps) > 0 {
+		return fmt.Errorf("%w: host %q is used by Applications %s", domain.ErrInvalid, name, strings.Join(apps, ", "))
+	}
+	if err := c.cfg.Store.DeleteHost(ctx, name); err != nil {
+		return err
+	}
+	c.cfg.Engine.HostChanged(name)
+	return nil
+}
+
+func (c *Controller) TestHost(ctx context.Context, name string) (domain.HostStatus, error) {
+	if name != domain.LocalHost {
+		if _, err := c.cfg.Store.GetHost(ctx, name); err != nil {
+			return domain.HostStatus{}, err
+		}
+	}
+	return c.cfg.Engine.HostStatus(ctx, name), nil
 }

@@ -299,3 +299,35 @@ func TestSessions(t *testing.T) {
 
 // long enough that random sealed base64 never contains it by chance
 const secretPW = "correct-horse-battery-staple"
+
+func TestHosts(t *testing.T) {
+	s, _ := open(t)
+	_, err := s.GetHost(ctx, "prod")
+	wantErr(t, err, domain.ErrNotFound)
+
+	must(t, s.SaveHost(ctx, domain.Host{Name: "prod", URL: "ssh://deploy@prod", SSHPrivateKey: "key", TLSCert: "cert", TLSKey: "tlskey"}))
+	var raw string
+	must(t, s.db.QueryRow(`SELECT ssh_private_key FROM hosts WHERE name = 'prod'`).Scan(&raw))
+	if raw == "" || strings.Contains(raw, "key") {
+		t.Fatalf("key not sealed: %q", raw)
+	}
+
+	// empty secrets keep old values; WorkDir defaults
+	must(t, s.SaveHost(ctx, domain.Host{Name: "prod", URL: "tcp://prod:2376", TLSCA: "ca"}))
+	h, err := s.GetHost(ctx, "prod")
+	must(t, err)
+	if h.URL != "tcp://prod:2376" || h.WorkDir != "/run/dockercd" || h.SSHPrivateKey != "key" || h.TLSCA != "ca" ||
+		h.TLSCert != "cert" || h.TLSKey != "tlskey" || !h.HasSSHKey || !h.HasTLS || h.CreatedAt.IsZero() {
+		t.Fatalf("got %+v", h)
+	}
+
+	must(t, s.SaveHost(ctx, domain.Host{Name: "a", URL: "tcp://a", WorkDir: "/srv"}))
+	hosts, err := s.ListHosts(ctx)
+	must(t, err)
+	if len(hosts) != 2 || hosts[0].Name != "a" || hosts[0].WorkDir != "/srv" || hosts[0].HasSSHKey || hosts[0].HasTLS {
+		t.Fatalf("got %+v", hosts)
+	}
+
+	must(t, s.DeleteHost(ctx, "prod"))
+	wantErr(t, s.DeleteHost(ctx, "prod"), domain.ErrNotFound)
+}

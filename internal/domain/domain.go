@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// LocalHost is the only Host in the MVP: the Docker engine dockercd talks to via DOCKER_HOST / the socket.
+// LocalHost is the built-in Host: the Docker engine dockercd talks to via DOCKER_HOST / the socket.
 const LocalHost = "local"
 
 // ManagedLabel is set on every container dockercd creates; its value is the Application name.
@@ -30,7 +30,7 @@ type Application struct {
 	TargetRevision string    `json:"targetRevision"` // branch, tag or commit SHA; default "main"
 	ComposeFiles   []string  `json:"composeFiles"`   // relative to Path; default ["compose.yaml"]
 	Profiles       []string  `json:"profiles"`
-	Host           string    `json:"host"` // always LocalHost in the MVP
+	Host           string    `json:"host"` // a Host name; default LocalHost
 	AutoSync       bool      `json:"autoSync"`
 	SelfHeal       bool      `json:"selfHeal"`
 	Prune          bool      `json:"prune"`
@@ -86,6 +86,37 @@ type RepoCredential struct {
 	SSHPrivateKey string `json:"-"`
 	HasPassword   bool   `json:"hasPassword"`
 	HasSSHKey     bool   `json:"hasSSHKey"`
+}
+
+// Host is a Docker engine Applications deploy to. LocalHost is built in and not stored.
+type Host struct {
+	Name          string    `json:"name"`
+	URL           string    `json:"url"`     // ssh://user@server[:port] or tcp://server:2376
+	WorkDir       string    `json:"workDir"` // Application files are copied here on the host; default /run/dockercd
+	SSHPrivateKey string    `json:"-"`
+	TLSCA         string    `json:"-"` // PEM; TLS is used when TLSCert and TLSKey are set
+	TLSCert       string    `json:"-"`
+	TLSKey        string    `json:"-"`
+	HasSSHKey     bool      `json:"hasSSHKey"`
+	HasTLS        bool      `json:"hasTLS"`
+	CreatedAt     time.Time `json:"createdAt"`
+}
+
+// HostStatus is the result of contacting a Host's Docker engine.
+type HostStatus struct {
+	Name          string `json:"name"`
+	Connected     bool   `json:"connected"`
+	Error         string `json:"error,omitempty"`
+	ServerVersion string `json:"serverVersion,omitempty"`
+	OS            string `json:"os,omitempty"`
+	Containers    int    `json:"containers"`
+}
+
+// HostView is a Host plus its connection status and the Applications deployed to it, as returned by the API.
+type HostView struct {
+	Host
+	Status HostStatus `json:"status"`
+	Apps   []string   `json:"apps"`
 }
 
 type RegistryCredential struct {
@@ -206,6 +237,12 @@ type Store interface {
 	SaveRegistryCredential(ctx context.Context, c RegistryCredential) (int64, error)
 	DeleteRegistryCredential(ctx context.Context, id int64) error
 
+	// Hosts: secrets are sealed at rest; empty secret fields on save keep the old value.
+	ListHosts(ctx context.Context) ([]Host, error)
+	GetHost(ctx context.Context, name string) (Host, error)
+	SaveHost(ctx context.Context, h Host) error // create or update by Name
+	DeleteHost(ctx context.Context, name string) error
+
 	ListTokens(ctx context.Context) ([]APIToken, error)
 	CreateToken(ctx context.Context, name string) (APIToken, string, error) // returns plaintext once
 	DeleteToken(ctx context.Context, id int64) error
@@ -264,17 +301,21 @@ type Engine interface {
 	Remove(ctx context.Context, app Application) error
 	// Status returns the Live State, including Health per container and overall.
 	Status(ctx context.Context, app Application) (LiveState, error)
-	// ProjectExists reports whether a Compose project with this name has containers, and whether dockercd manages it.
-	ProjectExists(ctx context.Context, name string) (exists, managed bool, err error)
+	// ProjectExists reports whether a Compose project with this name has containers on host, and whether dockercd manages it.
+	ProjectExists(ctx context.Context, host, name string) (exists, managed bool, err error)
+	// HostStatus contacts the host's Docker engine.
+	HostStatus(ctx context.Context, host string) HostStatus
+	// HostChanged drops cached connections after a Host is edited or deleted.
+	HostChanged(host string)
 	// Logs streams container logs (stdout+stderr, demultiplexed, with timestamps) to w until ctx ends or, if !follow, EOF.
-	Logs(ctx context.Context, containerID string, follow bool, tail int, w io.Writer) error
+	Logs(ctx context.Context, host, containerID string, follow bool, tail int, w io.Writer) error
 	// ProjectFiles lists the env files, configs, secrets and bind mounts (inside dir) of the project in dir.
 	ProjectFiles(ctx context.Context, app Application, dir string) ([]Resource, error)
 	// Inspect describes a volume or network of the project.
 	Inspect(ctx context.Context, app Application, kind, name string) (map[string]string, error)
-	// Watch calls changed with a Compose project name whenever one of its containers changes state.
+	// Watch calls changed with the Host and Compose project name whenever a container on any Host changes state.
 	// It blocks, reconnecting as needed, until ctx ends.
-	Watch(ctx context.Context, changed func(project string)) error
+	Watch(ctx context.Context, changed func(host, project string)) error
 	Close() error
 }
 
@@ -302,4 +343,12 @@ type Controller interface {
 	// RepoChanged is called by webhooks: refresh every app on repoURL (matched loosely: scheme, .git suffix, case).
 	RepoChanged(ctx context.Context, repoURL string)
 	Subscribe() (<-chan Event, func())
+
+	// ListHosts returns the built-in LocalHost first, then the stored Hosts.
+	ListHosts(ctx context.Context) ([]HostView, error)
+	// SaveHost creates (create=true, ErrAlreadyExists if taken) or updates a Host; LocalHost is reserved.
+	SaveHost(ctx context.Context, h Host, create bool) (HostView, error)
+	// DeleteHost refuses (ErrInvalid) while Applications use the Host.
+	DeleteHost(ctx context.Context, name string) error
+	TestHost(ctx context.Context, name string) (HostStatus, error)
 }

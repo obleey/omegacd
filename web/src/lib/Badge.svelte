@@ -3,9 +3,9 @@
 	let { status, label = '' }: { status?: string; label?: string } = $props();
 
 	const tone: Record<string, string> = {
-		Synced: 'green', Healthy: 'green', Succeeded: 'green', running: 'green',
+		Synced: 'green', Healthy: 'green', Connected: 'green', Succeeded: 'green', running: 'green',
 		OutOfSync: 'yellow', Progressing: 'yellow', Running: 'yellow', restarting: 'yellow', created: 'yellow', paused: 'yellow',
-		Degraded: 'red', Failed: 'red', dead: 'red',
+		Degraded: 'red', Failed: 'red', Disconnected: 'red', dead: 'red',
 		Unknown: 'overlay', Missing: 'overlay', exited: 'overlay', removing: 'overlay'
 	};
 	const icon: Record<string, string> = { green: '●', yellow: '◐', red: '✕', overlay: '○' };

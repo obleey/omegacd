@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -112,6 +113,42 @@ type fakeController struct {
 	apps    map[string]domain.AppView
 	events  chan domain.Event
 	changed chan string
+	hosts   map[string]domain.Host
+}
+
+func (c *fakeController) ListHosts(context.Context) ([]domain.HostView, error) {
+	out := []domain.HostView{{Host: domain.Host{Name: domain.LocalHost}}}
+	for _, h := range c.hosts {
+		out = append(out, domain.HostView{Host: h})
+	}
+	return out, nil
+}
+
+func (c *fakeController) SaveHost(_ context.Context, h domain.Host, create bool) (domain.HostView, error) {
+	switch _, ok := c.hosts[h.Name]; {
+	case ok && create:
+		return domain.HostView{}, domain.ErrAlreadyExists
+	case !ok && !create:
+		return domain.HostView{}, domain.ErrNotFound
+	}
+	h.HasSSHKey = h.SSHPrivateKey != ""
+	c.hosts[h.Name] = h
+	return domain.HostView{Host: h}, nil
+}
+
+func (c *fakeController) DeleteHost(_ context.Context, name string) error {
+	if name == "busy" {
+		return fmt.Errorf("%w: host %q is used by Applications web", domain.ErrInvalid, name)
+	}
+	delete(c.hosts, name)
+	return nil
+}
+
+func (c *fakeController) TestHost(_ context.Context, name string) (domain.HostStatus, error) {
+	if _, ok := c.hosts[name]; !ok {
+		return domain.HostStatus{}, domain.ErrNotFound
+	}
+	return domain.HostStatus{Name: name, Connected: true, ServerVersion: "27.0"}, nil
 }
 
 func (c *fakeController) ListApps(context.Context) ([]domain.AppView, error) {
@@ -187,7 +224,7 @@ func newEnv(t *testing.T, mustChange bool) *env {
 	store := &fakeStore{tokens: map[string]domain.APIToken{}, sessions: map[string]time.Time{}}
 	hash, _ := bcrypt.GenerateFromPassword([]byte("secret123"), bcrypt.MinCost)
 	store.hash, store.mustChange = string(hash), mustChange
-	ctrl := &fakeController{apps: map[string]domain.AppView{}, events: make(chan domain.Event, 1), changed: make(chan string, 4)}
+	ctrl := &fakeController{apps: map[string]domain.AppView{}, events: make(chan domain.Event, 1), changed: make(chan string, 4), hosts: map[string]domain.Host{}}
 	h := New(Config{
 		Controller: ctrl, Store: store, WebhookSecret: "s3",
 		WebhookParse: func(provider string, h http.Header, body []byte, secret string) ([]string, error) {
@@ -480,4 +517,33 @@ func TestLoginBackoffPruned(t *testing.T) {
 	if len(s.logins) > maxLogins {
 		t.Fatalf("%d entries, want <= %d", len(s.logins), maxLogins)
 	}
+}
+
+func TestHostsAPI(t *testing.T) {
+	e := newEnv(t, false)
+	e.login()
+	b := e.expect("POST", "/api/settings/hosts", `{"name":"prod","url":"ssh://deploy@prod","sshPrivateKey":"KEY"}`, 201)
+	if strings.Contains(b, "KEY") || !strings.Contains(b, `"hasSSHKey":true`) {
+		t.Fatal(b)
+	}
+	if e.ctrl.hosts["prod"].SSHPrivateKey != "KEY" {
+		t.Fatal("key not passed to controller")
+	}
+	e.expect("POST", "/api/settings/hosts", `{"name":"prod","url":"ssh://x"}`, 409)
+	e.expect("PUT", "/api/settings/hosts/prod", `{"name":"other"}`, 400)
+	e.expect("PUT", "/api/settings/hosts/nope", `{"url":"tcp://x"}`, 404)
+	if b := e.expect("PUT", "/api/settings/hosts/prod", `{"url":"tcp://prod:2376","tlsKey":"TK"}`, 200); strings.Contains(b, "TK") || !strings.Contains(b, `"url":"tcp://prod:2376"`) {
+		t.Fatal(b)
+	}
+	if b := e.expect("GET", "/api/settings/hosts", "", 200); !strings.Contains(b, `"name":"local"`) || !strings.Contains(b, `"name":"prod"`) {
+		t.Fatal(b)
+	}
+	if b := e.expect("POST", "/api/settings/hosts/prod/test", "", 200); !strings.Contains(b, `"connected":true`) {
+		t.Fatal(b)
+	}
+	e.expect("POST", "/api/settings/hosts/nope/test", "", 404)
+	if b := e.expect("DELETE", "/api/settings/hosts/busy", "", 400); !strings.Contains(b, "web") {
+		t.Fatal(b)
+	}
+	e.expect("DELETE", "/api/settings/hosts/prod", "", 204)
 }

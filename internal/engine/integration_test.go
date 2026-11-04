@@ -43,7 +43,7 @@ volumes:
 
 func newTestEngine(t *testing.T) *Engine {
 	t.Helper()
-	e, err := New()
+	e, err := New(Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,11 +51,13 @@ func newTestEngine(t *testing.T) *Engine {
 	return e
 }
 
+func (e *Engine) local() *hostConn { return e.conns[domain.LocalHost] }
+
 func testApp(t *testing.T, e *Engine) domain.Application {
 	t.Helper()
 	app := domain.Application{Name: fmt.Sprintf("dockercd-it-%d", rand.IntN(1e9))}
 	t.Cleanup(func() {
-		_ = e.compose.Down(context.Background(), app.Name, api.DownOptions{RemoveOrphans: true, Volumes: true})
+		_ = e.local().compose.Down(context.Background(), app.Name, api.DownOptions{RemoveOrphans: true, Volumes: true})
 	})
 	return app
 }
@@ -114,7 +116,7 @@ func TestLifecycle(t *testing.T) {
 		if got := *p.Services["web"].Environment["LEAK"]; got != "none" {
 			t.Errorf("process env leaked into interpolation: LEAK=%q", got)
 		}
-		ctrs, err := e.containers(ctx, app.Name)
+		ctrs, err := containers(ctx, e.local().cli.Client(), app.Name)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -155,7 +157,7 @@ func TestLifecycle(t *testing.T) {
 	var buf bytes.Buffer
 	for range 20 {
 		buf.Reset()
-		if err := e.Logs(ctx, once, false, 0, &buf); err != nil {
+		if err := e.Logs(ctx, domain.LocalHost, once, false, 0, &buf); err != nil {
 			t.Fatal(err)
 		}
 		if strings.Contains(buf.String(), "hello-from-once") {
@@ -192,14 +194,14 @@ func TestLifecycle(t *testing.T) {
 		t.Errorf("Services = %v", ls.Services)
 	}
 
-	if exists, managed, err := e.ProjectExists(ctx, app.Name); err != nil || !exists || !managed {
+	if exists, managed, err := e.ProjectExists(ctx, "", app.Name); err != nil || !exists || !managed {
 		t.Errorf("ProjectExists(managed) = %v, %v, %v", exists, managed, err)
 	}
 
 	if err := e.Remove(ctx, app); err != nil {
 		t.Fatal(err)
 	}
-	if exists, _, err := e.ProjectExists(ctx, app.Name); err != nil || exists {
+	if exists, _, err := e.ProjectExists(ctx, "", app.Name); err != nil || exists {
 		t.Errorf("ProjectExists after Remove = %v, %v", exists, err)
 	}
 }
@@ -212,16 +214,16 @@ func TestProjectExistsUnmanaged(t *testing.T) {
 	write(t, dir, "compose.yaml", "services:\n  sleeper:\n    image: busybox\n    command: [\"sleep\", \"3600\"]\n")
 
 	// Plain compose SDK, as `docker compose up` would do it: no dockercd label.
-	p, err := e.compose.LoadProject(ctx, api.ProjectLoadOptions{
+	p, err := e.local().compose.LoadProject(ctx, api.ProjectLoadOptions{
 		ProjectName: app.Name, WorkingDir: dir, ConfigPaths: []string{filepath.Join(dir, "compose.yaml")},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.compose.Up(ctx, p, api.UpOptions{}); err != nil {
+	if err := e.local().compose.Up(ctx, p, api.UpOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	exists, managed, err := e.ProjectExists(ctx, app.Name)
+	exists, managed, err := e.ProjectExists(ctx, "", app.Name)
 	if err != nil || !exists || managed {
 		t.Fatalf("ProjectExists(unmanaged) = %v, %v, %v; want true, false", exists, managed, err)
 	}
@@ -229,7 +231,7 @@ func TestProjectExistsUnmanaged(t *testing.T) {
 	if diffs, err := e.Diff(ctx, app, dir, ""); err != nil || len(diffs) != 0 {
 		t.Errorf("Diff of unmanaged project = %+v, %v; want empty", diffs, err)
 	}
-	if exists, _, _ := e.ProjectExists(ctx, app.Name+"-nope"); exists {
+	if exists, _, _ := e.ProjectExists(ctx, "", app.Name+"-nope"); exists {
 		t.Error("ProjectExists(missing) = true")
 	}
 }
@@ -281,7 +283,7 @@ services:
 	}
 	ls, _ := e.Status(ctx, app)
 	timeout := 0
-	if _, err := e.cli.Client().ContainerStop(ctx, ls.Containers[0].ID, client.ContainerStopOptions{Timeout: &timeout}); err != nil {
+	if _, err := e.local().cli.Client().ContainerStop(ctx, ls.Containers[0].ID, client.ContainerStopOptions{Timeout: &timeout}); err != nil {
 		t.Fatal(err)
 	}
 	if diffs, _ := e.Diff(ctx, app, dir, ""); len(diffs) != 1 || diffs[0].Change != "stopped" {
@@ -335,7 +337,7 @@ func TestWatchReportsContainerChanges(t *testing.T) {
 	write(t, dir, "compose.yaml", "services:\n  web:\n    image: busybox\n    command: [\"sleep\", \"3600\"]\n")
 
 	seen := make(chan string, 64)
-	go e.Watch(ctx, func(p string) { seen <- p })
+	go e.Watch(ctx, func(_, p string) { seen <- p })
 	time.Sleep(500 * time.Millisecond) // let the event stream connect
 	if err := e.Sync(ctx, app, dir, domain.SyncOptions{}); err != nil {
 		t.Fatal(err)

@@ -16,7 +16,7 @@
 		Object.values(live.apps)
 			.filter((a) => {
 				const q = filter.trim().toLowerCase();
-				return !q || [a.name, a.repoURL, a.path, a.syncStatus, a.health].some((s) => s?.toLowerCase().includes(q));
+				return !q || [a.name, a.host, a.repoURL, a.path, a.syncStatus, a.health].some((s) => s?.toLowerCase().includes(q));
 			})
 			.sort((a, b) => a.name.localeCompare(b.name))
 	);
@@ -62,6 +62,7 @@
 			<thead>
 				<tr>
 					<th>Application</th>
+					<th>Host</th>
 					<th>Revision</th>
 					<th>Sync Status</th>
 					<th>Health Status</th>
@@ -79,6 +80,7 @@
 								{a.repoURL.replace(/^https?:\/\//, '')}{a.path && a.path !== '.' ? ` · ${a.path}` : ''}
 							</div>
 						</td>
+						<td class="mono small">{a.host || 'local'}</td>
 						<td class="mono small">
 							{a.targetRevision}
 							<div class="muted">{short(a.targetSHA)}</div>

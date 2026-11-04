@@ -304,6 +304,48 @@ func (s *server) deleteRepoCred(w http.ResponseWriter, r *http.Request) {
 	respond(w, http.StatusNoContent, nil, err)
 }
 
+func (s *server) listHosts(w http.ResponseWriter, r *http.Request) {
+	hs, err := s.Controller.ListHosts(r.Context())
+	respond(w, http.StatusOK, hs, err)
+}
+
+func (s *server) saveHost(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name          string `json:"name"`
+		URL           string `json:"url"`
+		WorkDir       string `json:"workDir"`
+		SSHPrivateKey string `json:"sshPrivateKey"`
+		TLSCA         string `json:"tlsCA"`
+		TLSCert       string `json:"tlsCert"`
+		TLSKey        string `json:"tlsKey"`
+	}
+	if err := decode(w, r, &req); err != nil {
+		writeError(w, err)
+		return
+	}
+	if name := r.PathValue("name"); name != "" {
+		if req.Name != "" && req.Name != name {
+			writeError(w, fmt.Errorf("%w: name cannot be changed", domain.ErrInvalid))
+			return
+		}
+		req.Name = name
+	}
+	v, err := s.Controller.SaveHost(r.Context(), domain.Host{
+		Name: req.Name, URL: req.URL, WorkDir: req.WorkDir,
+		SSHPrivateKey: req.SSHPrivateKey, TLSCA: req.TLSCA, TLSCert: req.TLSCert, TLSKey: req.TLSKey,
+	}, r.Method == http.MethodPost)
+	respond(w, saveStatus(r), v, err)
+}
+
+func (s *server) deleteHost(w http.ResponseWriter, r *http.Request) {
+	respond(w, http.StatusNoContent, nil, s.Controller.DeleteHost(r.Context(), r.PathValue("name")))
+}
+
+func (s *server) testHost(w http.ResponseWriter, r *http.Request) {
+	st, err := s.Controller.TestHost(r.Context(), r.PathValue("name"))
+	respond(w, http.StatusOK, st, err)
+}
+
 func (s *server) listRegistryCreds(w http.ResponseWriter, r *http.Request) {
 	cs, err := s.Store.ListRegistryCredentials(r.Context())
 	respond(w, http.StatusOK, cs, err)

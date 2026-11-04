@@ -1,10 +1,12 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api, ago, errMsg, get, type APIToken, type RegistryCredential, type RepoCredential } from '#lib/api.ts';
+	import { api, ago, enc, errMsg, get, type APIToken, type HostStatus, type HostView, type RegistryCredential, type RepoCredential } from '#lib/api.ts';
+	import Badge from '#lib/Badge.svelte';
 
 	let repos = $state<RepoCredential[]>([]);
 	let regs = $state<RegistryCredential[]>([]);
 	let tokens = $state<APIToken[]>([]);
+	let hosts = $state<HostView[]>([]);
 	let error = $state('');
 
 	// Forms: id 0 = create. Secret fields are write-only; empty keeps the stored value on edit.
@@ -12,6 +14,10 @@
 	const blankReg = () => ({ id: 0, registry: '', username: '', password: '' });
 	let repoForm = $state(blankRepo());
 	let regForm = $state(blankReg());
+	// Host form: edit = false creates; secret fields are write-only like credentials.
+	const blankHost = () => ({ edit: false, name: '', url: '', workDir: '', sshPrivateKey: '', tlsCA: '', tlsCert: '', tlsKey: '', hasSSHKey: false, hasTLS: false });
+	let hostForm = $state(blankHost());
+	let testing = $state<Record<string, boolean>>({});
 	let tokenName = $state('');
 	let newToken = $state('');
 	let copied = $state(false);
@@ -23,6 +29,7 @@
 				get<RegistryCredential[]>('/settings/registry-credentials'),
 				get<APIToken[]>('/settings/tokens')
 			]).then((r) => r.map((x) => x ?? []) as [RepoCredential[], RegistryCredential[], APIToken[]]);
+			hosts = (await get<HostView[]>('/settings/hosts')) ?? [];
 		} catch (e) {
 			error = errMsg(e);
 		}
@@ -52,6 +59,29 @@
 		e.preventDefault();
 		if (await run(() => save('registry-credentials', regForm))) regForm = blankReg();
 	}
+	async function saveHost(e: SubmitEvent) {
+		e.preventDefault();
+		const { edit, hasSSHKey, hasTLS, ...body } = hostForm;
+		const ok = await run(() =>
+			edit ? api('PUT', `/settings/hosts/${enc(body.name)}`, body) : api('POST', '/settings/hosts', body)
+		);
+		if (ok) hostForm = blankHost();
+	}
+	async function testHost(name: string) {
+		error = '';
+		testing[name] = true;
+		try {
+			const st = await api<HostStatus>('POST', `/settings/hosts/${enc(name)}/test`);
+			hosts = hosts.map((h) => (h.name === name ? { ...h, status: st } : h));
+		} catch (e) {
+			error = errMsg(e);
+		} finally {
+			testing[name] = false;
+		}
+	}
+	function delHost(name: string) {
+		if (confirm(`Delete Host “${name}”?`)) run(() => api('DELETE', `/settings/hosts/${enc(name)}`));
+	}
 	function del(kind: string, id: number, what: string) {
 		if (confirm(`Delete ${what}?`)) run(() => api('DELETE', `/settings/${kind}/${id}`));
 	}
@@ -74,6 +104,79 @@
 
 <h1>Settings</h1>
 {#if error}<p class="error" role="alert">{error}</p>{/if}
+
+<section class="card">
+	<h2>Hosts</h2>
+	<p class="muted small">Docker engines Applications deploy to. Secrets are stored encrypted and never shown.</p>
+	<table>
+		<thead><tr><th>Name</th><th>URL</th><th>Connection</th><th>Applications</th><th><span class="sr-only">Actions</span></th></tr></thead>
+		<tbody>
+			{#each hosts as h (h.name)}
+				{@const local = h.name === 'local'}
+				<tr>
+					<td>{h.name}</td>
+					<td class="mono">{local ? 'local Docker socket' : h.url}</td>
+					<td>
+						<Badge status={h.status.connected ? 'Connected' : 'Disconnected'} label="Connection" />
+						<div class="muted small">{h.status.connected ? `Docker ${h.status.serverVersion ?? ''}` : h.status.error}</div>
+					</td>
+					<td>{h.apps.join(', ') || '—'}</td>
+					<td class="right">
+						<button onclick={() => testHost(h.name)} disabled={testing[h.name]}>{testing[h.name] ? 'Testing…' : 'Test'}</button>
+						{#if !local}
+							<button onclick={() => (hostForm = { ...blankHost(), edit: true, name: h.name, url: h.url, workDir: h.workDir, hasSSHKey: h.hasSSHKey, hasTLS: h.hasTLS })}>Edit</button>
+							<span title={h.apps.length ? 'Used by Applications; delete or move them first' : undefined}>
+								<button class="danger" onclick={() => delHost(h.name)} disabled={h.apps.length > 0}>Delete</button>
+							</span>
+						{/if}
+					</td>
+				</tr>
+			{/each}
+		</tbody>
+	</table>
+	<form onsubmit={saveHost}>
+		<h3>{hostForm.edit ? `Edit Host “${hostForm.name}”` : 'Add Host'}</h3>
+		<div class="grid">
+			<div class="field">
+				<label for="h-name">Name</label>
+				<input id="h-name" bind:value={hostForm.name} required disabled={hostForm.edit} pattern="[a-z0-9][a-z0-9_-]*" autocomplete="off" />
+			</div>
+			<div class="field">
+				<label for="h-url">URL</label>
+				<input id="h-url" bind:value={hostForm.url} required placeholder="ssh://deploy@server or tcp://server:2376" autocomplete="off" />
+			</div>
+			<div class="field">
+				<label for="h-dir">Work dir</label>
+				<input id="h-dir" bind:value={hostForm.workDir} placeholder="/run/dockercd" autocomplete="off" />
+				<span class="hint">Application files are copied here on the host.</span>
+			</div>
+		</div>
+		<p class="muted small">ssh:// hosts need their key in dockercd's known_hosts file.</p>
+		<div class="field">
+			<label for="h-ssh">SSH private key <span class="muted">({hostForm.hasSSHKey ? 'set' : 'not set'})</span></label>
+			<textarea id="h-ssh" bind:value={hostForm.sshPrivateKey} rows="3" placeholder={hostForm.hasSSHKey ? 'unchanged' : '-----BEGIN OPENSSH PRIVATE KEY-----'}></textarea>
+		</div>
+		<p class="muted small">TLS client certificate for tcp:// hosts: {hostForm.hasTLS ? 'set' : 'not set'}</p>
+		<div class="grid">
+			<div class="field">
+				<label for="h-ca">TLS CA</label>
+				<textarea id="h-ca" bind:value={hostForm.tlsCA} rows="3" placeholder={hostForm.edit ? 'unchanged' : '-----BEGIN CERTIFICATE-----'}></textarea>
+			</div>
+			<div class="field">
+				<label for="h-cert">TLS cert</label>
+				<textarea id="h-cert" bind:value={hostForm.tlsCert} rows="3" placeholder={hostForm.hasTLS ? 'unchanged' : '-----BEGIN CERTIFICATE-----'}></textarea>
+			</div>
+			<div class="field">
+				<label for="h-key">TLS key</label>
+				<textarea id="h-key" bind:value={hostForm.tlsKey} rows="3" placeholder={hostForm.hasTLS ? 'unchanged' : '-----BEGIN PRIVATE KEY-----'}></textarea>
+			</div>
+		</div>
+		<div class="row">
+			<button class="primary" type="submit">{hostForm.edit ? 'Save' : 'Add'}</button>
+			{#if hostForm.edit}<button type="button" onclick={() => (hostForm = blankHost())}>Cancel</button>{/if}
+		</div>
+	</form>
+</section>
 
 <section class="card">
 	<h2>Repository credentials</h2>

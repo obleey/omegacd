@@ -82,6 +82,17 @@ CREATE TABLE sessions (
 	hash TEXT PRIMARY KEY,
 	expires_at INTEGER NOT NULL
 );
+`, `
+CREATE TABLE hosts (
+	name TEXT PRIMARY KEY,
+	url TEXT NOT NULL,
+	work_dir TEXT NOT NULL,
+	ssh_private_key TEXT NOT NULL,
+	tls_ca TEXT NOT NULL,
+	tls_cert TEXT NOT NULL,
+	tls_key TEXT NOT NULL,
+	created_at INTEGER NOT NULL
+);
 `}
 
 type Store struct {
@@ -411,6 +422,79 @@ func (s *Store) SaveRegistryCredential(ctx context.Context, c domain.RegistryCre
 
 func (s *Store) DeleteRegistryCredential(ctx context.Context, id int64) error {
 	return affected(s.db.ExecContext(ctx, `DELETE FROM registry_credentials WHERE id = ?`, id))
+}
+
+// ---- hosts ----
+
+const defaultWorkDir = "/run/dockercd"
+
+const hostCols = `name, url, work_dir, ssh_private_key, tls_ca, tls_cert, tls_key, created_at`
+
+func (s *Store) scanHost(r scanner) (domain.Host, error) {
+	var h domain.Host
+	var sealed [4]string
+	var created int64
+	if err := r.Scan(&h.Name, &h.URL, &h.WorkDir, &sealed[0], &sealed[1], &sealed[2], &sealed[3], &created); err != nil {
+		return h, mapErr(err)
+	}
+	h.CreatedAt = fromUnix(created)
+	for i, dst := range []*string{&h.SSHPrivateKey, &h.TLSCA, &h.TLSCert, &h.TLSKey} {
+		var err error
+		if *dst, err = s.sealer.Open(sealed[i]); err != nil {
+			return h, fmt.Errorf("open host %s: %w", h.Name, err)
+		}
+	}
+	h.HasSSHKey, h.HasTLS = h.SSHPrivateKey != "", h.TLSCert != "" && h.TLSKey != ""
+	return h, nil
+}
+
+func (s *Store) ListHosts(ctx context.Context) ([]domain.Host, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+hostCols+` FROM hosts ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	hosts := []domain.Host{}
+	for rows.Next() {
+		h, err := s.scanHost(rows)
+		if err != nil {
+			return nil, err
+		}
+		hosts = append(hosts, h)
+	}
+	return hosts, rows.Err()
+}
+
+func (s *Store) GetHost(ctx context.Context, name string) (domain.Host, error) {
+	return s.scanHost(s.db.QueryRowContext(ctx, `SELECT `+hostCols+` FROM hosts WHERE name = ?`, name))
+}
+
+func (s *Store) SaveHost(ctx context.Context, h domain.Host) error {
+	if h.WorkDir == "" {
+		h.WorkDir = defaultWorkDir
+	}
+	if h.CreatedAt.IsZero() {
+		h.CreatedAt = time.Now()
+	}
+	args := []any{h.Name, h.URL, h.WorkDir}
+	for _, v := range []string{h.SSHPrivateKey, h.TLSCA, h.TLSCert, h.TLSKey} {
+		sealed, err := s.sealer.Seal(v)
+		if err != nil {
+			return err
+		}
+		args = append(args, sealed)
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO hosts (`+hostCols+`) VALUES (?,?,?,?,?,?,?,?)
+		ON CONFLICT (name) DO UPDATE SET url = excluded.url, work_dir = excluded.work_dir,
+		ssh_private_key = COALESCE(NULLIF(excluded.ssh_private_key, ''), ssh_private_key),
+		tls_ca = COALESCE(NULLIF(excluded.tls_ca, ''), tls_ca),
+		tls_cert = COALESCE(NULLIF(excluded.tls_cert, ''), tls_cert),
+		tls_key = COALESCE(NULLIF(excluded.tls_key, ''), tls_key)`, append(args, toUnix(h.CreatedAt))...)
+	return mapErr(err)
+}
+
+func (s *Store) DeleteHost(ctx context.Context, name string) error {
+	return affected(s.db.ExecContext(ctx, `DELETE FROM hosts WHERE name = ?`, name))
 }
 
 // ---- tokens ----
