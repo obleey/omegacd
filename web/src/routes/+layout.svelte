@@ -4,6 +4,9 @@
 	import { page } from '$app/state';
 	import { api, errMsg, get } from '#lib/api.ts';
 	import { live, connectEvents, disconnectEvents, loadApps } from '#lib/live.svelte.ts';
+	import { conn } from '#lib/conn.svelte.ts';
+	import { fly } from 'svelte/transition';
+	import { ms } from '#lib/status.ts';
 	import Icon from '#lib/Icon.svelte';
 	import Logo from '#lib/Logo.svelte';
 	import ThemeToggle from '#lib/ThemeToggle.svelte';
@@ -11,6 +14,19 @@
 	import Toasts from '#lib/Toasts.svelte';
 
 	let { children } = $props();
+
+	// One calm "Reconnecting…" banner while OmegaCD or its live stream is unreachable (e.g. during an
+	// update) — shown after a second so a blip doesn't flash it.
+	let lost = $derived(!!live.me && page.url.pathname !== '/login' && (conn.down || (live.loaded && !live.connected)));
+	let showLost = $state(false);
+	$effect(() => {
+		if (!lost) {
+			showLost = false;
+			return;
+		}
+		const t = setTimeout(() => (showLost = true), 1200);
+		return () => clearTimeout(t);
+	});
 
 	let meErr = $state('');
 	let bare = $derived(page.url.pathname === '/login');
@@ -78,6 +94,11 @@
 			</div>
 		</aside>
 		<div class="main">
+			{#if showLost}
+				<div class="lost" role="status" transition:fly={{ y: -12, duration: ms(220) }}>
+					<Icon name="sync" size={15} spin />Reconnecting to OmegaCD… <span class="muted small">your apps keep running; this page updates when it's back</span>
+				</div>
+			{/if}
 			<main>
 				{@render children()}
 			</main>
@@ -133,4 +154,5 @@
 		nav a span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 	}
 	.ver { margin-top: auto; padding: 0 0.6rem 0.4rem; }
+	.lost { position: sticky; top: 0; z-index: 30; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; padding: 0.55rem 1.2rem; background: color-mix(in srgb, var(--yellow) 16%, var(--base)); color: var(--yellow); border-bottom: 1px solid color-mix(in srgb, var(--yellow) 40%, transparent); font-weight: 550; font-size: 0.88rem; }
 </style>

@@ -473,6 +473,15 @@ func (c *Controller) runSync(a domain.Application, op domain.SyncOperation) {
 	if done, gerr := c.cfg.Store.GetOp(ctx, op.ID); gerr == nil {
 		c.emit(domain.Event{Type: "op", App: a.Name, Data: done})
 	}
+	// a manual Sync to the target Revision ends a Rollback: drop the "rolled back" flag (Auto-Sync stays as set)
+	if err == nil && op.Trigger == "manual" {
+		if cur, gerr := c.cfg.Store.GetApp(ctx, a.Name); gerr == nil && cur.RolledBack {
+			cur.RolledBack = false
+			if uerr := c.cfg.Store.UpdateApp(ctx, cur); uerr != nil {
+				c.cfg.Log.Error("clear rolled-back flag", "app", a.Name, "err", uerr)
+			}
+		}
+	}
 	if err == nil && a.Kind == domain.KindApps && op.Trigger == "manual" {
 		c.syncPendingChildren(ctx, a.Name)
 	}

@@ -939,3 +939,26 @@ func TestHostReconnectResyncsAllItsApps(t *testing.T) {
 		t.Fatal("a reconnect resync must not fetch Git")
 	}
 }
+
+func TestManualSyncAfterRollbackClearsFlag(t *testing.T) {
+	r := newRig(t)
+	ctx := t.Context()
+	r.c.CreateApp(ctx, app("web"))
+	r.c.Sync(ctx, "web", domain.SyncRequest{})
+	r.waitIdle(t, "web")
+	r.g.set("bbbbbbbb")
+	r.c.Sync(ctx, "web", domain.SyncRequest{})
+	r.waitIdle(t, "web")
+	if _, err := r.c.Rollback(ctx, "web", 1); err != nil {
+		t.Fatal(err)
+	}
+	r.waitIdle(t, "web")
+	if a, _ := r.st.GetApp(ctx, "web"); !a.RolledBack {
+		t.Fatal("rollback did not set the flag")
+	}
+	r.c.Sync(ctx, "web", domain.SyncRequest{}) // back to the target Revision
+	r.waitIdle(t, "web")
+	if a, _ := r.st.GetApp(ctx, "web"); a.RolledBack || a.AutoSync {
+		t.Fatalf("after manual Sync: rolledBack=%v autoSync=%v, want false/false", a.RolledBack, a.AutoSync)
+	}
+}

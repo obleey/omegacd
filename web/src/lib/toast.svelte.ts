@@ -1,4 +1,4 @@
-import { errMsg } from './api.ts';
+import { errMsg, OfflineError } from './api.ts';
 
 export type Toast = { id: number; tone: 'green' | 'red' | 'blue'; title: string; body?: string; href?: string };
 
@@ -20,6 +20,8 @@ export function toast(tone: Toast['tone'], title: string, body?: string, href?: 
 /** Toast an API error; returns its message for callers that also show it inline. */
 export function toastError(e: unknown, title = 'Request failed') {
 	const msg = errMsg(e);
+	// unreachable server: the "Reconnecting…" banner says it once, instead of a toast per request
+	if (e instanceof OfflineError) return msg;
 	toast('red', title, msg);
 	return msg;
 }

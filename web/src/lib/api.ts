@@ -1,3 +1,4 @@
+import { conn } from './conn.svelte.ts';
 import { goto } from '$app/navigation';
 
 // JSON shapes mirror internal/domain/domain.go.
@@ -159,16 +160,30 @@ export class ApiError extends Error {
 	}
 }
 
+/** The server could not be reached at all (restarting, network down) — not an API error. */
+export class OfflineError extends ApiError {
+	constructor() {
+		super(0, 'OmegaCD is unreachable — reconnecting…');
+	}
+}
+
 export async function api<T = unknown>(method: string, path: string, body?: unknown): Promise<T> {
 	const headers: Record<string, string> = { Accept: 'application/json' };
 	if (method !== 'GET') headers['X-Requested-With'] = 'omegacd';
 	if (body !== undefined) headers['Content-Type'] = 'application/json';
-	const res = await fetch('/api' + path, {
-		method,
-		headers,
-		credentials: 'same-origin',
-		body: body === undefined ? undefined : JSON.stringify(body)
-	});
+	let res: Response;
+	try {
+		res = await fetch('/api' + path, {
+			method,
+			headers,
+			credentials: 'same-origin',
+			body: body === undefined ? undefined : JSON.stringify(body)
+		});
+	} catch {
+		conn.down = true; // fetch only rejects on network failure
+		throw new OfflineError();
+	}
+	conn.down = false;
 	if (res.status === 401 && path !== '/auth/login') {
 		await goto('/login');
 		throw new ApiError(401, 'not logged in');
