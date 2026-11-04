@@ -27,6 +27,7 @@ OmegaCD is early. This is the plan, most important first — it changes as real 
 
 - **ApplicationSet** — one template + generators (list, Git directories, Hosts) generate Applications
 - **Image updater** — watch registries for new tags and commit the bump to Git
+- **Follow the latest Git tag** — `targetRevision: "v1.*"` or a semver range (`>=1.4 <2.0`): deploy the newest matching tag automatically, instead of editing the Application for each release
 - Nested App of Apps
 - Theme picker (all Catppuccin flavors)
 
