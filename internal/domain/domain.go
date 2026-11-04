@@ -1,0 +1,277 @@
+// Package domain holds the types and ports shared by every dockercd package.
+// Terms follow GLOSSARY.md: Application, Host, Repository, Revision, Sync, ...
+package domain
+
+import (
+	"context"
+	"errors"
+	"io"
+	"time"
+)
+
+// LocalHost is the only Host in the MVP: the Docker engine dockercd talks to via DOCKER_HOST / the socket.
+const LocalHost = "local"
+
+// ManagedLabel is set on every container dockercd creates; its value is the Application name.
+const ManagedLabel = "dev.dockercd.application"
+
+var (
+	ErrNotFound      = errors.New("not found")
+	ErrAlreadyExists = errors.New("already exists")
+	ErrInvalid       = errors.New("invalid")
+	ErrUnmanaged     = errors.New("compose project exists and is not managed by dockercd")
+	ErrBusy          = errors.New("a sync operation is already running")
+)
+
+type Application struct {
+	Name           string    `json:"name"`
+	RepoURL        string    `json:"repoURL"`
+	Path           string    `json:"path"`           // directory inside the repo, "" or "." for root
+	TargetRevision string    `json:"targetRevision"` // branch, tag or commit SHA; default "main"
+	ComposeFiles   []string  `json:"composeFiles"`   // relative to Path; default ["compose.yaml"]
+	Profiles       []string  `json:"profiles"`
+	Host           string    `json:"host"` // always LocalHost in the MVP
+	AutoSync       bool      `json:"autoSync"`
+	SelfHeal       bool      `json:"selfHeal"`
+	Prune          bool      `json:"prune"`
+	Adopt          bool      `json:"adopt"`      // only honoured on create
+	RolledBack     bool      `json:"rolledBack"` // Auto-Sync was turned off by a Rollback; cleared when Auto-Sync is re-enabled
+	CreatedAt      time.Time `json:"createdAt"`
+}
+
+type SyncStatus string
+
+const (
+	Synced    SyncStatus = "Synced"
+	OutOfSync SyncStatus = "OutOfSync"
+	Unknown   SyncStatus = "Unknown"
+)
+
+type HealthStatus string
+
+const (
+	Healthy     HealthStatus = "Healthy"
+	Progressing HealthStatus = "Progressing"
+	Degraded    HealthStatus = "Degraded"
+	Missing     HealthStatus = "Missing"
+)
+
+type OpPhase string
+
+const (
+	OpRunning   OpPhase = "Running"
+	OpSucceeded OpPhase = "Succeeded"
+	OpFailed    OpPhase = "Failed"
+)
+
+// SyncOperation is one attempt to Sync an Application to a Revision.
+type SyncOperation struct {
+	ID         int64     `json:"id"`
+	App        string    `json:"app"`
+	Revision   string    `json:"revision"` // resolved commit SHA
+	TreeHash   string    `json:"treeHash"` // git tree hash of the app path at Revision
+	Phase      OpPhase   `json:"phase"`
+	Message    string    `json:"message"`
+	Trigger    string    `json:"trigger"` // "manual", "auto", "self-heal", "rollback"
+	StartedAt  time.Time `json:"startedAt"`
+	FinishedAt time.Time `json:"finishedAt,omitzero"`
+}
+
+// RepoCredential applies to every Repository whose URL starts with URLPrefix.
+type RepoCredential struct {
+	ID            int64  `json:"id"`
+	URLPrefix     string `json:"urlPrefix"`
+	Username      string `json:"username,omitempty"`
+	Password      string `json:"-"` // password or token
+	SSHPrivateKey string `json:"-"`
+	HasPassword   bool   `json:"hasPassword"`
+	HasSSHKey     bool   `json:"hasSSHKey"`
+}
+
+type RegistryCredential struct {
+	ID          int64  `json:"id"`
+	Registry    string `json:"registry"` // host, e.g. ghcr.io
+	Username    string `json:"username"`
+	Password    string `json:"-"`
+	HasPassword bool   `json:"hasPassword"`
+}
+
+type APIToken struct {
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	Hash      string    `json:"-"`
+	CreatedAt time.Time `json:"createdAt"`
+	LastUsed  time.Time `json:"lastUsed,omitzero"`
+}
+
+// ServiceDiff is one service whose Desired State differs from its Live State.
+type ServiceDiff struct {
+	Service string   `json:"service"`
+	Change  string   `json:"change"`           // "added", "removed", "changed"
+	Fields  []string `json:"fields,omitempty"` // e.g. "image", "environment", "ports"
+}
+
+type Container struct {
+	ID       string       `json:"id"`
+	Name     string       `json:"name"`
+	Service  string       `json:"service"`
+	Image    string       `json:"image"`
+	State    string       `json:"state"`  // docker state: running, exited, restarting, ...
+	Status   string       `json:"status"` // human docker status line
+	ExitCode int          `json:"exitCode"`
+	Health   HealthStatus `json:"health"`
+}
+
+type Resource struct {
+	Kind string `json:"kind"` // "network", "volume"
+	Name string `json:"name"`
+}
+
+// LiveState is what runs on the Host for an Application.
+type LiveState struct {
+	Services   []string     `json:"services"` // services in the Desired State that was last loaded
+	Containers []Container  `json:"containers"`
+	Resources  []Resource   `json:"resources"`
+	Health     HealthStatus `json:"health"`
+}
+
+// AppView is an Application plus its computed status, as returned by the API.
+type AppView struct {
+	Application
+	SyncStatus    SyncStatus     `json:"syncStatus"`
+	SyncMessage   string         `json:"syncMessage,omitempty"` // reason for Unknown / OutOfSync detail
+	Health        HealthStatus   `json:"health"`
+	TargetSHA     string         `json:"targetSHA,omitempty"`
+	DeployedSHA   string         `json:"deployedSHA,omitempty"`
+	LastOperation *SyncOperation `json:"lastOperation,omitempty"`
+	ReconciledAt  time.Time      `json:"reconciledAt,omitzero"`
+}
+
+type DiffView struct {
+	FromSHA  string        `json:"fromSHA"`
+	ToSHA    string        `json:"toSHA"`
+	Services []ServiceDiff `json:"services"`
+	GitDiff  string        `json:"gitDiff"` // unified diff of the app path
+}
+
+// Event is pushed to SSE subscribers.
+type Event struct {
+	Type string `json:"type"` // "app" (Data=AppView), "app-deleted" (Data=name), "op" (Data=SyncOperation), "progress" (Data=ProgressEvent)
+	App  string `json:"app"`
+	Data any    `json:"data"`
+}
+
+type ProgressEvent struct {
+	OpID     int64  `json:"opID"`
+	Resource string `json:"resource"` // e.g. "Container grafana-web-1", "Image nginx:1.27"
+	Status   string `json:"status"`   // e.g. "Pulling", "Started"
+	Text     string `json:"text,omitempty"`
+}
+
+// ---- Ports ----
+
+type Store interface {
+	ListApps(ctx context.Context) ([]Application, error)
+	GetApp(ctx context.Context, name string) (Application, error)
+	CreateApp(ctx context.Context, a Application) error
+	UpdateApp(ctx context.Context, a Application) error
+	DeleteApp(ctx context.Context, name string) error
+
+	// CreateOp inserts op (Phase Running) and returns its ID. FinishOp sets phase/message/finishedAt
+	// and trims history to the newest 20 operations per app.
+	CreateOp(ctx context.Context, op SyncOperation) (int64, error)
+	FinishOp(ctx context.Context, id int64, phase OpPhase, message string) error
+	GetOp(ctx context.Context, id int64) (SyncOperation, error)
+	ListOps(ctx context.Context, app string) ([]SyncOperation, error) // newest first
+	// LastSucceededOp returns the newest Succeeded op, or ErrNotFound.
+	LastSucceededOp(ctx context.Context, app string) (SyncOperation, error)
+
+	// Secrets in credentials are encrypted at rest and decrypted on read.
+	ListRepoCredentials(ctx context.Context) ([]RepoCredential, error)
+	SaveRepoCredential(ctx context.Context, c RepoCredential) (int64, error) // ID 0 = create; empty secret fields keep the old value
+	DeleteRepoCredential(ctx context.Context, id int64) error
+	ListRegistryCredentials(ctx context.Context) ([]RegistryCredential, error)
+	SaveRegistryCredential(ctx context.Context, c RegistryCredential) (int64, error)
+	DeleteRegistryCredential(ctx context.Context, id int64) error
+
+	ListTokens(ctx context.Context) ([]APIToken, error)
+	CreateToken(ctx context.Context, name string) (APIToken, string, error) // returns plaintext once
+	DeleteToken(ctx context.Context, id int64) error
+	VerifyToken(ctx context.Context, plaintext string) (APIToken, error) // ErrNotFound if invalid; updates LastUsed
+
+	// Admin user: single account "admin".
+	AdminPasswordHash(ctx context.Context) (hash string, mustChange bool, err error) // ErrNotFound if not initialised
+	SetAdminPassword(ctx context.Context, hash string, mustChange bool) error
+
+	Close() error
+}
+
+// Git reads Repositories. Credentials are looked up by the implementation via RepoCredentials.
+type Git interface {
+	// Resolve fetches the Repository and resolves rev (branch, tag or SHA) to a commit SHA.
+	Resolve(ctx context.Context, repoURL, rev string) (string, error)
+	// TreeHash is the git tree hash of path at sha ("" if the path does not exist).
+	TreeHash(ctx context.Context, repoURL, sha, path string) (string, error)
+	// Export writes the files under path at sha into dest, overwriting files in place (same inode)
+	// and deleting files in dest that are not in the tree.
+	Export(ctx context.Context, repoURL, sha, path, dest string) error
+	// Diff is a unified diff of path between two commits.
+	Diff(ctx context.Context, repoURL, fromSHA, toSHA, path string) (string, error)
+}
+
+// Secrets decrypts Encrypted Secrets (*.sops.* files) in a directory.
+type Secrets interface {
+	// DecryptDir writes each "x.sops.ext" as "x.ext" (mode 0600) next to it and returns the written paths.
+	DecryptDir(dir string) ([]string, error)
+}
+
+type SyncOptions struct {
+	Prune      bool
+	Registries []RegistryCredential
+	Progress   func(ProgressEvent) // may be nil
+}
+
+// Engine runs Compose projects on a Host. dir is the Application's stable working directory
+// holding its exported (and decrypted) files; the Compose project name is the Application name.
+type Engine interface {
+	// Validate loads the project and rejects unsupported things (e.g. build:).
+	Validate(ctx context.Context, app Application, dir string) error
+	// Diff compares the Desired State in dir against the Live State. When asDir is set, dir is a
+	// staging copy and paths are evaluated as if the files lived in asDir (the app's working dir).
+	Diff(ctx context.Context, app Application, dir, asDir string) ([]ServiceDiff, error)
+	// Sync pulls images and brings the project up; with Prune it removes orphaned containers/networks.
+	Sync(ctx context.Context, app Application, dir string, opts SyncOptions) error
+	// Remove deletes the project's containers and networks. Never volumes.
+	Remove(ctx context.Context, app Application) error
+	// Status returns the Live State, including Health per container and overall.
+	Status(ctx context.Context, app Application) (LiveState, error)
+	// ProjectExists reports whether a Compose project with this name has containers, and whether dockercd manages it.
+	ProjectExists(ctx context.Context, name string) (exists, managed bool, err error)
+	// Logs streams container logs (stdout+stderr, demultiplexed, with timestamps) to w until ctx ends or, if !follow, EOF.
+	Logs(ctx context.Context, containerID string, follow bool, tail int, w io.Writer) error
+	Close() error
+}
+
+// Controller is what the API drives.
+type Controller interface {
+	ListApps(ctx context.Context) ([]AppView, error)
+	GetApp(ctx context.Context, name string) (AppView, error)
+	CreateApp(ctx context.Context, a Application) (AppView, error)
+	UpdateApp(ctx context.Context, a Application) (AppView, error)
+	DeleteApp(ctx context.Context, name string, cascade bool) error
+
+	// Sync starts a Sync Operation to the app's target revision in the background and returns its ID.
+	Sync(ctx context.Context, name string) (int64, error)
+	// Rollback syncs to the revision of an earlier Succeeded op and turns Auto-Sync off.
+	Rollback(ctx context.Context, name string, opID int64) (int64, error)
+	// Refresh re-fetches Git and recomputes status now.
+	Refresh(ctx context.Context, name string) (AppView, error)
+	History(ctx context.Context, name string) ([]SyncOperation, error)
+	Diff(ctx context.Context, name string) (DiffView, error)
+	Resources(ctx context.Context, name string) (LiveState, error)
+	Logs(ctx context.Context, name, containerID string, follow bool, tail int, w io.Writer) error
+
+	// RepoChanged is called by webhooks: refresh every app on repoURL (matched loosely: scheme, .git suffix, case).
+	RepoChanged(ctx context.Context, repoURL string)
+	Subscribe() (<-chan Event, func())
+}

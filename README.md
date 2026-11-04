@@ -33,6 +33,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - dockercd-data:/data
       - ./age.key:/etc/dockercd/age.key:ro
+      # Working dir must have the same path on the host and in the container:
+      # bind mounts in your compose files are resolved by the Docker host.
+      - /run/dockercd:/run/dockercd
     restart: unless-stopped
 
 volumes:
@@ -40,6 +43,7 @@ volumes:
 ```
 
 ```sh
+age-keygen -o age.key   # also the key your *.sops.* files are encrypted to
 docker compose up -d
 docker compose logs dockercd | grep "initial admin password"
 ```
