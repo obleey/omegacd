@@ -209,6 +209,7 @@ type fakeEngine struct {
 	changed      func(string, string)
 	files        []domain.Resource
 	hostsChanged []string
+	lastPrune    bool
 	onRemove     func(domain.Application) // runs after Remove, outside the lock: simulates Docker events mid-delete
 }
 
@@ -218,10 +219,11 @@ func (e *fakeEngine) Diff(context.Context, domain.Application, string, string) (
 	defer e.mu.Unlock()
 	return e.drift, nil
 }
-func (e *fakeEngine) Sync(context.Context, domain.Application, string, domain.SyncOptions) error {
+func (e *fakeEngine) Sync(_ context.Context, _ domain.Application, _ string, opts domain.SyncOptions) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.syncs++
+	e.lastPrune = opts.Prune
 	return e.syncErr
 }
 func (e *fakeEngine) Remove(_ context.Context, a domain.Application) error {
@@ -354,7 +356,7 @@ func TestManualSyncThenSyncedThenNewRevisionAndDrift(t *testing.T) {
 	r := newRig(t)
 	ctx := t.Context()
 	r.c.CreateApp(ctx, app("web"))
-	if _, err := r.c.Sync(ctx, "web"); err != nil {
+	if _, err := r.c.Sync(ctx, "web", domain.SyncRequest{}); err != nil {
 		t.Fatal(err)
 	}
 	r.waitIdle(t, "web")
@@ -513,7 +515,7 @@ func TestSyncRefusesSelf(t *testing.T) {
 	r.c.cfg.SelfID = "abc123"
 	r.e.live.Containers = []domain.Container{{ID: "abc123def456"}}
 	r.c.CreateApp(t.Context(), app("dockercd"))
-	r.c.Sync(t.Context(), "dockercd")
+	r.c.Sync(t.Context(), "dockercd", domain.SyncRequest{})
 	r.waitIdle(t, "dockercd")
 	if ops, _ := r.st.ListOps(t.Context(), "dockercd"); ops[0].Phase != domain.OpFailed || r.e.syncCount() != 0 {
 		t.Fatalf("self sync not refused: %+v", ops[0])
@@ -759,7 +761,7 @@ func TestMissingComposeFileExplainsPath(t *testing.T) {
 	a := app("web")
 	a.ComposeFiles = []string{"missing.yaml"}
 	r.c.CreateApp(t.Context(), a)
-	r.c.Sync(t.Context(), "web")
+	r.c.Sync(t.Context(), "web", domain.SyncRequest{})
 	r.waitIdle(t, "web")
 	ops, _ := r.st.ListOps(t.Context(), "web")
 	if ops[0].Phase != domain.OpFailed || !strings.Contains(ops[0].Message, `compose file "missing.yaml" not found in path "/"`) {
@@ -793,5 +795,52 @@ func TestDeleteIsNotUndoneBySelfHeal(t *testing.T) {
 	// and the name can be reused
 	if _, err := r.c.CreateApp(ctx, app("web")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestStoppedUndeclaredServicesArePrunePendingNotDrift(t *testing.T) {
+	r := newRig(t)
+	ctx := t.Context()
+	a := app("web")
+	a.AutoSync, a.SelfHeal = true, true
+	r.c.CreateApp(ctx, a)
+	r.waitIdle(t, "web")
+	syncs := r.e.syncCount()
+
+	r.e.mu.Lock()
+	r.e.drift = []domain.ServiceDiff{{Service: "adminer", Change: "removed", Fields: []string{domain.FieldStopped}}}
+	r.e.mu.Unlock()
+	v, _ := r.c.Refresh(ctx, "web")
+	r.waitIdle(t, "web")
+	if v.SyncStatus != domain.Synced || !slices.Equal(v.PrunePending, []string{"adminer"}) {
+		t.Fatalf("status %s pending %v", v.SyncStatus, v.PrunePending)
+	}
+	if r.e.syncCount() != syncs {
+		t.Fatal("self-heal tried to fix a stopped undeclared service")
+	}
+
+	// a running undeclared service is still drift
+	r.e.mu.Lock()
+	r.e.drift = []domain.ServiceDiff{{Service: "adminer", Change: "removed"}}
+	r.e.mu.Unlock()
+	if v, _ = r.c.Refresh(ctx, "web"); v.SyncStatus != domain.OutOfSync {
+		t.Fatalf("running undeclared: %s", v.SyncStatus)
+	}
+}
+
+func TestOneOffPruneIsNotSaved(t *testing.T) {
+	r := newRig(t)
+	ctx := t.Context()
+	r.c.CreateApp(ctx, app("web"))
+	prune := true
+	if _, err := r.c.Sync(ctx, "web", domain.SyncRequest{Prune: &prune}); err != nil {
+		t.Fatal(err)
+	}
+	r.waitIdle(t, "web")
+	if r.e.lastPrune != true {
+		t.Fatal("engine did not get prune")
+	}
+	if got, _ := r.st.GetApp(ctx, "web"); got.Prune {
+		t.Fatal("one-off prune was saved on the Application")
 	}
 }

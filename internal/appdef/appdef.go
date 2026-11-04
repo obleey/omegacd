@@ -60,37 +60,54 @@ func Parse(dir string) ([]domain.Application, error) {
 		if err != nil {
 			return nil, err
 		}
-		dec := yaml.NewDecoder(bytes.NewReader(b))
-		dec.KnownFields(true)
-		for {
-			var d def
-			if err := dec.Decode(&d); errors.Is(err, io.EOF) {
-				break
-			} else if err != nil {
-				return nil, fmt.Errorf("%w: %s: %v", domain.ErrInvalid, e.Name(), err)
-			}
-			if reflect.ValueOf(d).IsZero() {
-				continue // empty document
-			}
-			d.Name = strings.TrimSpace(d.Name)
+		defs, err := Decode(e.Name(), b)
+		if err != nil {
+			return nil, err
+		}
+		for _, d := range defs {
 			if prev, ok := seen[d.Name]; ok {
 				return nil, fmt.Errorf("%w: %s: application %q is already declared in %s", domain.ErrInvalid, e.Name(), d.Name, prev)
 			}
 			seen[d.Name] = e.Name()
-			switch d.Kind {
-			case "", domain.KindCompose:
-			case domain.KindApps:
+			if d.Kind == domain.KindApps {
 				return nil, fmt.Errorf("%w: %s: application %q: nested App of Apps is not supported", domain.ErrInvalid, e.Name(), d.Name)
-			default:
-				return nil, fmt.Errorf("%w: %s: application %q: unknown kind %q", domain.ErrInvalid, e.Name(), d.Name, d.Kind)
 			}
-			apps = append(apps, domain.Application{
-				Name: d.Name, Kind: domain.KindCompose, RepoURL: d.RepoURL, Path: d.Path, TargetRevision: d.TargetRevision,
-				ComposeFiles: d.ComposeFiles, Profiles: d.Profiles, Host: d.Host,
-				AutoSync: d.AutoSync, SelfHeal: d.SelfHeal, Prune: d.Prune, Adopt: d.Adopt,
-			})
+			apps = append(apps, d)
 		}
 	}
 	slices.SortFunc(apps, func(a, b domain.Application) int { return strings.Compare(a.Name, b.Name) })
+	return apps, nil
+}
+
+// Decode reads the definitions in b, one per YAML document; source names b in errors.
+// An App of Apps (kind: apps) is allowed here.
+func Decode(source string, b []byte) ([]domain.Application, error) {
+	var apps []domain.Application
+	dec := yaml.NewDecoder(bytes.NewReader(b))
+	dec.KnownFields(true)
+	for {
+		var d def
+		if err := dec.Decode(&d); errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			return nil, fmt.Errorf("%w: %s: %v", domain.ErrInvalid, source, err)
+		}
+		if reflect.ValueOf(d).IsZero() {
+			continue // empty document
+		}
+		d.Name = strings.TrimSpace(d.Name)
+		switch d.Kind {
+		case "":
+			d.Kind = domain.KindCompose
+		case domain.KindCompose, domain.KindApps:
+		default:
+			return nil, fmt.Errorf("%w: %s: application %q: unknown kind %q", domain.ErrInvalid, source, d.Name, d.Kind)
+		}
+		apps = append(apps, domain.Application{
+			Name: d.Name, Kind: d.Kind, RepoURL: d.RepoURL, Path: d.Path, TargetRevision: d.TargetRevision,
+			ComposeFiles: d.ComposeFiles, Profiles: d.Profiles, Host: d.Host,
+			AutoSync: d.AutoSync, SelfHeal: d.SelfHeal, Prune: d.Prune, Adopt: d.Adopt,
+		})
+	}
 	return apps, nil
 }

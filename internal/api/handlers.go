@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -56,7 +57,14 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) syncApp(w http.ResponseWriter, r *http.Request) {
-	id, err := s.Controller.Sync(r.Context(), r.PathValue("name"))
+	var req domain.SyncRequest
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			writeStatus(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+	}
+	id, err := s.Controller.Sync(r.Context(), r.PathValue("name"), req)
 	respond(w, http.StatusAccepted, map[string]int64{"opID": id}, err)
 }
 

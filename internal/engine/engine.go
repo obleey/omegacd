@@ -316,7 +316,12 @@ func (e *Engine) Diff(ctx context.Context, app domain.Application, dir, asDir st
 	}
 	for _, name := range slices.Sorted(maps.Keys(byService)) {
 		if _, ok := p.Services[name]; !ok {
-			diffs = append(diffs, domain.ServiceDiff{Service: name, Change: "removed"})
+			d := domain.ServiceDiff{Service: name, Change: "removed"}
+			// already stopped by a Sync without Prune: only Prune has anything left to do
+			if !slices.ContainsFunc(byService[name], func(c container.Summary) bool { return c.State == "running" || c.State == "restarting" }) {
+				d.Fields = []string{domain.FieldStopped}
+			}
+			diffs = append(diffs, d)
 		}
 	}
 	return diffs, nil
@@ -394,9 +399,8 @@ func (e *Engine) Sync(ctx context.Context, app domain.Application, dir string, o
 	if err != nil {
 		return err
 	}
-	if err := svc.Pull(ctx, p, api.PullOptions{}); err != nil {
-		return fmt.Errorf("pull images: %w", err)
-	}
+	// Up pulls by each service's pull_policy (default: only missing images), so a registry outage
+	// doesn't fail Syncs and Self-Heals whose images are already present.
 	err = svc.Up(ctx, p, api.UpOptions{Create: api.CreateOptions{
 		RemoveOrphans:        opts.Prune,
 		Recreate:             api.RecreateDiverged,
@@ -405,10 +409,41 @@ func (e *Engine) Sync(ctx context.Context, app domain.Application, dir string, o
 	if err != nil {
 		return fmt.Errorf("compose up: %w", err)
 	}
+	if err := settleUndeclared(ctx, hc.cli.Client(), p, opts.Prune); err != nil {
+		return err
+	}
 	if opts.Prune {
 		return pruneNetworks(ctx, hc.cli.Client(), p)
 	}
 	return nil
+}
+
+// settleUndeclared handles containers of services the project no longer declares (removed from
+// the compose files, or their profile switched off): with prune they are deleted, otherwise
+// stopped. Compose itself keeps profile-disabled services even with RemoveOrphans.
+func settleUndeclared(ctx context.Context, c client.APIClient, p *types.Project, prune bool) error {
+	res, err := c.ContainerList(ctx, client.ContainerListOptions{All: true, Filters: projectFilter(p.Name).Add("label", api.OneoffLabel+"=False")})
+	if err != nil {
+		return fmt.Errorf("list containers: %w", err)
+	}
+	var errs []error
+	for _, ct := range res.Items {
+		svc := ct.Labels[api.ServiceLabel]
+		if _, ok := p.Services[svc]; ok {
+			continue
+		}
+		switch {
+		case prune:
+			if _, err := c.ContainerRemove(ctx, ct.ID, client.ContainerRemoveOptions{Force: true}); err != nil {
+				errs = append(errs, fmt.Errorf("prune service %s: %w", svc, err))
+			}
+		case ct.State == "running" || ct.State == "restarting":
+			if _, err := c.ContainerStop(ctx, ct.ID, client.ContainerStopOptions{}); err != nil {
+				errs = append(errs, fmt.Errorf("stop undeclared service %s: %w", svc, err))
+			}
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // pruneNetworks removes project networks no longer declared; compose up only prunes containers.

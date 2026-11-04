@@ -494,3 +494,56 @@ volumes:
 		t.Errorf("Inspect network = %+v", info)
 	}
 }
+
+func TestUndeclaredServicesStoppedOrPruned(t *testing.T) {
+	ctx := context.Background()
+	e := newTestEngine(t)
+	app := testApp(t, e)
+	dir := t.TempDir()
+	write(t, dir, "compose.yaml", `
+services:
+  web:
+    image: busybox
+    command: ["sleep", "3600"]
+  adminer:
+    image: busybox
+    command: ["sleep", "3600"]
+    profiles: [debug]
+`)
+	state := func() map[string]string {
+		ls, _ := e.Status(ctx, app)
+		m := map[string]string{}
+		for _, c := range ls.Containers {
+			m[c.Service] = c.State
+		}
+		return m
+	}
+	app.Profiles = []string{"debug"}
+	if err := e.Sync(ctx, app, dir, domain.SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// profile switched off, no Prune: stopped, reported as removed+stopped
+	app.Profiles = nil
+	if err := e.Sync(ctx, app, dir, domain.SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if s := state(); s["adminer"] != "exited" || s["web"] != "running" {
+		t.Fatalf("without prune: %v", s)
+	}
+	diffs, _ := e.Diff(ctx, app, dir, "")
+	if len(diffs) != 1 || diffs[0].Change != "removed" || !slices.Contains(diffs[0].Fields, domain.FieldStopped) {
+		t.Fatalf("diff without prune: %+v", diffs)
+	}
+
+	// with Prune: deleted, diff empty
+	if err := e.Sync(ctx, app, dir, domain.SyncOptions{Prune: true}); err != nil {
+		t.Fatal(err)
+	}
+	if s := state(); len(s) != 1 || s["web"] != "running" {
+		t.Fatalf("with prune: %v", s)
+	}
+	if diffs, _ := e.Diff(ctx, app, dir, ""); len(diffs) != 0 {
+		t.Fatalf("diff after prune: %+v", diffs)
+	}
+}

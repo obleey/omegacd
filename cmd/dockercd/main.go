@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/obleey/dockercd/internal/api"
+	"github.com/obleey/dockercd/internal/cli"
 	"github.com/obleey/dockercd/internal/controller"
 	"github.com/obleey/dockercd/internal/crypto"
 	"github.com/obleey/dockercd/internal/engine"
@@ -25,6 +26,10 @@ import (
 )
 
 func main() {
+	// no args or "server" runs the server; anything else is a CLI command
+	if len(os.Args) > 1 && os.Args[1] != "server" {
+		os.Exit(cli.Main(os.Args[1:]))
+	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	if err := run(log); err != nil {
 		log.Error("fatal", "err", err)

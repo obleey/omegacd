@@ -206,11 +206,21 @@ func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fe
 		switch {
 		case derr != nil:
 			v.SyncMessage = derr.Error()
-		case len(diffs) > 0:
-			drift = true
-			v.SyncStatus, v.SyncMessage = domain.OutOfSync, "live state drifted: "+describe(diffs)
 		default:
-			v.SyncStatus = domain.Synced
+			// undeclared services already stopped are not drift: re-syncing would change nothing without Prune
+			diffs = slices.DeleteFunc(diffs, func(d domain.ServiceDiff) bool {
+				if d.Change == "removed" && slices.Contains(d.Fields, domain.FieldStopped) {
+					v.PrunePending = append(v.PrunePending, d.Service)
+					return true
+				}
+				return false
+			})
+			if len(diffs) > 0 {
+				drift = true
+				v.SyncStatus, v.SyncMessage = domain.OutOfSync, "live state drifted: "+describe(diffs)
+			} else {
+				v.SyncStatus = domain.Synced
+			}
 		}
 	}
 
@@ -673,10 +683,13 @@ func (c *Controller) deleteAppLocked(ctx context.Context, a domain.Application, 
 	return nil
 }
 
-func (c *Controller) Sync(ctx context.Context, name string) (int64, error) {
+func (c *Controller) Sync(ctx context.Context, name string, req domain.SyncRequest) (int64, error) {
 	a, err := c.cfg.Store.GetApp(ctx, name)
 	if err != nil {
 		return 0, err
+	}
+	if req.Prune != nil {
+		a.Prune = *req.Prune // this Sync only; not saved
 	}
 	c.cfg.Git.Invalidate(a.RepoURL)
 	sha, err := c.cfg.Git.Resolve(ctx, a.RepoURL, a.TargetRevision)

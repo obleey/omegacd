@@ -67,6 +67,39 @@ Applications deploy to the built-in `local` Host (the mounted Docker socket) by 
 
 On sync, the Application's files are copied to the Host's work dir (default `/run/dockercd`) so bind mounts, configs and secrets resolve there. To move an Application to another Host, delete and recreate it.
 
+## CLI
+
+The same binary is also the client: `dockercd` (or `dockercd server`) runs the server, any other command talks to one. Create an API token under **Settings → API tokens**, then:
+
+```sh
+dockercd login --server https://dockercd.example.com --token dcd_...   # saved to ~/.config/dockercd/config.json (0600)
+dockercd app list                       # NAME KIND HOST SYNC HEALTH REVISION LAST-OP; Child Applications indented
+dockercd app get myapp                  # -o json for the raw API object
+dockercd app create myapp --repo https://github.com/me/deploy.git --path myapp --auto-sync --self-heal
+dockercd app create -f myapp.yaml       # the format `app export` writes; several documents allowed
+dockercd app diff myapp                 # exit 0: no differences, 1: differences, 2: error
+dockercd app sync myapp --wait          # waits for the Sync Operation, then for Healthy
+dockercd app history myapp
+dockercd app rollback myapp 12 --wait
+dockercd app wait myapp --health --timeout 5m
+dockercd app logs myapp web -f --tail 50   # a container name or a service (its first container)
+dockercd app delete myapp               # asks first on a terminal; scripts must pass --yes; --cascade=false keeps the containers
+dockercd host list
+dockercd host test edge-1
+```
+
+`--server`, `--token` and `-o table|json` work on every command. `DOCKERCD_SERVER` and `DOCKERCD_TOKEN` override the saved login. Colors are used only on a terminal and honour `NO_COLOR`.
+
+`--wait` exits 0 when the Sync Operation Succeeded and the Application, as checked after the sync, is Healthy; it exits 1 when the operation Failed, the Application is Degraded, or `--timeout` (default 10m) passes. `--no-health` stops after the operation. In CI:
+
+```yaml
+# GitHub Actions
+- run: dockercd app sync myapp --wait --timeout 5m
+  env:
+    DOCKERCD_SERVER: https://dockercd.example.com
+    DOCKERCD_TOKEN: ${{ secrets.DOCKERCD_TOKEN }}
+```
+
 ## Development
 
 Requires Go, Node.js and a running Docker engine.

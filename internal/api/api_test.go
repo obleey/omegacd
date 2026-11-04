@@ -109,11 +109,12 @@ func (s *fakeStore) VerifyToken(_ context.Context, plain string) (domain.APIToke
 
 type fakeController struct {
 	domain.Controller
-	mu      sync.Mutex
-	apps    map[string]domain.AppView
-	events  chan domain.Event
-	changed chan string
-	hosts   map[string]domain.Host
+	mu       sync.Mutex
+	apps     map[string]domain.AppView
+	events   chan domain.Event
+	changed  chan string
+	hosts    map[string]domain.Host
+	lastSync domain.SyncRequest
 }
 
 func (c *fakeController) ListHosts(context.Context) ([]domain.HostView, error) {
@@ -190,10 +191,11 @@ func (c *fakeController) DeleteApp(ctx context.Context, name string, cascade boo
 	return nil
 }
 
-func (c *fakeController) Sync(ctx context.Context, name string) (int64, error) {
+func (c *fakeController) Sync(ctx context.Context, name string, req domain.SyncRequest) (int64, error) {
 	if _, err := c.GetApp(ctx, name); err != nil {
 		return 0, err
 	}
+	c.lastSync = req
 	return 7, nil
 }
 
@@ -367,9 +369,14 @@ func TestAppsCRUD(t *testing.T) {
 		t.Fatal(b)
 	}
 	e.expect("GET", "/api/apps/nope", "", 404)
-	if b := e.expect("POST", "/api/apps/web/sync", "", 202); !strings.Contains(b, `"opID":7`) {
+	if b := e.expect("POST", "/api/apps/web/sync", "", 202); !strings.Contains(b, `"opID":7`) || e.ctrl.lastSync.Prune != nil {
 		t.Fatal(b)
 	}
+	e.expect("POST", "/api/apps/web/sync", `{"prune":true}`, 202)
+	if p := e.ctrl.lastSync.Prune; p == nil || !*p {
+		t.Fatalf("one-off prune not passed: %v", p)
+	}
+	e.expect("POST", "/api/apps/web/sync", `{bad`, 400)
 	if b := e.expect("POST", "/api/apps/web/rollback", `{"opID":3}`, 202); !strings.Contains(b, `"opID":4`) {
 		t.Fatal(b)
 	}

@@ -18,7 +18,7 @@ func parentApp(name string) domain.Application {
 // syncNow runs a manual Sync to completion and returns its finished Sync Operation.
 func (r rig) syncNow(t *testing.T, name string) domain.SyncOperation {
 	t.Helper()
-	id, err := r.c.Sync(t.Context(), name)
+	id, err := r.c.Sync(t.Context(), name, domain.SyncRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}

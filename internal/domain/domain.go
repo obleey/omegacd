@@ -145,6 +145,14 @@ type APIToken struct {
 }
 
 // ServiceDiff is one service whose Desired State differs from its Live State.
+// FieldStopped marks a "removed" ServiceDiff whose containers are already stopped: only Prune deletes them.
+const FieldStopped = "stopped"
+
+// SyncRequest overrides Application settings for one Sync Operation.
+type SyncRequest struct {
+	Prune *bool `json:"prune,omitempty"`
+}
+
 type ServiceDiff struct {
 	Service string   `json:"service"`
 	Change  string   `json:"change"`           // "added", "removed", "changed"
@@ -197,6 +205,7 @@ type AppView struct {
 	DeployedSHA   string         `json:"deployedSHA,omitempty"`
 	LastOperation *SyncOperation `json:"lastOperation,omitempty"`
 	ReconciledAt  time.Time      `json:"reconciledAt,omitzero"`
+	PrunePending  []string       `json:"prunePending,omitempty"` // undeclared services stopped by a Sync without Prune
 }
 
 type DiffView struct {
@@ -340,7 +349,7 @@ type Controller interface {
 	DeleteApp(ctx context.Context, name string, cascade bool) error
 
 	// Sync starts a Sync Operation to the app's target revision in the background and returns its ID.
-	Sync(ctx context.Context, name string) (int64, error)
+	Sync(ctx context.Context, name string, req SyncRequest) (int64, error)
 	// Rollback syncs to the revision of an earlier Succeeded op and turns Auto-Sync off.
 	Rollback(ctx context.Context, name string, opID int64) (int64, error)
 	// Refresh re-fetches Git and recomputes status now.
