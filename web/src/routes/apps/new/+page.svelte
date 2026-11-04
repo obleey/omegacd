@@ -7,8 +7,9 @@
 
 <svelte:head><title>New Application · dockercd</title></svelte:head>
 
-<p class="small"><a href="/">← Applications</a></p>
+<nav class="crumbs small" aria-label="Breadcrumb"><a href="/">Applications</a> / <span aria-current="page">New</span></nav>
 <h1>New Application</h1>
+<p class="muted small sub">Deploy a Compose project, or a set of Applications, from a path in a Git Repository.</p>
 <div class="card">
 	<AppForm
 		submitLabel="Create"
@@ -22,5 +23,8 @@
 </div>
 
 <style>
-	h1 { margin: 0.3rem 0 1rem; }
+	.crumbs { color: var(--subtext0); margin-bottom: 0.8rem; }
+	.crumbs a { color: var(--subtext0); }
+	.sub { margin: 0.15rem 0 1.1rem; }
+	.card { padding: 1.4rem 1.5rem; }
 </style>

@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { ago, short, type SyncOperation } from '../api';
+	import { ago, short, type SyncOperation } from '../api.ts';
+	import Empty from '../Empty.svelte';
+	import Icon from '../Icon.svelte';
 	import Badge from '../Badge.svelte';
 
 	// onrollback is omitted for Child Applications: their Revision is pinned in Git, not rolled back here.
@@ -16,9 +18,13 @@
 </script>
 
 {#if !ops}
-	<p class="muted">Loading…</p>
+	<div class="loading" aria-busy="true" aria-label="Loading history">
+		{#each [0, 1, 2, 3] as i (i)}<span class="skel" style="height: 38px"></span>{/each}
+	</div>
 {:else if ops.length === 0}
-	<p class="muted">No Sync Operations yet.</p>
+	<Empty icon="clock" title="No Sync Operations yet">
+		<p>Every Sync and Rollback of this Application is recorded here.</p>
+	</Empty>
 {:else}
 	<div class="scroll">
 		<table>
@@ -38,9 +44,9 @@
 						</td>
 						<td class="right">
 							{#if o.id === currentID}
-								<span class="muted small">Current</span>
+								<span class="tag">Current</span>
 							{:else if o.phase === 'Succeeded' && onrollback}
-								<button onclick={() => onrollback(o)} aria-label="Rollback to {short(o.revision)}">Rollback</button>
+								<button class="sm" onclick={() => onrollback(o)} aria-label="Rollback to {short(o.revision)}"><Icon name="undo" size={14} />Rollback</button>
 							{/if}
 						</td>
 					</tr>
@@ -51,6 +57,8 @@
 {/if}
 
 <style>
+	.loading { display: grid; gap: 0.5rem; }
+	tbody tr:hover { background: color-mix(in srgb, var(--surface0) 35%, transparent); }
 	.scroll { overflow-x: auto; }
 	.msg { max-width: 420px; white-space: pre-wrap; word-break: break-word; }
 	.nowrap { white-space: nowrap; }

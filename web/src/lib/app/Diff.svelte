@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { short, type DiffView } from '../api';
+	import { short, type DiffView } from '../api.ts';
 
 	// apps: an App of Apps, whose diff entries are Child Applications rather than services
 	let { diff, apps = false }: { diff: DiffView | null; apps?: boolean } = $props();
@@ -19,7 +19,9 @@
 </script>
 
 {#if !diff}
-	<p class="muted">Loading…</p>
+	<div class="loading" aria-busy="true" aria-label="Loading diff">
+		<span class="skel" style="height: 24px; width: 40%"></span><span class="skel" style="height: 180px"></span>
+	</div>
 {:else}
 	<h3>{apps ? 'Applications' : 'Services'}</h3>
 	{#if diff.services?.length}
@@ -47,6 +49,7 @@
 {/if}
 
 <style>
+	.loading { display: grid; gap: 0.7rem; }
 	h3 { margin: 1rem 0 0.5rem; }
 	h3:first-child { margin-top: 0; }
 	.svc { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.3rem; }

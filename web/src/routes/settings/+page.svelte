@@ -2,6 +2,8 @@
 	import { onMount } from 'svelte';
 	import { api, ago, enc, errMsg, get, type APIToken, type HostStatus, type HostView, type RegistryCredential, type RepoCredential } from '#lib/api.ts';
 	import Badge from '#lib/Badge.svelte';
+	import Icon from '#lib/Icon.svelte';
+	import { toastError } from '#lib/toast.svelte.ts';
 
 	let repos = $state<RepoCredential[]>([]);
 	let regs = $state<RegistryCredential[]>([]);
@@ -43,7 +45,7 @@
 			await load();
 			return true;
 		} catch (e) {
-			error = errMsg(e);
+			toastError(e);
 			return false;
 		}
 	}
@@ -74,7 +76,7 @@
 			const st = await api<HostStatus>('POST', `/settings/hosts/${enc(name)}/test`);
 			hosts = hosts.map((h) => (h.name === name ? { ...h, status: st } : h));
 		} catch (e) {
-			error = errMsg(e);
+			toastError(e, `Testing Host ${name} failed`);
 		} finally {
 			testing[name] = false;
 		}
@@ -103,12 +105,13 @@
 <svelte:head><title>Settings · dockercd</title></svelte:head>
 
 <h1>Settings</h1>
+<p class="muted small sub">Hosts, credentials and API tokens used by every Application.</p>
 {#if error}<p class="error" role="alert">{error}</p>{/if}
 
 <section class="card">
-	<h2>Hosts</h2>
+	<h2><span class="hicon"><Icon name="server" size={17} /></span>Hosts</h2>
 	<p class="muted small">Docker engines Applications deploy to. Secrets are stored encrypted and never shown.</p>
-	<table>
+	<div class="scroll-x"><table>
 		<thead><tr><th>Name</th><th>URL</th><th>Connection</th><th>Applications</th><th><span class="sr-only">Actions</span></th></tr></thead>
 		<tbody>
 			{#each hosts as h (h.name)}
@@ -133,7 +136,7 @@
 				</tr>
 			{/each}
 		</tbody>
-	</table>
+	</table></div>
 	<form onsubmit={saveHost}>
 		<h3>{hostForm.edit ? `Edit Host “${hostForm.name}”` : 'Add Host'}</h3>
 		<div class="grid">
@@ -179,10 +182,10 @@
 </section>
 
 <section class="card">
-	<h2>Repository credentials</h2>
+	<h2><span class="hicon"><Icon name="folder" size={17} /></span>Repository credentials</h2>
 	<p class="muted small">Used for every Repository whose URL starts with the prefix. Secrets are stored encrypted and never shown.</p>
 	{#if repos.length}
-		<table>
+		<div class="scroll-x"><table>
 			<thead><tr><th>URL prefix</th><th>Username</th><th>Password / token</th><th>SSH key</th><th><span class="sr-only">Actions</span></th></tr></thead>
 			<tbody>
 				{#each repos as c (c.id)}
@@ -198,7 +201,7 @@
 					</tr>
 				{/each}
 			</tbody>
-		</table>
+		</table></div>
 	{/if}
 	<form onsubmit={saveRepo}>
 		<h3>{repoForm.id ? 'Edit credential' : 'Add credential'}</h3>
@@ -228,10 +231,10 @@
 </section>
 
 <section class="card">
-	<h2>Registry credentials</h2>
+	<h2><span class="hicon"><Icon name="container" size={17} /></span>Registry credentials</h2>
 	<p class="muted small">Used to pull images during Sync.</p>
 	{#if regs.length}
-		<table>
+		<div class="scroll-x"><table>
 			<thead><tr><th>Registry</th><th>Username</th><th>Password</th><th><span class="sr-only">Actions</span></th></tr></thead>
 			<tbody>
 				{#each regs as c (c.id)}
@@ -246,7 +249,7 @@
 					</tr>
 				{/each}
 			</tbody>
-		</table>
+		</table></div>
 	{/if}
 	<form onsubmit={saveReg}>
 		<h3>{regForm.id ? 'Edit credential' : 'Add credential'}</h3>
@@ -272,7 +275,7 @@
 </section>
 
 <section class="card">
-	<h2>API tokens</h2>
+	<h2><span class="hicon"><Icon name="key" size={17} /></span>API tokens</h2>
 	<p class="muted small">Use as <code>Authorization: Bearer &lt;token&gt;</code>.</p>
 	{#if newToken}
 		<div class="newtoken" role="status">
@@ -285,7 +288,7 @@
 		</div>
 	{/if}
 	{#if tokens.length}
-		<table>
+		<div class="scroll-x"><table>
 			<thead><tr><th>Name</th><th>Created</th><th>Last used</th><th><span class="sr-only">Actions</span></th></tr></thead>
 			<tbody>
 				{#each tokens as t (t.id)}
@@ -297,7 +300,7 @@
 					</tr>
 				{/each}
 			</tbody>
-		</table>
+		</table></div>
 	{/if}
 	<form class="row tokform" onsubmit={createToken}>
 		<label class="sr-only" for="tk-name">Token name</label>
@@ -307,8 +310,12 @@
 </section>
 
 <style>
-	h1 { margin-bottom: 1rem; }
+	.sub { margin: 0.15rem 0 1.2rem; }
 	section { margin-bottom: 1.2rem; }
+	h2 { display: flex; align-items: center; gap: 0.6rem; }
+	.hicon { width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, transparent); }
+	form h3 { padding-top: 1rem; border-top: 1px dashed var(--border); }
+	tbody tr:hover { background: color-mix(in srgb, var(--surface0) 35%, transparent); }
 	section > p { margin: 0.2rem 0 0.8rem; }
 	h3 { margin: 1.2rem 0 0.6rem; }
 	.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0 1rem; }

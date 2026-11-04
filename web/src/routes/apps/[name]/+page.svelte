@@ -15,8 +15,15 @@
 		type SyncOperation
 	} from '#lib/api.ts';
 	import { live, putApp } from '#lib/live.svelte.ts';
+	import { fade } from 'svelte/transition';
 	import Badge from '#lib/Badge.svelte';
 	import Dialog from '#lib/Dialog.svelte';
+	import Icon, { type IconName } from '#lib/Icon.svelte';
+	import Empty from '#lib/Empty.svelte';
+	import SyncProgress from '#lib/app/SyncProgress.svelte';
+	import SyncPolicy from '#lib/app/SyncPolicy.svelte';
+	import { ms, shownSync } from '#lib/status.ts';
+	import { toastError } from '#lib/toast.svelte.ts';
 	import AppForm from '#lib/AppForm.svelte';
 	import Resources from '#lib/app/Resources.svelte';
 	import Diff from '#lib/app/Diff.svelte';
@@ -25,6 +32,7 @@
 	import Children from '#lib/app/Children.svelte';
 
 	type Tab = 'resources' | 'diff' | 'history' | 'logs';
+	const tabIcon: Record<Tab, IconName> = { resources: 'tree', diff: 'diff', history: 'clock', logs: 'terminal' };
 
 	let name = $derived(page.params.name ?? '');
 	let app = $derived(live.apps[name] as AppView | undefined);
@@ -66,6 +74,8 @@
 	let delOpen = $state(false);
 	let cascade = $state(true);
 	let rbOpen = $state(false);
+	let syncOpen = $state(false);
+	let syncPrune = $state(false);
 	let rbOp = $state<SyncOperation | null>(null);
 
 	let op = $derived(app?.lastOperation);
@@ -100,13 +110,20 @@
 		try {
 			await fn();
 		} catch (e) {
-			error = errMsg(e);
+			toastError(e, `${label[0].toUpperCase()}${label.slice(1)} of ${name} failed`);
 		} finally {
 			busy = '';
 		}
 	}
 
-	const sync = () => act('sync', () => api('POST', `${base}/sync`));
+	function openSync() {
+		syncPrune = app?.prune ?? false;
+		syncOpen = true;
+	}
+	function sync() {
+		syncOpen = false;
+		act('sync', () => api('POST', `${base}/sync`, { prune: syncPrune }));
+	}
 	const refresh = () => act('refresh', async () => putApp(await api<AppView>('POST', `${base}/refresh`)));
 
 	function del() {
@@ -140,74 +157,108 @@
 
 <svelte:head><title>{name} · dockercd</title></svelte:head>
 
-<p class="small"><a href="/">← Applications</a></p>
+<nav class="crumbs small" aria-label="Breadcrumb">
+	<a href="/">Applications</a>
+	{#if app?.parent}<Icon name="chevron" size={12} /><a href="/apps/{enc(app.parent)}">{app.parent}</a>{/if}
+	<Icon name="chevron" size={12} /><span aria-current="page">{name}</span>
+</nav>
 
 {#if notFound}
-	<h1>{name}</h1>
-	<p class="muted">This Application does not exist.</p>
+	<div class="card">
+		<Empty icon="ghost" title="Application not found">
+			<p>There is no Application named “{name}”.</p>
+			<a class="btn" href="/">Back to Applications</a>
+		</Empty>
+	</div>
 {:else if !app}
-	{#if error}<p class="error" role="alert">{error}</p>{:else}<p class="muted">Loading…</p>{/if}
+	{#if error}<p class="error" role="alert">{error}</p>{:else}
+		<div class="card hdr" aria-busy="true" aria-label="Loading Application">
+			<span class="skel" style="width: 240px; height: 30px"></span>
+			<div class="panels">{#each [0, 1, 2] as i (i)}<span class="skel" style="height: 92px"></span>{/each}</div>
+		</div>
+	{/if}
 {:else}
 	<header class="card hdr">
-		<div class="row">
+		<div class="title">
+			<span class="appicon"><Icon name={isApps ? 'apps' : 'app'} size={22} /></span>
 			<h1>{app.name}</h1>
 			{#if isApps}<span class="tag">App of Apps</span>{/if}
-			<Badge status={app.syncStatus} label="Sync Status" />
-			<Badge status={app.health} label="Health Status" />
+			{#if app.parent}<span class="tag">Child Application</span>{/if}
 			{#if app.notInGit}<span class="tag warn">No longer declared in Git</span>{/if}
 			<span class="spacer"></span>
-			<button class="primary" onclick={sync} disabled={!!busy || running}>{running ? 'Syncing…' : 'Sync'}</button>
-			<button onclick={refresh} disabled={!!busy}>{busy === 'refresh' ? 'Refreshing…' : 'Refresh'}</button>
-			<button onclick={() => (editing = !editing)} aria-expanded={editing} disabled={!!app.parent}>Edit settings</button>
-			<a class="btn" href="/api/apps/{enc(app.name)}/export" download="{app.name}.yaml">Export YAML</a>
-			<button class="danger" onclick={() => (delOpen = true)} disabled={!!busy || !canDelete}>Delete</button>
-		</div>
-		<dl class="meta">
-			{#if !isApps}<div><dt>Host</dt><dd class="mono">{app.host || 'local'}</dd></div>{/if}
-			<div><dt>Repository</dt><dd class="mono">{app.repoURL}</dd></div>
-			<div><dt>Path</dt><dd class="mono">{app.path || '.'}</dd></div>
-			<div><dt>Target Revision</dt><dd class="mono">{app.targetRevision} <span class="muted">({short(app.targetSHA)})</span></dd></div>
-			<div><dt>Deployed Revision</dt><dd class="mono">{short(app.deployedSHA)}</dd></div>
-			<div>
-				<dt>Sync Policy</dt>
-				<dd>
-					{[app.autoSync && 'Auto-Sync', app.selfHeal && 'Self-Heal', app.prune && 'Prune'].filter(Boolean).join(' · ') ||
-						'Manual'}
-				</dd>
+			<div class="actions">
+				<button class="primary" onclick={openSync} disabled={!!busy || running}><Icon name="sync" size={15} spin={running} />{running ? 'Syncing…' : 'Sync'}</button>
+				<button onclick={refresh} disabled={!!busy}><Icon name="refresh" size={15} spin={busy === 'refresh'} />Refresh</button>
+				<button onclick={() => (editing = !editing)} aria-expanded={editing} disabled={!!app.parent} title={app.parent ? 'Settings of a Child Application are owned by Git' : undefined}><Icon name="edit" size={15} />Edit</button>
+				<a class="btn" href="/api/apps/{enc(app.name)}/export" download="{app.name}.yaml"><Icon name="download" size={15} />Export YAML</a>
+				<button class="danger" onclick={() => (delOpen = true)} disabled={!!busy || !canDelete}><Icon name="trash" size={15} />Delete</button>
 			</div>
-			<div><dt>Reconciled</dt><dd>{ago(app.reconciledAt)}</dd></div>
+		</div>
+
+		<div class="panels">
+			<section class="panel" aria-label="Health Status">
+				<span class="plabel">Health Status</span>
+				<Badge status={app.health} size="lg" label="Health Status" />
+				<span class="muted small">Reconciled {ago(app.reconciledAt)}</span>
+			</section>
+			<section class="panel" aria-label="Sync Status">
+				<span class="plabel">Sync Status</span>
+				<Badge status={shownSync(app)} size="lg" label="Sync Status" />
+				<span class="muted small">
+					to <span class="mono">{app.targetRevision}</span> ({short(app.targetSHA)})
+					{#if app.autoSync}· Auto-Sync{/if}
+				</span>
+			</section>
+			<section class="panel" aria-label="Last Sync">
+				<span class="plabel">Last Sync</span>
+				{#if op}
+					<Badge status={op.phase} size="lg" label="Last Sync Operation" text={op.phase === 'Running' ? 'Syncing' : op.phase === 'Succeeded' ? 'Sync OK' : 'Sync failed'} />
+					<span class="muted small">{op.trigger} · {ago(op.finishedAt || op.startedAt)} · <span class="mono">{short(op.revision)}</span></span>
+				{:else}
+					<Badge status="Unknown" size="lg" text="Never synced" />
+					<span class="muted small">Sync to deploy the Desired State</span>
+				{/if}
+			</section>
+		</div>
+
+		<dl class="meta">
+			{#if !isApps}<div><dt><Icon name="server" size={12} />Host</dt><dd class="mono">{app.host || 'local'}</dd></div>{/if}
+			<div class="wide"><dt><Icon name="folder" size={12} />Repository</dt><dd class="mono">{app.repoURL}</dd></div>
+			<div><dt><Icon name="folder" size={12} />Path</dt><dd class="mono">{app.path || '.'}</dd></div>
+			<div><dt><Icon name="branch" size={12} />Target Revision</dt><dd class="mono">{app.targetRevision} <span class="muted">({short(app.targetSHA)})</span></dd></div>
+			<div><dt><Icon name="commit" size={12} />Deployed Revision</dt><dd class="mono">{short(app.deployedSHA)}</dd></div>
 		</dl>
-		{#if app.syncMessage}<p class="small syncmsg">{app.syncMessage}</p>{/if}
+		{#if app.syncMessage}<p class="small syncmsg"><Icon name="info" size={14} />{app.syncMessage}</p>{/if}
+		<SyncPolicy {app} />
 	</header>
 
+	{#if app.prunePending?.length}
+		<p class="note" role="status">
+			<Icon name="info" size={16} />
+			<span>Not declared, stopped: <strong class="mono">{app.prunePending.join(', ')}</strong> — Sync with Prune to delete them.</span>
+		</p>
+	{/if}
 	{#if app.parent}
 		<p class="banner" role="status">
-			Managed by App of Apps <a href="/apps/{enc(app.parent)}">{app.parent}</a> — change its settings in Git.
-			{#if app.notInGit}It is no longer declared in Git, so it can be deleted.{/if}
+			<Icon name="info" size={16} />
+			<span>
+				Managed by App of Apps <a href="/apps/{enc(app.parent)}">{app.parent}</a> — change its settings in Git.
+				{#if app.notInGit}It is no longer declared in Git, so it can be deleted.{/if}
+			</span>
 		</p>
 	{/if}
 	{#if app.rolledBack}
 		<p class="banner" role="status">
-			Auto-Sync was turned off by a Rollback. Re-enable it in Edit settings to follow the target Revision again.
+			<Icon name="undo" size={16} />
+			<span>Auto-Sync was turned off by a Rollback. Turn it back on in Sync Policy to follow the target Revision again.</span>
 		</p>
 	{/if}
-	{#if error}<p class="error" role="alert">{error}</p>{/if}
+	{#if error}<p class="error" role="alert"><Icon name="alert" size={16} />{error}</p>{/if}
 
 	{#if running && op}
-		<section class="card progress" aria-live="polite" aria-label="Sync progress">
-			<h2>Syncing <span class="mono muted small">{short(op.revision)}</span> <span class="muted small">({op.trigger})</span></h2>
-			{#if progress.length === 0}
-				<p class="muted small">Starting…</p>
-			{:else}
-				<ul>
-					{#each progress as p (p.resource)}
-						<li><span class="mono">{p.resource}</span> <span class="st">{p.status}</span> <span class="muted small">{p.text ?? ''}</span></li>
-					{/each}
-				</ul>
-			{/if}
-		</section>
+		<SyncProgress {op} {progress} />
 	{:else if op?.phase === 'Failed'}
-		<p class="error" role="status">Last Sync failed: {op.message}</p>
+		<p class="error" role="status" in:fade={{ duration: ms(250) }}><Icon name="x-circle" size={16} /><span><strong>Last Sync failed:</strong> {op.message}</span></p>
 	{/if}
 
 	{#if editing && !app.parent}
@@ -234,15 +285,15 @@
 					aria-selected={tab === t}
 					aria-controls="panel"
 					tabindex={tab === t ? 0 : -1}
-					onclick={() => (tab = t)}>{label}</button
+					onclick={() => (tab = t)}><Icon name={tabIcon[t]} size={15} />{label}</button
 				>
 			{/each}
 		</div>
 		<div id="panel" role="tabpanel" aria-labelledby="tab-{tab}" class="card">
 			{#if tab === 'resources' && isApps}
-				<Children apps={children} />
+				<Children {app} apps={children} />
 			{:else if tab === 'resources'}
-				<Resources name={app.name} state={liveState} onlogs={showLogs} />
+				<Resources name={app.name} state={liveState} syncStatus={shownSync(app)} prunePending={app.prunePending} onlogs={showLogs} />
 			{:else if tab === 'diff'}
 				<Diff {diff} apps={isApps} />
 			{:else if tab === 'history'}
@@ -266,10 +317,24 @@
 			{:else if liveState}
 				<Logs app={app.name} containers={liveState.containers ?? []} bind:selected={logContainer} />
 			{:else}
-				<p class="muted">Loading…</p>
+				<span class="skel" style="height: 50vh"></span>
 			{/if}
 		</div>
 	{/if}
+
+	<Dialog bind:open={syncOpen} title="Sync {app.name}">
+		<p>Sync the Live State to Revision <code>{app.targetRevision}</code> ({short(app.targetSHA)}).</p>
+		<div class="check">
+			<input id="sync-prune" type="checkbox" bind:checked={syncPrune} />
+			<label for="sync-prune"
+				>Prune <span class="hint">Also delete containers of services that are no longer declared (volumes are kept).</span></label
+			>
+		</div>
+		{#snippet actions()}
+			<button onclick={() => (syncOpen = false)}>Cancel</button>
+			<button class="primary" onclick={sync}><Icon name="sync" size={15} />Synchronize</button>
+		{/snippet}
+	</Dialog>
 
 	<Dialog bind:open={delOpen} title="Delete {app.name}?">
 		<p>The Application is removed from dockercd.</p>
@@ -295,19 +360,40 @@
 {/if}
 
 <style>
-	.hdr { margin: 0.3rem 0 1rem; }
-	.meta { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0.6rem 1.2rem; margin: 1rem 0 0; }
-	.meta dt { font-size: 0.75rem; color: var(--subtext0); text-transform: uppercase; letter-spacing: 0.03em; }
-	.meta dd { margin: 0; word-break: break-all; }
-	.syncmsg { margin: 0.8rem 0 0; color: var(--subtext1); }
-	.banner, .error { margin: 0 0 1rem; }
-	.progress { margin-bottom: 1rem; border-color: color-mix(in srgb, var(--yellow) 40%, transparent); }
-	.progress ul { list-style: none; padding: 0; margin: 0.6rem 0 0; display: grid; gap: 0.2rem; max-height: 240px; overflow: auto; }
-	.progress .st { color: var(--yellow); }
+	.crumbs { display: flex; align-items: center; gap: 0.35rem; color: var(--subtext0); margin-bottom: 0.8rem; flex-wrap: wrap; }
+	.crumbs a { color: var(--subtext0); }
+	.crumbs a:hover { color: var(--accent); }
+	.crumbs [aria-current] { color: var(--text); font-weight: 550; }
+	.hdr { margin-bottom: 1rem; display: grid; gap: 1.1rem; }
+	.title { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+	.appicon { width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center; color: var(--accent); background: linear-gradient(135deg, color-mix(in srgb, var(--mauve) 22%, transparent), color-mix(in srgb, var(--blue) 16%, transparent)); border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent); }
+	h1 { overflow-wrap: anywhere; }
+	.actions { display: flex; gap: 0.45rem; flex-wrap: wrap; }
+	.panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.8rem; }
+	.panel { display: grid; gap: 0.35rem; align-content: start; padding: 0.85rem 1rem; border-radius: var(--radius-lg); border: 1px solid var(--border); background: color-mix(in srgb, var(--bg) 55%, var(--card)); min-width: 0; }
+	.plabel { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--subtext0); font-weight: 650; }
+	.meta { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 0.7rem 1.4rem; margin: 0; }
+	.meta .wide { grid-column: span 2; }
+	.meta dt { display: flex; align-items: center; gap: 0.3rem; font-size: 0.7rem; color: var(--subtext0); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+	.meta dd { margin: 0.1rem 0 0; word-break: break-all; }
+	.syncmsg { margin: 0; color: var(--subtext1); display: flex; gap: 0.4rem; align-items: flex-start; }
+	.syncmsg :global(.icon) { margin-top: 0.15rem; color: var(--blue); }
+	.banner, .error, .note { margin: 0 0 1rem; }
+	.note { display: flex; gap: 0.5rem; align-items: flex-start; padding: 0.55rem 0.85rem; border-radius: var(--radius); color: var(--blue); background: color-mix(in srgb, var(--blue) 10%, transparent); border: 1px solid color-mix(in srgb, var(--blue) 35%, transparent); }
+	.note strong { color: var(--text); }
+	.banner :global(.icon), .error :global(.icon), .note :global(.icon) { margin-top: 0.15rem; }
 	.mb { margin-bottom: 1rem; }
-	.tabs { display: flex; gap: 0.2rem; border-bottom: 1px solid var(--surface0); margin-bottom: -1px; }
-	.tab { background: none; border: 1px solid transparent; border-bottom: 0; border-radius: var(--radius) var(--radius) 0 0; color: var(--subtext0); }
-	.tab:hover:not(:disabled) { background: var(--surface0); }
-	.tab[aria-selected='true'] { color: var(--text); background: var(--mantle); border-color: var(--surface0); box-shadow: inset 0 2px 0 var(--accent); }
-	#panel { border-top-left-radius: 0; }
+	.tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border); margin-bottom: -1px; overflow-x: auto; }
+	.tab { background: none; border: 1px solid transparent; border-bottom: 0; border-radius: var(--radius) var(--radius) 0 0; color: var(--subtext0); box-shadow: none; padding: 0.5rem 0.9rem; position: relative; }
+	.tab:hover:not(:disabled) { background: color-mix(in srgb, var(--surface0) 50%, transparent); border-color: transparent; color: var(--text); }
+	.tab[aria-selected='true'] { color: var(--text); background: var(--card); border-color: var(--border); }
+	.tab[aria-selected='true']::after { content: ''; position: absolute; left: 0.6rem; right: 0.6rem; top: -1px; height: 2px; border-radius: 2px; background: var(--accent); }
+	#panel { border-top-left-radius: 0; min-height: 200px; }
+	@media (max-width: 640px) {
+		.meta .wide { grid-column: auto; }
+		.panels { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.6rem; }
+		.panel { padding: 0.65rem 0.8rem; }
+		.actions { width: 100%; }
+		.actions > :global(*) { flex: 1 1 auto; }
+	}
 </style>

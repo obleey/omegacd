@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { errMsg, get, type Application, type HostView } from './api';
+	import { slide } from 'svelte/transition';
+	import { errMsg, get, type Application, type HostView } from './api.ts';
+	import Icon from './Icon.svelte';
+	import { ms } from './status.ts';
 
 	let {
 		initial,
@@ -38,6 +41,9 @@
 	});
 	let error = $state('');
 	let busy = $state(false);
+	// An empty Path means the Repository root: ask once before creating, it is usually a mistake.
+	let askRoot = $state(false);
+	let pathEl = $state<HTMLInputElement>();
 
 	const list = (s: string) =>
 		s
@@ -48,6 +54,11 @@
 	async function submit(e: SubmitEvent) {
 		e.preventDefault();
 		error = '';
+		if (!editing && !path.trim() && !askRoot) {
+			askRoot = true;
+			pathEl?.focus();
+			return;
+		}
 		busy = true;
 		try {
 			await onsave({
@@ -79,18 +90,24 @@
 	{#if error}<p class="error" role="alert">{error}</p>{/if}
 
 	{#if !editing}
-		<fieldset>
-			<legend>Kind</legend>
-			<div class="check">
-				<input id="f-kind-compose" type="radio" name="kind" value="compose" bind:group={kind} />
-				<label for="f-kind-compose">Compose project <span class="hint">Path holds compose files deployed to one Host.</span></label>
-			</div>
-			<div class="check">
-				<input id="f-kind-apps" type="radio" name="kind" value="apps" bind:group={kind} />
-				<label for="f-kind-apps">App of Apps <span class="hint">Path holds Application definitions.</span></label>
+		<fieldset class="kinds">
+			<legend>Kind <span class="muted small">— what does Path hold?</span></legend>
+			<div class="kgrid">
+				<label class="kcard" class:on={kind === 'compose'}>
+					<input type="radio" name="kind" value="compose" bind:group={kind} class="sr-only" />
+					<span class="kicon"><Icon name="container" size={24} /></span>
+					<span class="ktxt"><strong>Compose project</strong><span>Deploy a docker compose project to one Host.</span></span>
+					<span class="kcheck" aria-hidden="true"><Icon name="check" size={13} /></span>
+				</label>
+				<label class="kcard" class:on={kind === 'apps'}>
+					<input type="radio" name="kind" value="apps" bind:group={kind} class="sr-only" />
+					<span class="kicon"><Icon name="apps" size={24} /></span>
+					<span class="ktxt"><strong>App of Apps</strong><span>A path of Application definitions; Sync creates its Child Applications.</span></span>
+					<span class="kcheck" aria-hidden="true"><Icon name="check" size={13} /></span>
+				</label>
 			</div>
 			{#if kind === 'apps'}
-				<div class="hint help">
+				<div class="hint help" transition:slide={{ duration: ms(220) }}>
 					<p>
 						Each YAML file in Path defines one Child Application. Syncing creates and updates them; with Prune it also
 						deletes the ones no longer declared. Each Child Application picks its own Host. For example:
@@ -131,10 +148,18 @@ prune: false</pre>
 	</div>
 	{/if}
 	<div class="grid2">
-		<div class="field">
-			<label for="f-path">Path</label>
-			<input id="f-path" bind:value={path} placeholder="." autocomplete="off" />
-			<span class="hint">Directory inside the Repository{kind === 'apps' ? ' holding the Application definitions' : ''}.</span>
+		<div class="field path" class:ask={askRoot && !path.trim()}>
+			<label for="f-path">Path <span class="req" aria-hidden="true">*</span></label>
+			<input id="f-path" bind:this={pathEl} bind:value={path} placeholder={kind === 'apps' ? 'apps' : 'apps/myapp'} autocomplete="off" aria-describedby="f-path-hint" />
+			{#if askRoot && !path.trim()}
+				<span class="askroot" id="f-path-hint" role="alert" transition:slide={{ duration: ms(180) }}>
+					<Icon name="alert" size={14} />Repository root — is that right? Submit again to use it, or enter a path.
+				</span>
+			{:else}
+				<span class="hint" id="f-path-hint">
+					Directory in the Repository that holds {kind === 'apps' ? 'Application definition YAML' : 'compose.yaml'}. Empty means the Repository root.
+				</span>
+			{/if}
 		</div>
 		<div class="field">
 			<label for="f-rev">Target Revision</label>
@@ -180,18 +205,35 @@ prune: false</pre>
 	</fieldset>
 
 	<div class="row">
-		<button class="primary" type="submit" disabled={busy}>{busy ? 'Saving…' : submitLabel}</button>
+		<button class="primary" type="submit" disabled={busy}>{busy ? 'Saving…' : askRoot && !path.trim() && !editing ? `${submitLabel} with Repository root` : submitLabel}</button>
 		{#if oncancel}<button type="button" onclick={oncancel}>Cancel</button>{/if}
 	</div>
 </form>
 
 <style>
-	.form { max-width: 720px; }
+	.form { max-width: 760px; }
+	.kinds { border: 0; padding: 0; margin: 0 0 1.4rem; }
+	.kinds legend { font-size: 0.95rem; padding: 0; margin-bottom: 0.6rem; }
+	.kgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; }
+	.kcard { position: relative; display: flex; gap: 0.85rem; align-items: flex-start; padding: 1rem 1rem 1rem 0.9rem; border: 1.5px solid var(--border); border-radius: var(--radius-lg); background: var(--bg); cursor: pointer; font-weight: 400; transition: border-color 0.15s, background-color 0.15s, box-shadow 0.15s, transform 0.15s var(--ease); }
+	.kcard:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); transform: translateY(-1px); }
+	.kcard.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--card)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent); }
+	.kcard:has(:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+	.kicon { flex: none; width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; color: var(--subtext0); background: color-mix(in srgb, var(--surface0) 60%, transparent); transition: color 0.15s, background-color 0.15s; }
+	.on .kicon { color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+	.ktxt { display: grid; gap: 0.2rem; }
+	.ktxt strong { font-size: 0.98rem; font-weight: 650; }
+	.ktxt span { font-size: 0.82rem; color: var(--subtext0); }
+	.kcheck { position: absolute; top: 0.6rem; right: 0.6rem; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: var(--crust); opacity: 0; transform: scale(0.5); transition: opacity 0.15s, transform 0.2s var(--ease); }
+	.on .kcheck { opacity: 1; transform: none; }
+	.req { display: inline; color: var(--accent); font-weight: 700; }
+	.path input { border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); }
+	.ask input { border-color: var(--yellow); box-shadow: 0 0 0 3px color-mix(in srgb, var(--yellow) 20%, transparent); }
+	.askroot { display: flex; gap: 0.35rem; align-items: center; font-size: 0.8rem; color: var(--yellow); font-weight: 550; }
 	.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 1rem; }
 	fieldset { border: 1px solid var(--surface0); border-radius: 8px; padding: 0.8rem 1rem 0.2rem; margin: 0 0 1.2rem; }
 	legend { padding: 0 0.4rem; font-weight: 600; }
-	.check .hint { display: block; }
 	.help p { margin: 0 0 0.4rem; }
 	.help pre { background: var(--crust); border: 1px solid var(--surface0); border-radius: var(--radius); padding: 0.5rem 0.8rem; margin: 0 0 0.8rem; overflow-x: auto; color: var(--text); }
-	@media (max-width: 640px) { .grid2 { grid-template-columns: 1fr; } }
+	@media (max-width: 640px) { .grid2, .kgrid { grid-template-columns: 1fr; } }
 </style>

@@ -44,6 +44,8 @@ export interface AppView extends Application {
 	lastOperation?: SyncOperation;
 	rolledBack: boolean;
 	reconciledAt?: string;
+	/** services no longer declared whose containers were stopped because Prune is off */
+	prunePending?: string[];
 }
 
 export interface ServiceDiff {

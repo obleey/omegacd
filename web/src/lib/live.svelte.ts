@@ -1,5 +1,6 @@
 // Shared live state fed by one EventSource on /api/events.
-import { get, type AppView, type ProgressEvent, type SyncOperation } from './api';
+import { enc, get, short, type AppView, type ProgressEvent, type SyncOperation } from './api.ts';
+import { dismiss, toast, toasts } from './toast.svelte.ts';
 
 export const live = $state({
 	me: null as { username: string; mustChangePassword: boolean } | null,
@@ -55,18 +56,31 @@ export function connectEvents() {
 	});
 	es.addEventListener('op', (e) => {
 		const op = unwrap(e.data).data as SyncOperation;
+		const prev = live.ops[op.app];
+		if (prev?.id !== op.id || prev.phase !== op.phase) opToast(op);
 		live.ops[op.app] = op;
 		const a = live.apps[op.app];
 		if (a) a.lastOperation = op;
 	});
 	es.addEventListener('progress', (e) => {
 		const p = unwrap(e.data).data as ProgressEvent;
-		const list = (live.progress[p.opID] ??= []);
+		live.progress[p.opID] ??= [];
+		const list = live.progress[p.opID]; // read back: the stored value is the reactive proxy
 		// keep one line per resource, latest status wins
 		const i = list.findIndex((x) => x.resource === p.resource);
 		if (i >= 0) list[i] = p;
 		else list.push(p);
 	});
+}
+
+function opToast(op: SyncOperation) {
+	const href = `/apps/${enc(op.app)}`;
+	const rev = `Revision ${short(op.revision)} · ${op.trigger}`;
+	if (op.phase === 'Running') return toast('blue', `Sync started: ${op.app}`, rev, href);
+	// the finished toast replaces the started one
+	for (const t of toasts.filter((t) => t.tone === 'blue' && t.href === href)) dismiss(t.id);
+	if (op.phase === 'Succeeded') toast('green', `Sync succeeded: ${op.app}`, rev, href);
+	else toast('red', `Sync failed: ${op.app}`, op.message || rev, href);
 }
 
 export function disconnectEvents() {

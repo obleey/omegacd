@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { tick } from 'svelte';
-	import { enc, type Container } from '../api';
+	import { enc, type Container } from '../api.ts';
+	import Empty from '../Empty.svelte';
 
 	let {
 		app,
@@ -57,7 +58,9 @@
 </script>
 
 {#if containers.length === 0}
-	<p class="muted">No containers. Sync the Application first.</p>
+	<Empty icon="terminal" title="No containers">
+		<p>Sync the Application first, then follow its container logs here.</p>
+	</Empty>
 {:else}
 	<div class="row bar">
 		<label for="logc" class="small">Container</label>

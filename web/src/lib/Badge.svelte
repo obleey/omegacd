@@ -1,40 +1,45 @@
 <script lang="ts">
-	// Status badge: text always present, color is a secondary signal.
-	let { status, label = '' }: { status?: string; label?: string } = $props();
+	// Status badge: icon + text always present, color is a secondary signal.
+	import { fade } from 'svelte/transition';
+	import Icon from './Icon.svelte';
+	import { meta, ms } from './status.ts';
 
-	const tone: Record<string, string> = {
-		Synced: 'green', Healthy: 'green', Connected: 'green', Succeeded: 'green', running: 'green',
-		OutOfSync: 'yellow', Progressing: 'yellow', Running: 'yellow', restarting: 'yellow', created: 'yellow', paused: 'yellow',
-		Degraded: 'red', Failed: 'red', Disconnected: 'red', dead: 'red',
-		Unknown: 'overlay', Missing: 'overlay', exited: 'overlay', removing: 'overlay'
-	};
-	const icon: Record<string, string> = { green: '●', yellow: '◐', red: '✕', overlay: '○' };
-	let t = $derived(tone[status ?? ''] ?? 'overlay');
+	let { status, label = '', size = 'md', text }: { status?: string; label?: string; size?: 'sm' | 'md' | 'lg'; text?: string } =
+		$props();
+	let m = $derived(meta(status));
 </script>
 
-<span class="badge {t}" title={label ? `${label}: ${status ?? 'Unknown'}` : undefined}>
-	<span aria-hidden="true">{icon[t]}</span>
-	{#if label}<span class="sr-only">{label}:</span>{/if}
-	{status || 'Unknown'}
+<span class="badge {m[0]} {size}" title={label ? `${label}: ${status || 'Unknown'}` : undefined}>
+	{#key status}
+		<span class="in" in:fade={{ duration: ms(260) }}>
+			<Icon name={m[1]} spin={m[2]} size={size === 'lg' ? 26 : size === 'sm' ? 13 : 14} />
+			{#if label}<span class="sr-only">{label}:</span>{/if}
+			<span class="txt">{text ?? (status || 'Unknown')}</span>
+		</span>
+	{/key}
 </span>
 
 <style>
 	.badge {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.3rem;
-		padding: 0.05rem 0.5rem;
+		padding: 0.1rem 0.55rem 0.1rem 0.4rem;
 		border-radius: 999px;
 		font-size: 0.78rem;
-		font-weight: 500;
+		font-weight: 550;
 		white-space: nowrap;
-		border: 1px solid color-mix(in srgb, var(--c) 45%, transparent);
-		background: color-mix(in srgb, var(--c) 14%, transparent);
+		border: 1px solid color-mix(in srgb, var(--c) 35%, transparent);
+		background: color-mix(in srgb, var(--c) 12%, transparent);
 		color: var(--c);
+		transition: color 0.3s, background-color 0.3s, border-color 0.3s;
 	}
-	.badge span[aria-hidden] { font-size: 0.65rem; }
+	.in { display: inline-flex; align-items: center; gap: 0.32rem; }
+	.sm { font-size: 0.72rem; padding: 0 0.45rem 0 0.32rem; }
+	.lg { border: 0; background: none; padding: 0; font-size: 1.05rem; font-weight: 650; }
+	.lg .in { gap: 0.55rem; }
 	.green { --c: var(--green); }
 	.yellow { --c: var(--yellow); }
 	.red { --c: var(--red); }
+	.blue { --c: var(--blue); }
 	.overlay { --c: var(--overlay1); }
 </style>

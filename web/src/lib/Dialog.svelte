@@ -25,15 +25,20 @@
 
 <style>
 	dialog {
-		border: 1px solid var(--surface1);
-		border-radius: 10px;
-		background: var(--mantle);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-lg);
+		background: var(--elevated);
 		color: var(--text);
-		padding: 1.2rem 1.4rem;
-		width: min(460px, 92vw);
+		padding: 1.3rem 1.5rem;
+		width: min(480px, 92vw);
+		box-shadow: var(--shadow-lg);
 	}
+	dialog[open] { animation: pop 0.22s var(--ease); }
+	dialog[open]::backdrop { animation: fadein 0.22s ease; }
+	@keyframes pop { from { opacity: 0; transform: translateY(8px) scale(0.97); } }
+	@keyframes fadein { from { opacity: 0; } }
 	dialog.wide { width: min(860px, 94vw); }
-	dialog::backdrop { background: rgb(0 0 0 / 0.5); }
+	dialog::backdrop { background: rgb(17 17 27 / 0.55); backdrop-filter: blur(3px); }
 	.body { margin: 0.8rem 0 1.2rem; }
 	.actions { justify-content: flex-end; }
 </style>
