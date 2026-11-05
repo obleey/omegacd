@@ -19,7 +19,6 @@ OmegaCD is early. This is the plan, most important first — it changes as real 
 
 - **Sync hooks** — jobs before/after a Sync: `artisan migrate`, `cache:clear`, `wp core update-db`, backups before upgrades
 - **Notifications** — Slack, Discord, email, generic webhook on Sync failed / Degraded / recovered
-- **Restore after a remote Host reboots** (today only the OmegaCD machine restores itself)
 - **Warn about relative bind mounts that hold data** (`./data` lives in the work dir and is lost on reboot)
 - "Sync and recreate" in the UI; refresh from Git when an Application page opens
 

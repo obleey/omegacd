@@ -64,6 +64,8 @@ const (
 	Progressing HealthStatus = "Progressing"
 	Degraded    HealthStatus = "Degraded"
 	Missing     HealthStatus = "Missing"
+	// HealthUnknown: the Host could not be asked (unreachable), so nothing is known about the containers.
+	HealthUnknown HealthStatus = "Unknown"
 )
 
 type OpPhase string
@@ -113,7 +115,7 @@ type RepoAccess struct {
 type Host struct {
 	Name          string    `json:"name"`
 	URL           string    `json:"url"`     // ssh://user@server[:port] or tcp://server:2376
-	WorkDir       string    `json:"workDir"` // Application files are copied here on the host; default /run/omegacd
+	WorkDir       string    `json:"workDir"` // Application files are copied here on the host; default /var/lib/omegacd (persistent across reboots)
 	SSHPrivateKey string    `json:"-"`
 	TLSCA         string    `json:"-"` // PEM; TLS is used when TLSCert and TLSKey are set
 	TLSCert       string    `json:"-"`

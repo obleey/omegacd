@@ -214,6 +214,7 @@ type fakeEngine struct {
 	files        []domain.Resource
 	hostsChanged []string
 	lastPrune    bool
+	statusErr    error
 	lastPruneVol bool
 	removedVols  []bool // volumes flag per Remove call
 	lastForce    bool
@@ -251,6 +252,9 @@ func (e *fakeEngine) Remove(_ context.Context, a domain.Application, volumes boo
 func (e *fakeEngine) Status(_ context.Context, a domain.Application) (domain.LiveState, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if e.statusErr != nil {
+		return domain.LiveState{}, e.statusErr
+	}
 	live := e.live
 	if h, ok := e.health[a.Name]; ok {
 		live.Health = h
@@ -1020,5 +1024,17 @@ func TestDeleteWithVolumes(t *testing.T) {
 		if !slices.Equal(r.e.removedVols, []bool{volumes}) {
 			t.Fatalf("volumes=%v: Remove got %v", volumes, r.e.removedVols)
 		}
+	}
+}
+
+func TestUnreachableHostIsUnknownNotMissing(t *testing.T) {
+	r := newRig(t)
+	r.c.CreateApp(t.Context(), app("web"))
+	r.e.mu.Lock()
+	r.e.statusErr = errors.New("dial unix docker.sock: connect: no such file")
+	r.e.mu.Unlock()
+	v, _ := r.c.Refresh(t.Context(), "web")
+	if v.Health != domain.HealthUnknown || !strings.Contains(v.SyncMessage, "unreachable") {
+		t.Fatalf("health %s, message %q; want Unknown with 'unreachable'", v.Health, v.SyncMessage)
 	}
 }

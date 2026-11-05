@@ -273,6 +273,10 @@ func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fe
 		if live, err := c.cfg.Engine.Status(ctx, a); err == nil {
 			v.Health = live.Health
 		} else {
+			// can't ask the Host: "Missing" would claim the containers are gone
+			v.Health = domain.HealthUnknown
+			// the most actionable fact; it explains any Sync Status error from the same outage too
+			v.SyncMessage = "Host " + cmp.Or(a.Host, domain.LocalHost) + " unreachable: " + err.Error()
 			c.cfg.Log.Warn("live state", "app", a.Name, "err", err)
 		}
 	}
@@ -1143,7 +1147,7 @@ func (c *Controller) children(ctx context.Context, parent string) ([]domain.Appl
 	return slices.DeleteFunc(apps, func(a domain.Application) bool { return a.Parent != parent }), err
 }
 
-var healthOrder = []domain.HealthStatus{domain.Healthy, domain.Progressing, domain.Missing, domain.Degraded}
+var healthOrder = []domain.HealthStatus{domain.Healthy, domain.Progressing, domain.HealthUnknown, domain.Missing, domain.Degraded}
 
 // worstHealth is the worst last-known Health of children; Missing when there are none. Caller holds c.mu.
 func (c *Controller) worstHealth(children []domain.Application) domain.HealthStatus {

@@ -150,8 +150,8 @@
 			</div>
 			<div class="field">
 				<label for="h-dir">Work dir</label>
-				<input id="h-dir" bind:value={hostForm.workDir} placeholder="/run/omegacd" autocomplete="off" />
-				<span class="hint">Application files are copied here on the host.</span>
+				<input id="h-dir" bind:value={hostForm.workDir} placeholder="/var/lib/omegacd" autocomplete="off" />
+				<span class="hint">Application files are copied here on the host. Keep it on disk (default) so they survive a reboot.</span>
 			</div>
 		</div>
 		<p class="muted small">ssh:// hosts need their key in OmegaCD's known_hosts file.</p>

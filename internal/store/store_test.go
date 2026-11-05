@@ -317,7 +317,7 @@ func TestHosts(t *testing.T) {
 	must(t, s.SaveHost(ctx, domain.Host{Name: "prod", URL: "tcp://prod:2376", TLSCA: "ca"}))
 	h, err := s.GetHost(ctx, "prod")
 	must(t, err)
-	if h.URL != "tcp://prod:2376" || h.WorkDir != "/run/omegacd" || h.SSHPrivateKey != "key" || h.TLSCA != "ca" ||
+	if h.URL != "tcp://prod:2376" || h.WorkDir != "/var/lib/omegacd" || h.SSHPrivateKey != "key" || h.TLSCA != "ca" ||
 		h.TLSCert != "cert" || h.TLSKey != "tlskey" || !h.HasSSHKey || !h.HasTLS || h.CreatedAt.IsZero() {
 		t.Fatalf("got %+v", h)
 	}

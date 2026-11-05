@@ -37,7 +37,8 @@ type hostConn struct {
 	compose api.Compose
 }
 
-const defaultWorkDir = "/run/omegacd"
+// persistent, so bind-mounted files survive a reboot of the Host
+const defaultWorkDir = "/var/lib/omegacd"
 
 func hostName(h string) string { return cmp.Or(h, domain.LocalHost) }
 

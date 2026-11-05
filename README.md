@@ -264,7 +264,7 @@ Applications deploy to the built-in `local` Host by default. Add more Docker eng
 - **`ssh://deploy@server[:port]`** — give the Host an SSH private key for a user allowed to use Docker on the server. The server's host key must be in the same `known_hosts` file (`ssh-keyscan server >> known_hosts`).
 - **`tcp://server:2376`** — Docker over TLS; give the Host its CA, client certificate and key (PEM).
 
-On Sync, the Application's files are copied to the Host's work dir (default `/run/omegacd`) so bind mounts, configs and secrets resolve there. To move an Application to another Host, delete and recreate it.
+On Sync, the Application's files are copied to the Host's work dir (default `/var/lib/omegacd`, set per Host) so bind mounts, configs and secrets resolve there. It is on disk, so after the Host reboots its containers come back with their files; decrypted secret files are kept there too (mode 0600) — use disk encryption if that matters to you. Values from env files are stored by Docker in the container configuration in any case. To move an Application to another Host, delete and recreate it.
 
 ![Settings → Hosts](assets/screenshots/settings-hosts.png)
 

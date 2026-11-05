@@ -72,7 +72,7 @@ func TestConnRouting(t *testing.T) {
 }
 
 func TestRemoteAppDir(t *testing.T) {
-	if got := remoteAppDir(domain.Host{}, "web"); got != "/run/omegacd/apps/web" {
+	if got := remoteAppDir(domain.Host{}, "web"); got != "/var/lib/omegacd/apps/web" {
 		t.Errorf("default = %s", got)
 	}
 	if got := remoteAppDir(domain.Host{WorkDir: "/srv/cd/"}, "web"); got != "/srv/cd/apps/web" {

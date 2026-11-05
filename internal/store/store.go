@@ -432,7 +432,8 @@ func (s *Store) DeleteRegistryCredential(ctx context.Context, id int64) error {
 
 // ---- hosts ----
 
-const defaultWorkDir = "/run/omegacd"
+// persistent, so bind-mounted files survive a reboot of the Host
+const defaultWorkDir = "/var/lib/omegacd"
 
 const hostCols = `name, url, work_dir, ssh_private_key, tls_ca, tls_cert, tls_key, created_at`
 
