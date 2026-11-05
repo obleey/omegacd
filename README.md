@@ -39,17 +39,17 @@ It stays small: one binary in one container, no database server, no agents on yo
 - **Applications** — a Compose project (one or more compose files, optional profiles) at a path in a Git repo, tracking a branch, tag or commit, deployed to one Host
 - **Sync Status and Health Status** — Synced / OutOfSync / Unknown; Healthy / Progressing / Degraded / Missing / Unknown — live over Server-Sent Events, resynced after reconnects
 - **Sync Policy** — manual Sync, or Auto-Sync on new commits, Self-Heal on drift, and Prune
-- **Diff** — the per-service changes and the Git diff between the deployed and the target Revision
+- **Diff** — Live (the compose files on the Host) and Desired (the compose files in Git) side by side and as a Compose diff, plus the per-service changes and the Git diff between the deployed and the target Revision
 - **History and Rollback** — every Sync Operation is recorded; roll back to any earlier Revision
 - **App of Apps** — declare Applications in Git; one parent Application creates, updates and deletes its children
 - **Remote Hosts** — Docker engines over `ssh://` (host keys verified) or `tcp://` with TLS
 - **Secrets** — SOPS + age encrypted files in Git, decrypted only at Sync time
 - **Change detection** — Git polling plus GitHub, GitLab and Gitea/Forgejo webhooks
-- **Web UI** — resource tree, diffs, colored live container logs, repository access check while creating an Application, links to the Git host, light/dark/system theme, works on phones
+- **Web UI** — resource tree, diffs, colored live container logs, syntax colors for compose and config files (YAML, .env, nginx, Apache, Caddyfile, TOML, Markdown… ~240 formats via Shiki), repository access check while creating an Application, links to the Git host, light/dark/system theme, works on phones
 - **CLI and API** — REST API with API tokens; a CLI for scripts and CI (`omegacd app sync myapp --wait`)
 - **Prometheus metrics** at `/metrics`
 
-| Application detail: resource tree and Sync Policy | Diff of a pending change |
+| Application detail: resource tree and Sync Policy | Compose diff of a pending change |
 | --- | --- |
 | ![Application detail](assets/screenshots/app-detail.png) | ![Diff](assets/screenshots/diff.png) |
 
@@ -96,7 +96,9 @@ Open http://localhost:8080, log in as `admin` with the password from the log, an
 
 **Why `/run/omegacd:/run/omegacd`?** On Sync, OmegaCD writes each Application's files (compose files, configs, decrypted secrets) to its work dir and asks the Docker engine to start the containers. Bind mounts like `./nginx.conf:/etc/nginx/nginx.conf` are resolved by the *engine*, on the host — so the work dir must exist at the same path on the host as inside the OmegaCD container.
 
-**After a reboot** `/run` is empty again (it's RAM-backed, so decrypted secrets never touch disk). Docker restarts your containers before OmegaCD is up, and their bind-mounted files are missing. On startup OmegaCD notices, restores every Application's files from its *deployed* Revision (nothing new is deployed), re-decrypts secrets and recreates the containers — it shows in History as a `restore` Sync. This covers the machine OmegaCD runs on (its work dir is `OMEGACD_WORKDIR`, shown read-only under **Settings → Hosts**); [remote Hosts](#remote-hosts) use a persistent work dir instead.
+**After a reboot** `/run` is empty again (it's RAM-backed, so decrypted secret *files* never touch disk — see [what reaches the disk](#what-reaches-the-disk)). Docker restarts your containers before OmegaCD is up, and their bind-mounted files are missing. On startup OmegaCD notices, restores every Application's files from its *deployed* Revision (nothing new is deployed), re-decrypts secrets and recreates the containers — it shows in History as a `restore` Sync. This covers the machine OmegaCD runs on (its work dir is `OMEGACD_WORKDIR`, shown read-only under **Settings → Hosts**); [remote Hosts](#remote-hosts) use a persistent work dir instead.
+
+**A persistent work dir instead:** point `OMEGACD_WORKDIR` at a disk path such as `/opt/services` and mount it at the same path (`/opt/services:/opt/services`). The files then survive reboots and no `restore` Sync is needed, but decrypted secret files sit on that disk (mode 0600) and end up in its backups. Either way the work dir is OmegaCD's copy of Git, not a place for data: every Sync makes it match Git again (see [Where your data lives](#where-your-data-lives)). Changing the path is safe: on its first start with the new path OmegaCD finds no files there and restores every Application into it, recreating the containers once.
 
 **Upgrade:** bump the image tag (or `docker compose pull` for `latest`) and run `docker compose up -d`. Data lives in the `omegacd-data` volume.
 
@@ -306,7 +308,7 @@ Decryption uses age keys only: files encrypted solely with PGP or a cloud KMS ar
 
 **Rotating a Host Key:** *Generate new key* (or import one) makes it current; the old key becomes *previous* and is still tried when decrypting, so Syncs keep working. Re-encrypt the Host's files with `sops updatekeys` after updating `.sops.yaml`, push, then remove the previous key. A file no key of its Host can decrypt fails the Sync with the keys it is encrypted for and the keys the Host has.
 
-Any file whose name contains `.sops.` is decrypted at Sync time next to the encrypted file, with `.sops.` removed from the name — `app.sops.env` becomes `app.env`, `db-password.sops.txt` becomes `db-password.txt`:
+Any file whose name contains `.sops.` is decrypted at Sync time, with `.sops.` removed from the name — `app.sops.env` becomes `app.env`, `db-password.sops.txt` becomes `db-password.txt`. The work dir keeps only the decrypted file, which is what the containers read; the encrypted one stays in Git:
 
 ```sh
 sops encrypt --age age1... --input-type dotenv --output-type dotenv app.env > app.sops.env
@@ -325,7 +327,20 @@ secrets:
     file: ./db-password.txt    # decrypted from db-password.sops.txt
 ```
 
-The format is taken from the decrypted file's extension: `.yaml`/`.yml`, `.json`, `.env`/`.dotenv`, `.ini`, anything else binary. Plaintext exists only in the Application's work dir (mode 0600; on the local machine `/run` is a tmpfs on most Linux hosts, on [remote Hosts](#remote-hosts) it is on disk) — never in Git and never in the UI, which shows only the keys of decrypted env files.
+The format is taken from the decrypted file's extension: `.yaml`/`.yml`, `.json`, `.env`/`.dotenv`, `.ini`, anything else binary. Plaintext exists only in the Application's work dir (mode 0600; on the local machine `/run` is a tmpfs on most Linux hosts, on [remote Hosts](#remote-hosts) it is on disk) — never in Git and never in the UI, which shows only the keys of decrypted env files:
+
+![A decrypted env file in the UI: keys only, every value hidden](assets/screenshots/secret-file.png)
+
+### What reaches the disk
+
+How a secret reaches the container decides where it ends up:
+
+| In your compose file | Where the plaintext is |
+| --- | --- |
+| `env_file: app.env` or `${VAR}` from a decrypted `.env` | the work dir, **and Docker's container configuration on disk** (`/var/lib/docker`, readable with `docker inspect`) — that is how Docker passes environment variables, with or without OmegaCD |
+| `secrets: [db_password]` with `file: ./db-password.txt` | **only the work dir**: with the default `/run` it never touches disk; the app reads `/run/secrets/db_password` |
+
+For a secret that must stay off disk, use a Compose secret file and, where the image supports it, a `*_FILE` variable (`MARIADB_PASSWORD_FILE: /run/secrets/db_password`).
 
 ## Webhooks
 
