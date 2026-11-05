@@ -21,6 +21,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"filippo.io/age"
 )
 
 // CLI holds the process environment, so tests can fake it.
@@ -71,6 +73,7 @@ func init() { // init breaks the cycle commands → run funcs → flags → comm
 		"login":             {"login --server URL --token TOKEN", (*CLI).login},
 		"logout":            {"logout", (*CLI).logout},
 		"version":           {"version", (*CLI).version},
+		"keygen":            {"keygen [--out FILE]   (a new age key like age-keygen; the public key also goes to stderr)", (*CLI).keygen},
 		"app list":          {"app list", (*CLI).appList},
 		"app get":           {"app get NAME", (*CLI).appGet},
 		"app create":        {"app create NAME --repo URL [--path P] [--revision R] [--file F]... [--profile P]... [--host H] [--kind apps] [--auto-sync] [--self-heal] [--prune [--prune-volumes]] [--adopt]\n  app create -f app.yaml", (*CLI).appCreate},
@@ -92,7 +95,7 @@ func init() { // init breaks the cycle commands → run funcs → flags → comm
 	}
 }
 
-var order = []string{"login", "logout", "version", "app list", "app get", "app create", "app delete", "app sync", "app refresh",
+var order = []string{"login", "logout", "version", "keygen", "app list", "app get", "app create", "app delete", "app sync", "app refresh",
 	"app diff", "app history", "app rollback", "app wait", "app logs", "app export", "host list", "host test",
 	"host key show", "host key generate", "host key import", "host key remove"}
 
@@ -289,6 +292,40 @@ func (c *CLI) logout(ctx context.Context, args []string) error {
 
 func (c *CLI) version(ctx context.Context, args []string) error {
 	fmt.Fprintln(c.Stdout, "omegacd "+version.String())
+	return nil
+}
+
+// keygen writes a new age identity in age-keygen's format, so installing OmegaCD needs no age tools.
+// It works offline and never overwrites a file: losing the Master Key loses every sealed credential.
+func (c *CLI) keygen(ctx context.Context, args []string) error {
+	var o opts
+	fs := c.flags("keygen", &o)
+	out := fs.String("out", "", "write the key to FILE (mode 0600) instead of stdout")
+	if _, err := parse(fs, args, 0, 0); err != nil {
+		return err
+	}
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		return err
+	}
+	key := fmt.Sprintf("# created: %s\n# public key: %s\n%s\n", time.Now().Format(time.RFC3339), id.Recipient(), id)
+	if *out == "" {
+		_, err = io.WriteString(c.Stdout, key)
+	} else {
+		var f *os.File
+		if f, err = os.OpenFile(*out, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600); err != nil {
+			return err
+		}
+		if _, err = f.WriteString(key); err == nil {
+			err = f.Close()
+		} else {
+			f.Close()
+		}
+	}
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(c.Stderr, "Public key: "+id.Recipient().String())
 	return nil
 }
 

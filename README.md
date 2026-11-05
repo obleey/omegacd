@@ -63,6 +63,14 @@ It stays small: one binary in one container, no database server, no agents on yo
 
 OmegaCD needs a Docker engine and an [age](https://github.com/FiloSottile/age) key. The key seals stored credentials and decrypts your SOPS secrets, so **back it up** — without it, stored credentials and encrypted secrets cannot be read.
 
+**Quick install** — on a Linux server with Docker, or into a Kubernetes cluster with `kubectl`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/obleey/omegacd/main/deploy/install.sh | sh
+```
+
+[`install.sh`](deploy/install.sh) asks for the port and the work dir (Compose) or the kubectl context and namespace (Kubernetes, always confirmed), creates the Master Key, starts OmegaCD and prints the URL, the initial admin password and the public key for `.sops.yaml`. It needs no `age` or `sops` on the server (`omegacd keygen` makes the key), never replaces an existing key, and runs unattended with `OMEGACD_TARGET`, `OMEGACD_VERSION` and the settings listed at its top. The options below do the same by hand.
+
 ### Option 1: Docker Compose (recommended)
 
 Download [`deploy/compose.yaml`](deploy/compose.yaml). It mounts the Docker socket, a data volume, the age key, `known_hosts` and the work dir (at the same path inside and outside, see below). Every setting has a default you can override with environment variables or a `.env` file next to it: `OMEGACD_IMAGE` (pin a release, e.g. `ghcr.io/obleey/omegacd:0.1.0`), `OMEGACD_PORT`, `OMEGACD_WORKDIR`, `OMEGACD_DATA` (a folder instead of the volume), `OMEGACD_AGE_KEY`, `OMEGACD_KNOWN_HOSTS`.
@@ -378,6 +386,7 @@ In CI, pass the server and token as environment variables:
 | Command | |
 | --- | --- |
 | `login --server URL --token TOKEN`, `logout`, `version` | |
+| `keygen [--out FILE]` | a new age key (the Master Key, or one to import as a Host Key), like `age-keygen`; works offline, never overwrites a file |
 | `app list`, `app get NAME` | `-o json` for the raw API object |
 | `app create NAME --repo URL [--path P] [--revision R] [--file F]... [--profile P]... [--host H] [--kind apps] [--auto-sync] [--self-heal] [--prune [--prune-volumes]] [--adopt]` | or `app create -f app.yaml` |
 | `app sync NAME [--prune] [--wait] [--no-health] [--timeout 10m]` | |

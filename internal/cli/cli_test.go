@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/obleey/omegacd/internal/crypto"
 	"github.com/obleey/omegacd/internal/domain"
 )
 
@@ -357,5 +358,42 @@ func TestHostKeys(t *testing.T) {
 	}
 	if r := run(t, srv, nil, "", "host", "key", "nope"); r.code != 2 {
 		t.Fatalf("unknown subcommand: %+v", r)
+	}
+}
+
+func TestKeygen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "age.key")
+	r := run(t, nil, nil, "", "keygen", "--out", path)
+	if r.code != 0 || r.stdout != "" {
+		t.Fatalf("%+v", r)
+	}
+	st, err := os.Stat(path)
+	if err != nil || st.Mode().Perm() != 0o600 {
+		t.Fatalf("mode %v, %v", st.Mode().Perm(), err)
+	}
+	id, err := crypto.LoadIdentity(path) // what the server reads OMEGACD_AGE_KEY_FILE with
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "Public key: " + id.Recipient().String() + "\n"; r.stderr != want {
+		t.Fatalf("stderr %q, want %q", r.stderr, want)
+	}
+	b, _ := os.ReadFile(path)
+	if !strings.Contains(string(b), "# public key: "+id.Recipient().String()) {
+		t.Fatalf("no public key comment:\n%s", b)
+	}
+
+	// never overwrites: losing the Master Key loses every sealed credential
+	if r := run(t, nil, nil, "", "keygen", "--out", path); r.code == 0 {
+		t.Fatal("overwrote an existing key")
+	}
+	if b2, _ := os.ReadFile(path); !bytes.Equal(b, b2) {
+		t.Fatal("existing key changed")
+	}
+
+	// without -o: the key on stdout, a different one each time
+	r1, r2 := run(t, nil, nil, "", "keygen"), run(t, nil, nil, "", "keygen")
+	if r1.code != 0 || !strings.Contains(r1.stdout, "AGE-SECRET-KEY-1") || r1.stdout == r2.stdout {
+		t.Fatalf("%+v", r1)
 	}
 }
