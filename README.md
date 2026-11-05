@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <b>GitOps continuous delivery for Docker Compose — ArgoCD, but for plain Docker hosts.</b>
+  <b>GitOps continuous delivery for Docker Compose hosts.</b>
 </p>
 
 <p align="center">
@@ -21,11 +21,18 @@ OmegaCD watches Git repositories and keeps Docker Compose projects on your Docke
 
 ## Why
 
-You have a few servers running `docker compose`, and deploying means SSH-ing in and running `git pull && docker compose up -d`. Kubernetes and ArgoCD would fix the workflow but are far more platform than you need. OmegaCD brings the ArgoCD model — Git as the source of truth, a live diff, sync status, health, history and rollback — to plain Docker engines:
+Plenty of apps run on plain Docker hosts — a VPS, a homelab box, a few servers for a small team or an agency's clients — with no Kubernetes in sight. Deploying usually means SSH-ing in and running `git pull && docker compose up -d`, and nobody can say for sure what is running, what changed, or how to get back to yesterday's version. OmegaCD makes Git the answer:
 
-- **One binary, one container.** No Kubernetes, no database server, no agents on your hosts.
-- **Your compose files, unchanged.** OmegaCD runs Compose as a library; whatever `docker compose up` accepts, works (except `build:` — images are built in CI, OmegaCD pulls and runs them).
-- **Many hosts.** Deploy to the local engine, or to remote engines over SSH or TLS.
+- **Git is the single source of truth.** What is committed is what runs; a deploy is a commit.
+- **See the diff before you deploy.** Per-service changes and the Git diff between the deployed and the target Revision.
+- **Drift detection and Self-Heal.** A container changed or removed by hand shows up as OutOfSync, and OmegaCD can put it back.
+- **History and Rollback.** Every Sync is recorded; roll back to any earlier Revision.
+- **Secrets encrypted in Git.** SOPS + age files live next to your compose files and are decrypted only at Sync time.
+- **Many hosts from one place.** The local engine and remote engines over SSH or TLS, in one UI, API and CLI.
+
+It stays small: one binary in one container, no database server, no agents on your hosts, and your compose files unchanged. OmegaCD runs Compose as a library, so whatever `docker compose up` accepts works (except `build:` — build images in CI; OmegaCD pulls and runs them).
+
+**Inspired by** the GitOps tools of the Kubernetes world — [Argo CD](https://argo-cd.readthedocs.io/) and [Flux](https://fluxcd.io/) — and the [OpenGitOps principles](https://opengitops.dev/) (declarative, versioned and immutable, pulled automatically, continuously reconciled), brought to Docker Compose. OmegaCD is an independent project, not affiliated with Argo CD, Flux or the CNCF.
 
 ## Features
 
