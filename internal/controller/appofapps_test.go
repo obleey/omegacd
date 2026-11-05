@@ -191,6 +191,7 @@ func TestDeleteAppOfApps(t *testing.T) {
 		r.c.CreateApp(ctx, parentApp("root"))
 		r.g.define("aaaaaaaa", "name: web\nrepoURL: x\n")
 		r.mustSync(t, "root")
+		r.waitIdle(t, "web") // the children's Syncs run in the background; deleting during one is refused
 		if err := r.c.DeleteApp(ctx, "root", cascade, false); err != nil {
 			t.Fatal(err)
 		}
@@ -258,6 +259,8 @@ func TestDeleteAppOfAppsWithVolumes(t *testing.T) {
 	r.c.CreateApp(ctx, parentApp("root"))
 	r.g.define("aaaaaaaa", "name: web\nrepoURL: x\n---\nname: api\nrepoURL: x\n")
 	r.mustSync(t, "root")
+	r.waitIdle(t, "web") // the children's Syncs run in the background; deleting during one is refused
+	r.waitIdle(t, "api")
 	if err := r.c.DeleteApp(ctx, "root", true, true); err != nil {
 		t.Fatal(err)
 	}
