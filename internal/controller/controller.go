@@ -1333,7 +1333,7 @@ func (c *Controller) ListHosts(ctx context.Context) ([]domain.HostView, error) {
 	if err != nil {
 		return nil, err
 	}
-	hosts = append([]domain.Host{{Name: domain.LocalHost}}, hosts...)
+	hosts = append([]domain.Host{{Name: domain.LocalHost, WorkDir: c.cfg.WorkDir}}, hosts...)
 	views := make([]domain.HostView, len(hosts))
 	var wg sync.WaitGroup
 	for i, h := range hosts {

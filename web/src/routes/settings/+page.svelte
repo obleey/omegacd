@@ -112,13 +112,14 @@
 	<h2><span class="hicon"><Icon name="server" size={17} /></span>Hosts</h2>
 	<p class="muted small">Docker engines Applications deploy to. Secrets are stored encrypted and never shown.</p>
 	<div class="scroll-x"><table>
-		<thead><tr><th>Name</th><th>URL</th><th>Connection</th><th>Applications</th><th><span class="sr-only">Actions</span></th></tr></thead>
+		<thead><tr><th>Name</th><th>URL</th><th>Work dir</th><th>Connection</th><th>Applications</th><th><span class="sr-only">Actions</span></th></tr></thead>
 		<tbody>
 			{#each hosts as h (h.name)}
 				{@const local = h.name === 'local'}
 				<tr>
 					<td>{h.name}</td>
 					<td class="mono">{local ? 'local Docker socket' : h.url}</td>
+					<td class="mono small">{h.workDir || '—'}</td>
 					<td>
 						<Badge status={h.status.connected ? 'Connected' : 'Disconnected'} label="Connection" />
 						<div class="muted small">{h.status.connected ? `Docker ${h.status.serverVersion ?? ''}` : h.status.error}</div>
@@ -126,7 +127,9 @@
 					<td>{h.apps.join(', ') || '—'}</td>
 					<td class="right">
 						<button onclick={() => testHost(h.name)} disabled={testing[h.name]}>{testing[h.name] ? 'Testing…' : 'Test'}</button>
-						{#if !local}
+						{#if local}
+							<span class="muted small" title="The local work dir must match how OmegaCD was started (and, in Docker, its volume mount), so it is set at startup, not here.">set at startup (<code>OMEGACD_WORKDIR</code>)</span>
+						{:else}
 							<button onclick={() => (hostForm = { ...blankHost(), edit: true, name: h.name, url: h.url, workDir: h.workDir, hasSSHKey: h.hasSSHKey, hasTLS: h.hasTLS })}>Edit</button>
 							<span title={h.apps.length ? 'Used by Applications; delete or move them first' : undefined}>
 								<button class="danger" onclick={() => delHost(h.name)} disabled={h.apps.length > 0}>Delete</button>
