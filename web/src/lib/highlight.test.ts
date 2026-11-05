@@ -58,3 +58,17 @@ test('lineToks falls back to the plain line when tokens are missing or stale', a
 	assert.deepEqual(lineToks(null, 0, 'x'), [{ text: 'x' }]);
 	assert.deepEqual(lineToks(toks, 9, 'y'), [{ text: 'y' }]);
 });
+
+test('.env keys are colored, also in a SOPS-decrypted file shown as KEY=••••', async () => {
+	const [[key, eq, value]] = await tokenize('GF_SECURITY_ADMIN_PASSWORD=••••\n', 'dotenv');
+	assert.equal(key.text, 'GF_SECURITY_ADMIN_PASSWORD');
+	assert.match(key.style ?? '', /--shiki-dark:#89b4fa/i);
+	assert.match(key.style ?? '', /--shiki-light:#1e66f5/i);
+	assert.notEqual(key.style, value.style);
+	assert.equal(eq.text, '=');
+});
+
+test('TOML keys are colored too', async () => {
+	const [[key]] = await tokenize('port = 80\n', 'toml');
+	assert.match(key.style ?? '', /--shiki-dark:#89b4fa/i);
+});

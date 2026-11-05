@@ -1,7 +1,7 @@
 // Syntax colors via Shiki (VS Code's TextMate grammars) with the Catppuccin themes. Everything is loaded on
 // first use, one grammar at a time, so pages without code never download any of it. The JavaScript regex
 // engine avoids shipping Oniguruma's WebAssembly.
-import type { HighlighterCore, LanguageRegistration } from 'shiki/core';
+import type { HighlighterCore, LanguageRegistration, ThemeRegistration } from 'shiki/core';
 
 export type Lang = 'yaml' | 'json' | 'dotenv' | 'toml' | 'ini' | 'nginx' | 'docker' | 'shellscript' | 'caddyfile';
 // style: CSS custom properties --shiki-light / --shiki-dark (and their -font-style), picked by app.css
@@ -41,11 +41,20 @@ function highlighter(): Promise<HighlighterCore> {
 	core ??= (async () => {
 		const [{ createHighlighterCore }, { createJavaScriptRegexEngine }] = await Promise.all([import('shiki/core'), import('shiki/engine/javascript')]);
 		return createHighlighterCore({
-			themes: [import('shiki/themes/catppuccin-latte.mjs'), import('shiki/themes/catppuccin-mocha.mjs')],
+			themes: [
+				import('shiki/themes/catppuccin-latte.mjs').then((m) => withKeyColors(m.default, '#1e66f5')),
+				import('shiki/themes/catppuccin-mocha.mjs').then((m) => withKeyColors(m.default, '#89b4fa'))
+			],
 			engine: createJavaScriptRegexEngine()
 		});
 	})();
 	return core;
+}
+
+// Catppuccin has no color for the keys of the dotenv and TOML grammars, so those files came out as plain text;
+// color them like INI keys (Catppuccin blue of the flavor).
+function withKeyColors(theme: ThemeRegistration, blue: string): ThemeRegistration {
+	return { ...theme, tokenColors: [...(theme.tokenColors ?? []), { scope: ['variable.key.dotenv', 'variable.other.key.toml'], settings: { foreground: blue } }] };
 }
 
 // tokenize returns one token list per line of code; joining a line's token texts gives the line back exactly.
