@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -122,6 +123,7 @@ type fakeController struct {
 	hosts      map[string]domain.Host
 	lastSync   domain.SyncRequest
 	lastDelete [2]bool // cascade, volumes
+	keys       []domain.HostKey
 }
 
 func (c *fakeController) ListHosts(context.Context) ([]domain.HostView, error) {
@@ -149,6 +151,48 @@ func (c *fakeController) DeleteHost(_ context.Context, name string) error {
 		return fmt.Errorf("%w: host %q is used by Applications web", domain.ErrInvalid, name)
 	}
 	delete(c.hosts, name)
+	return nil
+}
+
+// Host Keys: the fake hands out keys WITH private keys, so the test proves the API never serialises them.
+func (c *fakeController) HostKeys(_ context.Context, host string) ([]domain.HostKey, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.hosts[host]; !ok {
+		return nil, domain.ErrNotFound
+	}
+	return slices.Clone(c.keys), nil
+}
+
+func (c *fakeController) GenerateHostKey(_ context.Context, host string) (domain.HostKey, error) {
+	return c.ImportHostKey(context.Background(), host, "AGE-SECRET-KEY-1GENERATED")
+}
+
+func (c *fakeController) ImportHostKey(_ context.Context, host, pk string) (domain.HostKey, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !strings.HasPrefix(pk, "AGE-SECRET-KEY-1") {
+		return domain.HostKey{}, domain.ErrInvalid
+	}
+	for i := range c.keys {
+		c.keys[i].Current = false
+	}
+	k := domain.HostKey{Host: host, Recipient: "age1" + strings.ToLower(pk[16:]), PrivateKey: pk, Current: true}
+	c.keys = append([]domain.HostKey{k}, c.keys...)
+	return k, nil
+}
+
+func (c *fakeController) RemoveHostKey(_ context.Context, host, recipient string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	i := slices.IndexFunc(c.keys, func(k domain.HostKey) bool { return k.Recipient == recipient })
+	switch {
+	case i < 0:
+		return domain.ErrNotFound
+	case c.keys[i].Current:
+		return fmt.Errorf("%w: current", domain.ErrInvalid)
+	}
+	c.keys = slices.Delete(c.keys, i, i+1)
 	return nil
 }
 
@@ -622,4 +666,30 @@ func TestRepoCredentialsUsedBy(t *testing.T) {
 	if len(got) != 2 || strings.Join(got[0].UsedBy, ",") != "c" || strings.Join(got[1].UsedBy, ",") != "a,b" {
 		t.Fatalf("%+v", got)
 	}
+}
+
+func TestHostKeysAPI(t *testing.T) {
+	e := newEnv(t, false)
+	e.expect("GET", "/api/settings/hosts/prod/keys", "", 401)
+	e.login()
+	e.ctrl.hosts["prod"] = domain.Host{Name: "prod"}
+	var bodies []string
+	bodies = append(bodies, e.expect("POST", "/api/settings/hosts/prod/keys/generate", "", 201))
+	bodies = append(bodies, e.expect("POST", "/api/settings/hosts/prod/keys/import", `{"privateKey":"AGE-SECRET-KEY-1IMPORTED"}`, 201))
+	e.expect("POST", "/api/settings/hosts/prod/keys/import", `{"privateKey":"nope"}`, 400)
+	b := e.expect("GET", "/api/settings/hosts/prod/keys", "", 200)
+	bodies = append(bodies, b)
+	var keys []map[string]any
+	if err := json.Unmarshal([]byte(b), &keys); err != nil || len(keys) != 2 || keys[0]["recipient"] != "age1imported" || keys[0]["current"] != true || keys[1]["current"] != false {
+		t.Fatalf("%s %v", b, err)
+	}
+	for _, b := range bodies {
+		if strings.Contains(b, "AGE-SECRET-KEY") || strings.Contains(b, "privateKey") {
+			t.Fatalf("private key in response: %s", b)
+		}
+	}
+	e.expect("DELETE", "/api/settings/hosts/prod/keys/age1imported", "", 400)
+	e.expect("DELETE", "/api/settings/hosts/prod/keys/age1nope", "", 404)
+	e.expect("DELETE", "/api/settings/hosts/prod/keys/age1generated", "", 204)
+	e.expect("GET", "/api/settings/hosts/nope/keys", "", 404)
 }

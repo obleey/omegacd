@@ -379,6 +379,33 @@ func (s *server) testHost(w http.ResponseWriter, r *http.Request) {
 	respond(w, http.StatusOK, st, err)
 }
 
+// Host Keys: responses carry public keys only (HostKey.PrivateKey is never serialised).
+func (s *server) hostKeys(w http.ResponseWriter, r *http.Request) {
+	keys, err := s.Controller.HostKeys(r.Context(), r.PathValue("name"))
+	respond(w, http.StatusOK, keys, err)
+}
+
+func (s *server) generateHostKey(w http.ResponseWriter, r *http.Request) {
+	k, err := s.Controller.GenerateHostKey(r.Context(), r.PathValue("name"))
+	respond(w, http.StatusCreated, k, err)
+}
+
+func (s *server) importHostKey(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		PrivateKey string `json:"privateKey"`
+	}
+	if err := decode(w, r, &req); err != nil {
+		writeError(w, err)
+		return
+	}
+	k, err := s.Controller.ImportHostKey(r.Context(), r.PathValue("name"), req.PrivateKey)
+	respond(w, http.StatusCreated, k, err)
+}
+
+func (s *server) removeHostKey(w http.ResponseWriter, r *http.Request) {
+	respond(w, http.StatusNoContent, nil, s.Controller.RemoveHostKey(r.Context(), r.PathValue("name"), r.PathValue("recipient")))
+}
+
 func (s *server) listRegistryCreds(w http.ResponseWriter, r *http.Request) {
 	cs, err := s.Store.ListRegistryCredentials(r.Context())
 	respond(w, http.StatusOK, cs, err)

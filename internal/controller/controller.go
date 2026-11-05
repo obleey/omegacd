@@ -18,6 +18,8 @@ import (
 	"sync"
 	"time"
 
+	"filippo.io/age"
+
 	"github.com/obleey/omegacd/internal/appdef"
 	"github.com/obleey/omegacd/internal/domain"
 )
@@ -38,6 +40,7 @@ type Config struct {
 	Store        domain.Store
 	Git          domain.Git
 	Secrets      domain.Secrets
+	MasterKey    *age.X25519Identity // seals stored secrets; also the Host Key of LocalHost
 	Engine       domain.Engine
 	WorkDir      string
 	PollInterval time.Duration
@@ -268,6 +271,14 @@ func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fe
 		}
 	}
 
+	// a Sync would fail on a remote Host without a Host Key: say why, and don't auto-sync into that failure
+	var noKey bool
+	if v.SyncStatus == domain.OutOfSync && a.Kind != domain.KindApps {
+		if _, err := c.syncKeys(ctx, a); err != nil {
+			v.SyncMessage, noKey = err.Error(), true
+		}
+	}
+
 	// after Diff: loading the project tells the engine which services are declared
 	if a.Kind != domain.KindApps {
 		if live, err := c.cfg.Engine.Status(ctx, a); err == nil {
@@ -293,6 +304,9 @@ func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fe
 	}
 	s.view = v
 	trigger := c.autoTrigger(a, s, v)
+	if noKey {
+		trigger = ""
+	}
 	c.mu.Unlock()
 	c.emit(domain.Event{Type: "app", App: a.Name, Data: v})
 	if a.Parent != "" {
@@ -536,6 +550,13 @@ func (c *Controller) apply(ctx context.Context, a domain.Application, op domain.
 			return err
 		}
 	}
+	var keys []domain.HostKey
+	if a.Kind != domain.KindApps {
+		var err error
+		if keys, err = c.syncKeys(ctx, a); err != nil {
+			return err
+		}
+	}
 	dir := c.appDir(a.Name)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return err
@@ -546,8 +567,8 @@ func (c *Controller) apply(ctx context.Context, a domain.Application, op domain.
 	if a.Kind == domain.KindApps {
 		return c.syncChildren(ctx, a, dir)
 	}
-	if _, err := c.cfg.Secrets.DecryptDir(dir); err != nil {
-		return fmt.Errorf("decrypt secrets: %w", err)
+	if err := c.decrypt(a, dir, keys); err != nil {
+		return err
 	}
 	for _, f := range a.ComposeFiles {
 		if _, err := os.Stat(filepath.Join(dir, f)); errors.Is(err, fs.ErrNotExist) {
@@ -879,6 +900,12 @@ func (c *Controller) Diff(ctx context.Context, name string) (domain.DiffView, er
 		return domain.DiffView{}, err
 	}
 
+	var keys []domain.HostKey
+	if a.Kind != domain.KindApps {
+		if keys, err = c.syncKeys(ctx, a); err != nil {
+			return domain.DiffView{}, err
+		}
+	}
 	stage := filepath.Join(c.cfg.WorkDir, "staging", name)
 	defer os.RemoveAll(stage)
 	if err := os.MkdirAll(stage, 0o750); err != nil {
@@ -891,7 +918,7 @@ func (c *Controller) Diff(ctx context.Context, name string) (domain.DiffView, er
 		dv.Services, err = c.childDiff(ctx, a.Name, stage)
 		return dv, err
 	}
-	if _, err := c.cfg.Secrets.DecryptDir(stage); err != nil {
+	if err := c.decrypt(a, stage, keys); err != nil {
 		return domain.DiffView{}, err
 	}
 	if dv.Services, err = c.cfg.Engine.Diff(ctx, a, stage, c.appDir(name)); err != nil {
@@ -1347,7 +1374,13 @@ func (c *Controller) hostView(ctx context.Context, h domain.Host, apps []string)
 	if apps == nil {
 		apps = []string{}
 	}
-	return domain.HostView{Host: h, Status: c.cfg.Engine.HostStatus(ctx, h.Name), Apps: apps}
+	v := domain.HostView{Host: h, Status: c.cfg.Engine.HostStatus(ctx, h.Name), Apps: apps}
+	if keys, err := c.hostKeys(ctx, h.Name); err != nil {
+		c.cfg.Log.Warn("list host keys", "host", h.Name, "err", err)
+	} else if len(keys) > 0 && keys[0].Current {
+		v.KeyRecipient = keys[0].Recipient
+	}
+	return v
 }
 
 func (c *Controller) appsByHost(ctx context.Context) (map[string][]string, error) {
@@ -1390,6 +1423,11 @@ func (c *Controller) SaveHost(ctx context.Context, h domain.Host, create bool) (
 		return domain.HostView{}, err
 	}
 	c.cfg.Engine.HostChanged(h.Name)
+	if create {
+		if _, err := c.GenerateHostKey(ctx, h.Name); err != nil {
+			return domain.HostView{}, err
+		}
+	}
 	if h, err = c.cfg.Store.GetHost(ctx, h.Name); err != nil {
 		return domain.HostView{}, err
 	}
@@ -1433,4 +1471,123 @@ func (c *Controller) CheckRepo(ctx context.Context, repoURL string) (domain.Repo
 		return domain.RepoAccess{}, fmt.Errorf("%w: repoURL is required", domain.ErrInvalid)
 	}
 	return c.cfg.Git.CheckAccess(ctx, repoURL)
+}
+
+// ---- Host Keys ----
+
+// hostKeys returns a Host's keys with their private keys, current first: the Master Key for LocalHost.
+func (c *Controller) hostKeys(ctx context.Context, host string) ([]domain.HostKey, error) {
+	if host == "" || host == domain.LocalHost {
+		return []domain.HostKey{{Host: domain.LocalHost, Recipient: c.cfg.MasterKey.Recipient().String(),
+			PrivateKey: c.cfg.MasterKey.String(), Current: true, Master: true}}, nil
+	}
+	return c.cfg.Store.ListHostKeys(ctx, host)
+}
+
+// syncKeys returns the keys a Sync of a decrypts with; nothing deploys to a remote Host without a Host Key.
+func (c *Controller) syncKeys(ctx context.Context, a domain.Application) ([]domain.HostKey, error) {
+	keys, err := c.hostKeys(ctx, a.Host)
+	if err == nil && len(keys) == 0 {
+		err = fmt.Errorf("Host %q has no Host Key — generate or import one in Settings → Hosts", a.Host)
+	}
+	return keys, err
+}
+
+// decrypt decrypts the Encrypted Secrets in dir with keys (from syncKeys), explaining a key mismatch.
+func (c *Controller) decrypt(a domain.Application, dir string, keys []domain.HostKey) error {
+	ids, recipients := make([]string, len(keys)), make([]string, len(keys))
+	for i, k := range keys {
+		ids[i], recipients[i] = k.PrivateKey, k.Recipient
+	}
+	_, err := c.cfg.Secrets.DecryptDir(dir, ids)
+	var wk *domain.WrongKeyError
+	switch {
+	case err == nil:
+		return nil
+	case !errors.As(err, &wk):
+		return fmt.Errorf("decrypt secrets: %w", err)
+	case keys[0].Master:
+		return fmt.Errorf("%w; Host %q uses the Master Key %s — re-encrypt it for this Host (sops updatekeys)", wk, domain.LocalHost, recipients[0])
+	case len(keys) == 1:
+		return fmt.Errorf("%w; Host %q has key %s — re-encrypt it for this Host (sops updatekeys)", wk, a.Host, recipients[0])
+	default:
+		return fmt.Errorf("%w; Host %q has keys %s — re-encrypt it for this Host (sops updatekeys)", wk, a.Host, strings.Join(recipients, ", "))
+	}
+}
+
+// remoteHost checks that host is a stored Host: LocalHost's key is the Master Key, which is not managed here.
+func (c *Controller) remoteHost(ctx context.Context, host string) error {
+	if host == domain.LocalHost {
+		return fmt.Errorf("%w: the local Host uses the Master Key (OMEGACD_AGE_KEY_FILE)", domain.ErrInvalid)
+	}
+	_, err := c.cfg.Store.GetHost(ctx, host)
+	return err
+}
+
+func (c *Controller) HostKeys(ctx context.Context, host string) ([]domain.HostKey, error) {
+	if host != domain.LocalHost {
+		if _, err := c.cfg.Store.GetHost(ctx, host); err != nil {
+			return nil, err
+		}
+	}
+	keys, err := c.hostKeys(ctx, host)
+	for i := range keys {
+		keys[i].PrivateKey = ""
+	}
+	return keys, err
+}
+
+func (c *Controller) GenerateHostKey(ctx context.Context, host string) (domain.HostKey, error) {
+	if err := c.remoteHost(ctx, host); err != nil {
+		return domain.HostKey{}, err
+	}
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		return domain.HostKey{}, err
+	}
+	return c.addHostKey(ctx, host, id)
+}
+
+func (c *Controller) ImportHostKey(ctx context.Context, host, privateKey string) (domain.HostKey, error) {
+	if err := c.remoteHost(ctx, host); err != nil {
+		return domain.HostKey{}, err
+	}
+	// accepts a whole age-keygen file (with its "# public key" comments); the parse error is dropped so no key material is echoed
+	ids, err := age.ParseIdentities(strings.NewReader(privateKey))
+	var id *age.X25519Identity
+	if err == nil && len(ids) == 1 {
+		id, _ = ids[0].(*age.X25519Identity)
+	}
+	if id == nil {
+		return domain.HostKey{}, fmt.Errorf("%w: expected one age private key (AGE-SECRET-KEY-1...)", domain.ErrInvalid)
+	}
+	return c.addHostKey(ctx, host, id)
+}
+
+func (c *Controller) addHostKey(ctx context.Context, host string, id *age.X25519Identity) (domain.HostKey, error) {
+	k := domain.HostKey{Host: host, Recipient: id.Recipient().String(), PrivateKey: id.String(), Current: true, CreatedAt: time.Now().UTC()}
+	if err := c.cfg.Store.AddHostKey(ctx, k); err != nil {
+		return domain.HostKey{}, err
+	}
+	go c.reconcileHost(context.Background(), host) // clears "no Host Key" and lets Auto-Sync proceed
+	k.PrivateKey = ""
+	return k, nil
+}
+
+func (c *Controller) RemoveHostKey(ctx context.Context, host, recipient string) error {
+	if err := c.remoteHost(ctx, host); err != nil {
+		return err
+	}
+	keys, err := c.cfg.Store.ListHostKeys(ctx, host)
+	if err != nil {
+		return err
+	}
+	i := slices.IndexFunc(keys, func(k domain.HostKey) bool { return k.Recipient == recipient })
+	switch {
+	case i < 0:
+		return fmt.Errorf("host key %s: %w", recipient, domain.ErrNotFound)
+	case keys[i].Current:
+		return fmt.Errorf("%w: the current Host Key can't be removed — generate or import a new one first", domain.ErrInvalid)
+	}
+	return c.cfg.Store.DeleteHostKey(ctx, host, recipient)
 }

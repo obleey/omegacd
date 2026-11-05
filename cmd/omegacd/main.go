@@ -66,10 +66,6 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	defer st.Close()
-	sec, err := secrets.New(ageKeyFile)
-	if err != nil {
-		return err
-	}
 	knownHosts := cmp.Or(os.Getenv("OMEGACD_SSH_KNOWN_HOSTS"), "/etc/omegacd/known_hosts")
 	eng, err := engine.New(engine.Config{
 		Hosts:          st.GetHost,
@@ -86,7 +82,7 @@ func run(log *slog.Logger) error {
 
 	selfID, _ := os.Hostname() // inside a container this is the container ID prefix
 	ctl := controller.New(controller.Config{
-		Store: st, Git: git, Secrets: sec, Engine: eng,
+		Store: st, Git: git, Secrets: secrets.Decryptor{}, MasterKey: id, Engine: eng,
 		WorkDir: workDir, PollInterval: poll,
 		NormalizeURL: gitsrc.NormalizeURL,
 		ObserveSync:  api.ObserveSync,

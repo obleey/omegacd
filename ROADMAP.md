@@ -41,6 +41,7 @@ OmegaCD is early. This is the plan, most important first — it changes as real 
 
 - Docker Swarm
 - Agent mode for Hosts behind NAT or firewalls
+- Agent mode: Host Keys that never leave the Host (decrypt on the Host)
 - Web terminal into containers
 - OmegaCD upgrading itself
 

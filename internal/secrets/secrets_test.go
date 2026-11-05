@@ -1,15 +1,19 @@
 package secrets
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 
 	"filippo.io/age"
+
+	"github.com/obleey/omegacd/internal/domain"
 )
 
 func TestDecryptDir(t *testing.T) {
@@ -59,11 +63,7 @@ func TestDecryptDir(t *testing.T) {
 	}
 	before := inode(t, envOut)
 
-	d, err := New(keyFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	written, err := d.DecryptDir(dir)
+	written, err := Decryptor{}.DecryptDir(dir, []string{id.String()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,10 +96,6 @@ func TestDecryptDir(t *testing.T) {
 	if b, _ := os.ReadFile(envOut); strings.Contains(string(b), "old content") {
 		t.Fatal("not truncated")
 	}
-
-	if _, err := New(filepath.Join(tmp, "missing")); err == nil {
-		t.Fatal("missing key file should fail")
-	}
 }
 
 func inode(t *testing.T, path string) uint64 {
@@ -109,4 +105,94 @@ func inode(t *testing.T, path string) uint64 {
 		t.Fatal(err)
 	}
 	return st.Sys().(*syscall.Stat_t).Ino
+}
+
+// sopsEncrypt encrypts plain for the recipients with the sops CLI and writes it to dir/name.
+func sopsEncrypt(t *testing.T, dir, name, plain string, recipients ...string) {
+	t.Helper()
+	src := filepath.Join(t.TempDir(), strings.Replace(name, ".sops.", ".", 1))
+	if err := os.WriteFile(src, []byte(plain), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sops", "--encrypt", "--age", strings.Join(recipients, ","), src)
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + t.TempDir()}
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("sops encrypt %s: %v", name, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), out, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func newID(t *testing.T) *age.X25519Identity {
+	t.Helper()
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func TestDecryptDirUsesOnlyGivenIdentities(t *testing.T) {
+	if _, err := exec.LookPath("sops"); err != nil {
+		t.Skip("sops not on PATH")
+	}
+	// a key in the environment must never be used
+	stray := newID(t)
+	t.Setenv("SOPS_AGE_KEY", stray.String())
+	a, b := newID(t), newID(t)
+	dirA, dirB := t.TempDir(), t.TempDir()
+	sopsEncrypt(t, dirA, "a.sops.env", "WHO=a\n", a.Recipient().String())
+	sopsEncrypt(t, dirB, "b.sops.env", "WHO=b\n", b.Recipient().String(), stray.Recipient().String())
+
+	if _, err := (Decryptor{}).DecryptDir(dirA, []string{b.String()}); err == nil {
+		t.Fatal("a's file decrypted with b's key")
+	} else {
+		var wk *domain.WrongKeyError
+		if !errors.As(err, &wk) || wk.File != "a.sops.env" || !slices.Equal(wk.Recipients, []string{a.Recipient().String()}) {
+			t.Fatalf("%v", err)
+		}
+		if want := "a.sops.env is encrypted for " + a.Recipient().String(); err.Error() != want {
+			t.Fatalf("%q, want %q", err, want)
+		}
+	}
+	if _, err := (Decryptor{}).DecryptDir(dirB, nil); err == nil {
+		t.Fatal("decrypted without identities (environment key used?)")
+	}
+	// previous keys are tried after the current one
+	if _, err := (Decryptor{}).DecryptDir(dirA, []string{b.String(), a.String()}); err != nil {
+		t.Fatal(err)
+	}
+
+	// concurrent calls with different keys don't mix them
+	var wg sync.WaitGroup
+	errs := make(chan error, 40)
+	for range 10 {
+		wg.Go(func() { _, err := (Decryptor{}).DecryptDir(dirA, []string{a.String()}); errs <- err })
+		wg.Go(func() { _, err := (Decryptor{}).DecryptDir(dirB, []string{b.String()}); errs <- err })
+		wg.Go(func() {
+			if _, err := (Decryptor{}).DecryptDir(dirA, []string{b.String()}); err == nil {
+				errs <- errors.New("a decrypted with b")
+			}
+		})
+		wg.Go(func() {
+			if _, err := (Decryptor{}).DecryptDir(dirB, []string{a.String()}); err == nil {
+				errs <- errors.New("b decrypted with a")
+			}
+		})
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	for dir, who := range map[string]string{dirA: "a", dirB: "b"} {
+		got, _ := os.ReadFile(filepath.Join(dir, who+".env"))
+		if !strings.Contains(string(got), "WHO="+who) {
+			t.Fatalf("%s: %q", dir, got)
+		}
+	}
 }

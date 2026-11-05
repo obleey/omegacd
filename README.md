@@ -50,6 +50,8 @@ You have a few servers running `docker compose`, and deploying means SSH-ing in 
 | --- | --- |
 | ![Applications, light theme](assets/screenshots/applications-light.png) | <img src="assets/screenshots/mobile.png" alt="Applications on a phone" width="300"> |
 
+![Live container logs with ANSI colors and highlighted warnings and errors](assets/screenshots/logs.png)
+
 ## Install
 
 OmegaCD needs a Docker engine and an [age](https://github.com/FiloSottile/age) key. The key seals stored credentials and decrypts your SOPS secrets, so **back it up** — without it, stored credentials and encrypted secrets cannot be read.
@@ -77,7 +79,7 @@ volumes:
 ```
 
 ```sh
-age-keygen -o age.key && chmod 600 age.key   # also the key your *.sops.* files are encrypted to
+age-keygen -o age.key && chmod 600 age.key   # the Master Key: seals OmegaCD's stored secrets; Host Key of the local Host
 touch known_hosts                             # add hosts with ssh-keyscan when you use Git or Hosts over SSH
 docker compose up -d
 docker compose logs omegacd | grep "initial admin password"
@@ -251,6 +253,8 @@ Changes *inside* data folders and volumes never count as drift. Back up volumes 
 
 Public repositories need no setup; the New Application form checks access as you type (public / private with a credential / denied, with an inline *Add credential*). For private ones, add a credential under **Settings → Repository credentials** (for reading Git repositories), matched by URL prefix: a username and password/token for HTTPS, or an SSH private key. Private images need **Settings → Registry credentials** (for pulling Docker images), keyed by registry host such as `ghcr.io` — not a URL.
 
+![New Application form reporting a public repository](assets/screenshots/new-app.png)
+
 SSH host keys are always verified against the `known_hosts` file (`OMEGACD_SSH_KNOWN_HOSTS`, default `/etc/omegacd/known_hosts`):
 
 ```sh
@@ -264,13 +268,35 @@ Applications deploy to the built-in `local` Host by default. Add more Docker eng
 - **`ssh://deploy@server[:port]`** — give the Host an SSH private key for a user allowed to use Docker on the server. The server's host key must be in the same `known_hosts` file (`ssh-keyscan server >> known_hosts`).
 - **`tcp://server:2376`** — Docker over TLS; give the Host its CA, client certificate and key (PEM).
 
+Each remote Host gets its own [Host Key](#secrets) when it is added; nothing deploys to a Host without one.
+
 On Sync, the Application's files are copied to the Host's work dir (default `/var/lib/omegacd`, set per Host) so bind mounts, configs and secrets resolve there. It is on disk, so after the Host reboots its containers come back with their files; decrypted secret files are kept there too (mode 0600) — use disk encryption if that matters to you. Values from env files are stored by Docker in the container configuration in any case. To move an Application to another Host, delete and recreate it.
 
 ![Settings → Hosts](assets/screenshots/settings-hosts.png)
 
 ## Secrets
 
-Commit secrets encrypted with [SOPS](https://github.com/getsops/sops) to the age public key of OmegaCD's key (`age-keygen -y age.key` prints it). Any file whose name contains `.sops.` is decrypted at Sync time next to the encrypted file, with `.sops.` removed from the name — `app.sops.env` becomes `app.env`, `db-password.sops.txt` becomes `db-password.txt`:
+Commit secrets encrypted with [SOPS](https://github.com/getsops/sops) to the **Host Key** of the Host the Application deploys to. Each Host has its own age key, so a key leaked from one server exposes only that server's secrets:
+
+- **`local`** uses the **Master Key** — the age key in `OMEGACD_AGE_KEY_FILE` (`age-keygen -y age.key` prints its public key). It also encrypts everything OmegaCD stores, including the other Hosts' keys.
+- **Remote Hosts** get a Host Key generated when they are added; or import one made on the server with `age-keygen`. A remote Host without a Host Key accepts no Syncs.
+
+**Settings → Hosts** shows each Host's public key, and the **Keys** dialog has the ready `.sops.yaml` rule for it (**Copy .sops.yaml for all Hosts** gives one rule per Host). Private keys are never shown or downloadable, in the UI, API or CLI (`omegacd host key show|generate|import --file|remove`). Back up the Master Key together with the data directory: that is all it takes to restore every Host Key.
+
+```yaml
+# .sops.yaml — the paths are up to you
+creation_rules:
+  - path_regex: apps/prod/.*\.sops\.
+    age: age1...   # Host Key of "prod"
+  - path_regex: apps/local/.*\.sops\.
+    age: age1...   # the Master Key
+```
+
+Decryption uses age keys only: files encrypted solely with PGP or a cloud KMS are not decrypted.
+
+**Rotating a Host Key:** *Generate new key* (or import one) makes it current; the old key becomes *previous* and is still tried when decrypting, so Syncs keep working. Re-encrypt the Host's files with `sops updatekeys` after updating `.sops.yaml`, push, then remove the previous key. A file no key of its Host can decrypt fails the Sync with the keys it is encrypted for and the keys the Host has.
+
+Any file whose name contains `.sops.` is decrypted at Sync time next to the encrypted file, with `.sops.` removed from the name — `app.sops.env` becomes `app.env`, `db-password.sops.txt` becomes `db-password.txt`:
 
 ```sh
 sops encrypt --age age1... --input-type dotenv --output-type dotenv app.env > app.sops.env

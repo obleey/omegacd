@@ -68,28 +68,33 @@ var commands map[string]command
 
 func init() { // init breaks the cycle commands → run funcs → flags → commands
 	commands = map[string]command{
-		"login":        {"login --server URL --token TOKEN", (*CLI).login},
-		"logout":       {"logout", (*CLI).logout},
-		"version":      {"version", (*CLI).version},
-		"app list":     {"app list", (*CLI).appList},
-		"app get":      {"app get NAME", (*CLI).appGet},
-		"app create":   {"app create NAME --repo URL [--path P] [--revision R] [--file F]... [--profile P]... [--host H] [--kind apps] [--auto-sync] [--self-heal] [--prune [--prune-volumes]] [--adopt]\n  app create -f app.yaml", (*CLI).appCreate},
-		"app delete":   {"app delete NAME [--cascade=false | --volumes] [--yes]", (*CLI).appDelete},
-		"app sync":     {"app sync NAME [--prune] [--wait] [--no-health] [--timeout 10m]", (*CLI).appSync},
-		"app refresh":  {"app refresh NAME", (*CLI).appRefresh},
-		"app diff":     {"app diff NAME", (*CLI).appDiff},
-		"app history":  {"app history NAME", (*CLI).appHistory},
-		"app rollback": {"app rollback NAME OP_ID [--wait] [--no-health] [--timeout 10m]", (*CLI).appRollback},
-		"app wait":     {"app wait NAME [--sync] [--health] [--timeout 10m]", (*CLI).appWait},
-		"app logs":     {"app logs NAME [CONTAINER_OR_SERVICE] [-f] [--tail N]", (*CLI).appLogs},
-		"app export":   {"app export NAME", (*CLI).appExport},
-		"host list":    {"host list", (*CLI).hostList},
-		"host test":    {"host test NAME", (*CLI).hostTest},
+		"login":             {"login --server URL --token TOKEN", (*CLI).login},
+		"logout":            {"logout", (*CLI).logout},
+		"version":           {"version", (*CLI).version},
+		"app list":          {"app list", (*CLI).appList},
+		"app get":           {"app get NAME", (*CLI).appGet},
+		"app create":        {"app create NAME --repo URL [--path P] [--revision R] [--file F]... [--profile P]... [--host H] [--kind apps] [--auto-sync] [--self-heal] [--prune [--prune-volumes]] [--adopt]\n  app create -f app.yaml", (*CLI).appCreate},
+		"app delete":        {"app delete NAME [--cascade=false | --volumes] [--yes]", (*CLI).appDelete},
+		"app sync":          {"app sync NAME [--prune] [--wait] [--no-health] [--timeout 10m]", (*CLI).appSync},
+		"app refresh":       {"app refresh NAME", (*CLI).appRefresh},
+		"app diff":          {"app diff NAME", (*CLI).appDiff},
+		"app history":       {"app history NAME", (*CLI).appHistory},
+		"app rollback":      {"app rollback NAME OP_ID [--wait] [--no-health] [--timeout 10m]", (*CLI).appRollback},
+		"app wait":          {"app wait NAME [--sync] [--health] [--timeout 10m]", (*CLI).appWait},
+		"app logs":          {"app logs NAME [CONTAINER_OR_SERVICE] [-f] [--tail N]", (*CLI).appLogs},
+		"app export":        {"app export NAME", (*CLI).appExport},
+		"host list":         {"host list", (*CLI).hostList},
+		"host test":         {"host test NAME", (*CLI).hostTest},
+		"host key show":     {"host key show HOST", (*CLI).hostKeyShow},
+		"host key generate": {"host key generate HOST", (*CLI).hostKeyGenerate},
+		"host key import":   {"host key import HOST --file PATH   (the private key is read from the file, or - for stdin)", (*CLI).hostKeyImport},
+		"host key remove":   {"host key remove HOST RECIPIENT   (a previous key only)", (*CLI).hostKeyRemove},
 	}
 }
 
 var order = []string{"login", "logout", "version", "app list", "app get", "app create", "app delete", "app sync", "app refresh",
-	"app diff", "app history", "app rollback", "app wait", "app logs", "app export", "host list", "host test"}
+	"app diff", "app history", "app rollback", "app wait", "app logs", "app export", "host list", "host test",
+	"host key show", "host key generate", "host key import", "host key remove"}
 
 func (c *CLI) usage() {
 	fmt.Fprintln(c.Stderr, "Usage: omegacd [server]   run the server\n       omegacd COMMAND   talk to a server\n\nCommands:")
@@ -105,6 +110,9 @@ func (c *CLI) Run(ctx context.Context, args []string) int {
 	if len(args) > 0 {
 		name, rest = args[0], args[1:]
 		if (name == "app" || name == "host") && len(rest) > 0 {
+			name, rest = name+" "+rest[0], rest[1:]
+		}
+		if name == "host key" && len(rest) > 0 {
 			name, rest = name+" "+rest[0], rest[1:]
 		}
 	}

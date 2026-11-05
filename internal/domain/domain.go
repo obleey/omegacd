@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"time"
 )
 
@@ -140,6 +141,30 @@ type HostView struct {
 	Host
 	Status HostStatus `json:"status"`
 	Apps   []string   `json:"apps"`
+	// KeyRecipient is the public key of the Host's current Host Key (the Master Key for LocalHost), "" if it has none.
+	KeyRecipient string `json:"keyRecipient"`
+}
+
+// HostKey is an age X25519 key pair Encrypted Secrets for one Host are decrypted with.
+// A Host has at most one Current key; the others are previous keys kept for decryption during a rotation.
+// PrivateKey (AGE-SECRET-KEY-1...) is sealed at rest and never leaves the control plane.
+type HostKey struct {
+	Host       string    `json:"-"`
+	Recipient  string    `json:"recipient"` // age1...
+	PrivateKey string    `json:"-"`
+	Current    bool      `json:"current"`
+	Master     bool      `json:"master,omitempty"` // the Master Key, which is LocalHost's Host Key
+	CreatedAt  time.Time `json:"createdAt,omitzero"`
+}
+
+// WrongKeyError is returned by Secrets.DecryptDir when none of the given identities can decrypt File.
+type WrongKeyError struct {
+	File       string   // relative to the decrypted dir
+	Recipients []string // the keys File is encrypted for
+}
+
+func (e *WrongKeyError) Error() string {
+	return e.File + " is encrypted for " + strings.Join(e.Recipients, ", ")
 }
 
 type RegistryCredential struct {
@@ -276,8 +301,14 @@ type Store interface {
 	// Hosts: secrets are sealed at rest; empty secret fields on save keep the old value.
 	ListHosts(ctx context.Context) ([]Host, error)
 	GetHost(ctx context.Context, name string) (Host, error)
-	SaveHost(ctx context.Context, h Host) error // create or update by Name
-	DeleteHost(ctx context.Context, name string) error
+	SaveHost(ctx context.Context, h Host) error        // create or update by Name
+	DeleteHost(ctx context.Context, name string) error // also deletes its Host Keys
+
+	// Host Keys: PrivateKey is sealed at rest. ListHostKeys returns the current key first, then the previous ones, newest first.
+	ListHostKeys(ctx context.Context, host string) ([]HostKey, error)
+	// AddHostKey stores k as the Host's current key; the old current key becomes previous. ErrAlreadyExists if the Host has it already.
+	AddHostKey(ctx context.Context, k HostKey) error
+	DeleteHostKey(ctx context.Context, host, recipient string) error
 
 	ListTokens(ctx context.Context) ([]APIToken, error)
 	CreateToken(ctx context.Context, name string) (APIToken, string, error) // returns plaintext once
@@ -319,7 +350,9 @@ type Git interface {
 // Secrets decrypts Encrypted Secrets (*.sops.* files) in a directory.
 type Secrets interface {
 	// DecryptDir writes each "x.sops.ext" as "x.ext" (mode 0600) next to it and returns the written paths.
-	DecryptDir(dir string) ([]string, error)
+	// identities are age secret keys (AGE-SECRET-KEY-1...), tried in order; only they are used.
+	// A file none of them can decrypt fails with a *WrongKeyError.
+	DecryptDir(dir string, identities []string) ([]string, error)
 }
 
 type SyncOptions struct {
@@ -401,6 +434,13 @@ type Controller interface {
 	// DeleteHost refuses (ErrInvalid) while Applications use the Host.
 	DeleteHost(ctx context.Context, name string) error
 	TestHost(ctx context.Context, name string) (HostStatus, error)
+	// HostKeys lists a Host's keys without private keys (LocalHost: just the Master Key).
+	HostKeys(ctx context.Context, host string) ([]HostKey, error)
+	// GenerateHostKey and ImportHostKey (an AGE-SECRET-KEY-1... string) add a new current key; the old one becomes previous.
+	GenerateHostKey(ctx context.Context, host string) (HostKey, error)
+	ImportHostKey(ctx context.Context, host, privateKey string) (HostKey, error)
+	// RemoveHostKey removes a previous key (ErrInvalid for the current one).
+	RemoveHostKey(ctx context.Context, host, recipient string) error
 	// CheckRepo reports whether repoURL can be read (ErrInvalid if empty).
 	CheckRepo(ctx context.Context, repoURL string) (RepoAccess, error)
 }

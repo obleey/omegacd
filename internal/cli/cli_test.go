@@ -323,3 +323,39 @@ func TestSyncPrune(t *testing.T) {
 		t.Fatalf("--prune: %+v %v", r, f.bodies)
 	}
 }
+
+func TestHostKeys(t *testing.T) {
+	f, srv := newAPI(t, map[string]any{
+		"GET /api/settings/hosts/prod/keys": []domain.HostKey{
+			{Recipient: "age1new", Current: true, CreatedAt: time.Now()}, {Recipient: "age1old"},
+		},
+		"POST /api/settings/hosts/prod/keys/import":    domain.HostKey{Recipient: "age1imported", Current: true},
+		"POST /api/settings/hosts/prod/keys/generate":  domain.HostKey{Recipient: "age1generated", Current: true},
+		"DELETE /api/settings/hosts/prod/keys/age1old": nil,
+	})
+	if r := run(t, srv, nil, "", "host", "key", "show", "prod"); r.code != 0 ||
+		!strings.Contains(r.stdout, "age1new") || !strings.Contains(r.stdout, "current") || !strings.Contains(r.stdout, "previous") {
+		t.Fatalf("show: %+v", r)
+	}
+	file := filepath.Join(t.TempDir(), "prod.key")
+	os.WriteFile(file, []byte("# public key: age1imported\nAGE-SECRET-KEY-1SECRET\n"), 0o600)
+	if r := run(t, srv, nil, "", "host", "key", "import", "prod", "--file", file); r.code != 0 || !strings.Contains(r.stdout, "age1imported") {
+		t.Fatalf("import: %+v", r)
+	}
+	var body map[string]string
+	if len(f.bodies) != 1 || json.Unmarshal([]byte(f.bodies[0]), &body) != nil || body["privateKey"] != "# public key: age1imported\nAGE-SECRET-KEY-1SECRET\n" {
+		t.Fatalf("import body: %v", f.bodies)
+	}
+	if r := run(t, srv, nil, "", "host", "key", "import", "prod"); r.code != 1 || !strings.Contains(r.stderr, "--file is required") {
+		t.Fatalf("import without --file: %+v", r)
+	}
+	if r := run(t, srv, nil, "", "host", "key", "generate", "prod"); r.code != 0 || !strings.Contains(r.stdout, "age1generated") {
+		t.Fatalf("generate: %+v", r)
+	}
+	if r := run(t, srv, nil, "", "host", "key", "remove", "prod", "age1old"); r.code != 0 || !f.called("DELETE /api/settings/hosts/prod/keys/age1old") {
+		t.Fatalf("remove: %+v", r)
+	}
+	if r := run(t, srv, nil, "", "host", "key", "nope"); r.code != 2 {
+		t.Fatalf("unknown subcommand: %+v", r)
+	}
+}

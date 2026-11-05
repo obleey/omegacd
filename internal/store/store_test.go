@@ -332,3 +332,40 @@ func TestHosts(t *testing.T) {
 	must(t, s.DeleteHost(ctx, "prod"))
 	wantErr(t, s.DeleteHost(ctx, "prod"), domain.ErrNotFound)
 }
+
+func TestHostKeys(t *testing.T) {
+	s, _ := open(t)
+	wantErr(t, s.AddHostKey(ctx, domain.HostKey{Host: "prod", Recipient: "age1a", PrivateKey: "AGE-SECRET-KEY-A"}), domain.ErrNotFound)
+	must(t, s.SaveHost(ctx, domain.Host{Name: "prod", URL: "ssh://deploy@prod"}))
+	must(t, s.SaveHost(ctx, domain.Host{Name: "other", URL: "ssh://deploy@other"}))
+	must(t, s.AddHostKey(ctx, domain.HostKey{Host: "prod", Recipient: "age1a", PrivateKey: "AGE-SECRET-KEY-A"}))
+	must(t, s.AddHostKey(ctx, domain.HostKey{Host: "other", Recipient: "age1o", PrivateKey: "AGE-SECRET-KEY-O"}))
+	must(t, s.AddHostKey(ctx, domain.HostKey{Host: "prod", Recipient: "age1b", PrivateKey: "AGE-SECRET-KEY-B"}))
+	wantErr(t, s.AddHostKey(ctx, domain.HostKey{Host: "prod", Recipient: "age1a", PrivateKey: "AGE-SECRET-KEY-A"}), domain.ErrAlreadyExists)
+
+	keys, err := s.ListHostKeys(ctx, "prod")
+	must(t, err)
+	if len(keys) != 2 || keys[0].Recipient != "age1b" || !keys[0].Current || keys[0].PrivateKey != "AGE-SECRET-KEY-B" ||
+		keys[1].Recipient != "age1a" || keys[1].Current || keys[1].PrivateKey != "AGE-SECRET-KEY-A" || keys[0].CreatedAt.IsZero() {
+		t.Fatalf("%+v", keys)
+	}
+	// the failed duplicate insert must not have demoted the current key
+	if keys, _ := s.ListHostKeys(ctx, "other"); len(keys) != 1 || !keys[0].Current {
+		t.Fatalf("%+v", keys)
+	}
+
+	var plain int
+	must(t, s.db.QueryRow(`SELECT count(*) FROM host_keys WHERE private_key LIKE '%AGE-SECRET-KEY%'`).Scan(&plain))
+	if plain != 0 {
+		t.Fatal("private key stored in plaintext")
+	}
+
+	must(t, s.DeleteHostKey(ctx, "prod", "age1a"))
+	wantErr(t, s.DeleteHostKey(ctx, "prod", "age1a"), domain.ErrNotFound)
+	must(t, s.DeleteHost(ctx, "prod"))
+	var left int
+	must(t, s.db.QueryRow(`SELECT count(*) FROM host_keys WHERE host = 'prod'`).Scan(&left))
+	if left != 0 {
+		t.Fatalf("%d keys left after deleting the Host", left)
+	}
+}

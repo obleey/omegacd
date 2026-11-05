@@ -26,6 +26,7 @@ export const statusMeta: Record<string, [Tone, IconName, boolean?]> = {
 	// Host connection
 	Connected: ['green', 'check-circle'],
 	Disconnected: ['red', 'x-circle'],
+	'No Host Key': ['red', 'x-circle'],
 	// container state
 	running: ['green', 'check-circle'],
 	restarting: ['yellow', 'notch', true],

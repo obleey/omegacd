@@ -1,9 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api, ago, enc, errMsg, get, type APIToken, type HostStatus, type HostView, type RegistryCredential, type RepoCredential } from '#lib/api.ts';
+	import { api, ago, enc, errMsg, get, type APIToken, type HostKey, type HostStatus, type HostView, type RegistryCredential, type RepoCredential } from '#lib/api.ts';
 	import Badge from '#lib/Badge.svelte';
+	import Dialog from '#lib/Dialog.svelte';
+	import { shortKey, sopsYaml } from '#lib/hostkeys.ts';
 	import Icon from '#lib/Icon.svelte';
-	import { toastError } from '#lib/toast.svelte.ts';
+	import { toast, toastError } from '#lib/toast.svelte.ts';
 
 	let repos = $state<RepoCredential[]>([]);
 	let regs = $state<RegistryCredential[]>([]);
@@ -100,6 +102,56 @@
 		await navigator.clipboard.writeText(newToken);
 		copied = true;
 	}
+	async function copyText(text: string, what: string) {
+		try {
+			await navigator.clipboard.writeText(text);
+			toast('green', `${what} copied`);
+		} catch (e) {
+			toastError(e, `Copying ${what} failed`);
+		}
+	}
+
+	// Host Keys dialog. Only public keys ever reach the browser; an imported private key is cleared once sent.
+	let keysOpen = $state(false);
+	let keysHost = $state('');
+	let keys = $state<HostKey[] | null>(null);
+	let importKey = $state('');
+	let current = $derived(keys?.find((k) => k.current));
+	let previous = $derived(keys?.filter((k) => !k.current) ?? []);
+	let allSops = $derived(sopsYaml(hosts.map((h) => ({ name: h.name, recipient: h.keyRecipient }))));
+	const keysPath = () => `/settings/hosts/${enc(keysHost)}/keys`;
+
+	async function loadKeys() {
+		try {
+			keys = (await get<HostKey[]>(keysPath())) ?? [];
+		} catch (e) {
+			toastError(e, `Loading the keys of ${keysHost} failed`);
+		}
+	}
+	function openKeys(name: string) {
+		keysHost = name;
+		keys = null;
+		importKey = '';
+		keysOpen = true;
+		loadKeys();
+	}
+	async function keyAction(fn: () => Promise<unknown>) {
+		if (await run(fn)) await loadKeys();
+	}
+	function generateKey() {
+		if (confirm(`Generate a new Host Key for “${keysHost}”?\n\nThe current key becomes previous; re-encrypt your files with sops updatekeys, then remove it.`))
+			keyAction(() => api('POST', `${keysPath()}/generate`));
+	}
+	function importHostKey(e: SubmitEvent) {
+		e.preventDefault();
+		const privateKey = importKey;
+		importKey = '';
+		keyAction(() => api('POST', `${keysPath()}/import`, { privateKey }));
+	}
+	function removeKey(recipient: string) {
+		if (confirm(`Remove the previous key ${shortKey(recipient)} of “${keysHost}”?\n\nFiles still encrypted only for it can no longer be decrypted.`))
+			keyAction(() => api('DELETE', `${keysPath()}/${enc(recipient)}`));
+	}
 </script>
 
 <svelte:head><title>Settings · OmegaCD</title></svelte:head>
@@ -110,9 +162,11 @@
 
 <section class="card">
 	<h2><span class="hicon"><Icon name="server" size={17} /></span>Hosts</h2>
-	<p class="muted small">Docker engines Applications deploy to. Secrets are stored encrypted and never shown.</p>
+	<p class="muted small">Docker engines Applications deploy to. Secrets are stored encrypted and never shown.
+		Each Host has its own Host Key: OmegaCD decrypts the Encrypted Secrets of the Host's Applications with it, so encrypt them for that key in <code>.sops.yaml</code>. Private keys are never shown.</p>
+	<div class="row tools"><button onclick={() => copyText(allSops, '.sops.yaml')}>Copy .sops.yaml for all Hosts</button></div>
 	<div class="scroll-x"><table>
-		<thead><tr><th>Name</th><th>URL</th><th>Work dir</th><th>Connection</th><th>Applications</th><th><span class="sr-only">Actions</span></th></tr></thead>
+		<thead><tr><th>Name</th><th>URL</th><th>Work dir</th><th>Connection</th><th>Host Key</th><th>Applications</th><th><span class="sr-only">Actions</span></th></tr></thead>
 		<tbody>
 			{#each hosts as h (h.name)}
 				{@const local = h.name === 'local'}
@@ -124,9 +178,21 @@
 						<Badge status={h.status.connected ? 'Connected' : 'Disconnected'} label="Connection" />
 						<div class="muted small">{h.status.connected ? `Docker ${h.status.serverVersion ?? ''}` : h.status.error}</div>
 					</td>
+					<td>
+						{#if h.keyRecipient}
+							<span class="keycell">
+								<code title={h.keyRecipient}>{shortKey(h.keyRecipient)}</code>
+								<button class="ghost sm" onclick={() => copyText(h.keyRecipient, `Public key of ${h.name}`)} aria-label="Copy the public key of {h.name}">Copy</button>
+							</span>
+							{#if local}<div class="muted small">Master Key</div>{/if}
+						{:else}
+							<Badge status="No Host Key" text="No Host Key — Syncs fail" />
+						{/if}
+					</td>
 					<td>{h.apps.join(', ') || '—'}</td>
 					<td class="right">
 						<button onclick={() => testHost(h.name)} disabled={testing[h.name]}>{testing[h.name] ? 'Testing…' : 'Test'}</button>
+						<button onclick={() => openKeys(h.name)} aria-label="Keys of {h.name}">Keys</button>
 						{#if local}
 							<span class="muted small" title="The local work dir must match how OmegaCD was started (and, in Docker, its volume mount), so it is set at startup, not here.">set at startup (<code>OMEGACD_WORKDIR</code>)</span>
 						{:else}
@@ -183,6 +249,55 @@
 		</div>
 	</form>
 </section>
+
+<Dialog bind:open={keysOpen} title="Host Keys of {keysHost}" wide>
+	{#if keysHost === 'local'}
+		<p class="muted small">The local Host uses the Master Key (<code>OMEGACD_AGE_KEY_FILE</code>), which also seals OmegaCD's stored secrets. It is set at startup and can't be changed here.</p>
+	{/if}
+	{#if keys === null}
+		<p class="muted small" role="status">Loading…</p>
+	{:else if current}
+		<h3 class="dh">Current public key</h3>
+		<div class="row keyrow">
+			<code class="tok">{current.recipient}</code>
+			<button onclick={() => copyText(current!.recipient, 'Public key')}>Copy</button>
+		</div>
+		<h3 class="dh">.sops.yaml rule</h3>
+		<pre class="tok">{sopsYaml([{ name: keysHost, recipient: current.recipient }])}</pre>
+		<div class="row"><button onclick={() => copyText(sopsYaml([{ name: keysHost, recipient: current!.recipient }]), '.sops.yaml rule')}>Copy rule</button></div>
+	{:else}
+		<p><Badge status="No Host Key" text="No Host Key — Syncs fail" /></p>
+		<p class="muted small">Nothing deploys to this Host until it has a Host Key. Generate one, or import a key generated on the server.</p>
+	{/if}
+	{#if previous.length}
+		<h3 class="dh">Previous keys</h3>
+		<p class="muted small">Still tried when decrypting, so Syncs keep working while you re-encrypt with <code>sops updatekeys</code>. Remove a key once no file needs it.</p>
+		<ul class="prev">
+			{#each previous as k (k.recipient)}
+				<li class="row">
+					<code class="tok">{k.recipient}</code>
+					{#if k.createdAt}<span class="muted small">{ago(k.createdAt)}</span>{/if}
+					<button class="danger" onclick={() => removeKey(k.recipient)} aria-label="Remove previous key {shortKey(k.recipient)}">Remove</button>
+				</li>
+			{/each}
+		</ul>
+	{/if}
+	{#if keysHost !== 'local'}
+		<h3 class="dh">Rotate</h3>
+		<div class="row"><button onclick={generateKey}>Generate new key</button></div>
+		<form class="import" onsubmit={importHostKey}>
+			<div class="field">
+				<label for="hk-import">Import key</label>
+				<textarea id="hk-import" bind:value={importKey} rows="3" required autocomplete="off" spellcheck="false" placeholder="AGE-SECRET-KEY-1…"></textarea>
+				<span class="hint">An age private key, e.g. made on the server with <code>age-keygen</code>. It becomes the current key, is stored encrypted and is never shown again.</span>
+			</div>
+			<button type="submit">Import key</button>
+		</form>
+	{/if}
+	{#snippet actions()}
+		<button onclick={() => (keysOpen = false)}>Close</button>
+	{/snippet}
+</Dialog>
 
 <section class="card">
 	<h2><span class="hicon"><Icon name="folder" size={17} /></span>Repository credentials <span class="muted small">— for reading Git repositories</span></h2>
@@ -328,4 +443,13 @@
 	.newtoken { border: 1px solid color-mix(in srgb, var(--green) 45%, transparent); background: color-mix(in srgb, var(--green) 10%, transparent); border-radius: var(--radius); padding: 0.6rem 0.8rem; margin-bottom: 1rem; }
 	.newtoken p { margin: 0 0 0.4rem; }
 	.tok { background: var(--crust); padding: 0.3rem 0.5rem; border-radius: 4px; word-break: break-all; flex: 1; }
+	pre.tok { margin: 0 0 0.5rem; white-space: pre-wrap; }
+	.tools { margin-bottom: 0.6rem; }
+	.keycell { display: inline-flex; align-items: center; gap: 0.3rem; white-space: nowrap; }
+	button.sm { padding: 0.1rem 0.45rem; font-size: 0.78rem; }
+	.dh { margin: 1rem 0 0.4rem; font-size: 0.95rem; }
+	.keyrow { flex-wrap: nowrap; }
+	.prev { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.4rem; }
+	.prev li { flex-wrap: nowrap; }
+	.import { margin-top: 0.8rem; }
 </style>

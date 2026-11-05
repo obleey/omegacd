@@ -99,6 +99,15 @@ ALTER TABLE apps ADD COLUMN parent TEXT NOT NULL DEFAULT '';
 ALTER TABLE apps ADD COLUMN not_in_git INTEGER NOT NULL DEFAULT 0;
 `, `
 ALTER TABLE apps ADD COLUMN prune_volumes INTEGER NOT NULL DEFAULT 0;
+`, `
+CREATE TABLE host_keys (
+	host TEXT NOT NULL REFERENCES hosts(name) ON DELETE CASCADE,
+	recipient TEXT NOT NULL,
+	private_key TEXT NOT NULL,
+	current INTEGER NOT NULL,
+	created_at INTEGER NOT NULL,
+	PRIMARY KEY (host, recipient)
+);
 `}
 
 type Store struct {
@@ -502,6 +511,63 @@ func (s *Store) SaveHost(ctx context.Context, h domain.Host) error {
 
 func (s *Store) DeleteHost(ctx context.Context, name string) error {
 	return affected(s.db.ExecContext(ctx, `DELETE FROM hosts WHERE name = ?`, name))
+}
+
+// ---- host keys ----
+
+func (s *Store) ListHostKeys(ctx context.Context, host string) ([]domain.HostKey, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT recipient, private_key, current, created_at FROM host_keys
+		WHERE host = ? ORDER BY current DESC, rowid DESC`, host)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	keys := []domain.HostKey{}
+	for rows.Next() {
+		k := domain.HostKey{Host: host}
+		var sealed string
+		var created int64
+		if err := rows.Scan(&k.Recipient, &sealed, &k.Current, &created); err != nil {
+			return nil, err
+		}
+		k.CreatedAt = fromUnix(created)
+		if k.PrivateKey, err = s.sealer.Open(sealed); err != nil {
+			return nil, fmt.Errorf("open host key %s of %s: %w", k.Recipient, host, err)
+		}
+		keys = append(keys, k)
+	}
+	return keys, rows.Err()
+}
+
+func (s *Store) AddHostKey(ctx context.Context, k domain.HostKey) error {
+	sealed, err := s.sealer.Seal(k.PrivateKey)
+	if err != nil {
+		return err
+	}
+	if k.CreatedAt.IsZero() {
+		k.CreatedAt = time.Now()
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE host_keys SET current = 0 WHERE host = ?`, k.Host); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO host_keys (host, recipient, private_key, current, created_at) VALUES (?,?,?,1,?)`,
+		k.Host, k.Recipient, sealed, toUnix(k.CreatedAt)); err != nil {
+		var se *sqlite.Error
+		if errors.As(err, &se) && se.Code() == sqlite3.SQLITE_CONSTRAINT_FOREIGNKEY {
+			return domain.ErrNotFound
+		}
+		return mapErr(err)
+	}
+	return tx.Commit()
+}
+
+func (s *Store) DeleteHostKey(ctx context.Context, host, recipient string) error {
+	return affected(s.db.ExecContext(ctx, `DELETE FROM host_keys WHERE host = ? AND recipient = ?`, host, recipient))
 }
 
 // ---- tokens ----

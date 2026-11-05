@@ -676,9 +676,9 @@ func (c *CLI) hostList(ctx context.Context, args []string) error {
 			u = "(docker socket)"
 		}
 		rows = append(rows, []string{h.Name, u, strconv.FormatBool(h.Status.Connected), h.Status.ServerVersion,
-			strconv.Itoa(h.Status.Containers), strings.Join(h.Apps, ", ")})
+			strconv.Itoa(h.Status.Containers), cmp.Or(h.KeyRecipient, "(none)"), strings.Join(h.Apps, ", ")})
 	}
-	c.table([]string{"NAME", "URL", "CONNECTED", "VERSION", "CONTAINERS", "APPS"}, rows, 2)
+	c.table([]string{"NAME", "URL", "CONNECTED", "VERSION", "CONTAINERS", "HOST KEY", "APPS"}, rows, 2)
 	return nil
 }
 
@@ -707,4 +707,105 @@ func (c *CLI) hostTest(ctx context.Context, args []string) error {
 		return fmt.Errorf("%s: %s", pos[0], cmp.Or(st.Error, "not connected"))
 	}
 	return nil
+}
+
+func hostKeysPath(host string) string { return "/api/settings/hosts/" + url.PathEscape(host) + "/keys" }
+
+func (c *CLI) hostKeyShow(ctx context.Context, args []string) error {
+	var o opts
+	pos, err := parse(c.flags("host key show", &o), args, 1, 1)
+	if err != nil {
+		return err
+	}
+	cl, err := c.client(o)
+	if err != nil {
+		return err
+	}
+	var keys []domain.HostKey
+	if err := cl.do(ctx, "GET", hostKeysPath(pos[0]), nil, &keys); err != nil {
+		return err
+	}
+	if o.output == "json" {
+		return c.printJSON(keys)
+	}
+	if len(keys) == 0 {
+		return fmt.Errorf("Host %q has no Host Key — run: omegacd host key generate %s", pos[0], pos[0])
+	}
+	var rows [][]string
+	for _, k := range keys {
+		status, created := "previous", ""
+		switch {
+		case k.Master:
+			status = "current (Master Key)"
+		case k.Current:
+			status = "current"
+		}
+		if !k.CreatedAt.IsZero() {
+			created = k.CreatedAt.Local().Format(time.DateTime)
+		}
+		rows = append(rows, []string{k.Recipient, status, created})
+	}
+	c.table([]string{"RECIPIENT", "STATUS", "CREATED"}, rows)
+	return nil
+}
+
+func (c *CLI) hostKeyGenerate(ctx context.Context, args []string) error {
+	var o opts
+	pos, err := parse(c.flags("host key generate", &o), args, 1, 1)
+	if err != nil {
+		return err
+	}
+	return c.addHostKey(ctx, o, pos[0], "generate", nil)
+}
+
+func (c *CLI) hostKeyImport(ctx context.Context, args []string) error {
+	var o opts
+	fs := c.flags("host key import", &o)
+	file := fs.String("file", "", "file holding the age private key (AGE-SECRET-KEY-1...), - for stdin")
+	pos, err := parse(fs, args, 1, 1)
+	if err != nil {
+		return err
+	}
+	if *file == "" {
+		return errors.New("--file is required (the private key is never taken from the command line)")
+	}
+	var b []byte
+	if *file == "-" {
+		b, err = io.ReadAll(c.Stdin)
+	} else {
+		b, err = os.ReadFile(*file)
+	}
+	if err != nil {
+		return err
+	}
+	return c.addHostKey(ctx, o, pos[0], "import", map[string]string{"privateKey": string(b)})
+}
+
+func (c *CLI) addHostKey(ctx context.Context, o opts, host, action string, body any) error {
+	cl, err := c.client(o)
+	if err != nil {
+		return err
+	}
+	var k domain.HostKey
+	if err := cl.do(ctx, "POST", hostKeysPath(host)+"/"+action, body, &k); err != nil {
+		return err
+	}
+	if o.output == "json" {
+		return c.printJSON(k)
+	}
+	fmt.Fprintf(c.Stdout, "%s: current Host Key is now %s\nAdd it to .sops.yaml, run sops updatekeys on the Host's files, then remove the previous key.\n", host, k.Recipient)
+	return nil
+}
+
+func (c *CLI) hostKeyRemove(ctx context.Context, args []string) error {
+	var o opts
+	pos, err := parse(c.flags("host key remove", &o), args, 2, 2)
+	if err != nil {
+		return err
+	}
+	cl, err := c.client(o)
+	if err != nil {
+		return err
+	}
+	return cl.do(ctx, "DELETE", hostKeysPath(pos[0])+"/"+url.PathEscape(pos[1]), nil, nil)
 }

@@ -146,6 +146,15 @@ export interface HostView {
 	hasTLS: boolean;
 	status: HostStatus;
 	apps: string[];
+	keyRecipient: string; // current Host Key (the Master Key for local); "" if none
+}
+
+/** A Host Key's public half; private keys never leave the server. */
+export interface HostKey {
+	recipient: string;
+	current: boolean;
+	master?: boolean; // the Master Key: local's Host Key
+	createdAt?: string;
 }
 
 export interface APIToken {

@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"filippo.io/age"
+
 	"github.com/obleey/omegacd/internal/domain"
 )
 
@@ -24,10 +26,34 @@ type fakeStore struct {
 	apps         map[string]domain.Application
 	ops          []domain.SyncOperation
 	hosts        map[string]domain.Host
+	hostKeys     map[string][]domain.HostKey // current first
 }
 
 func newStore() *fakeStore {
-	return &fakeStore{apps: map[string]domain.Application{}, hosts: map[string]domain.Host{}}
+	return &fakeStore{apps: map[string]domain.Application{}, hosts: map[string]domain.Host{}, hostKeys: map[string][]domain.HostKey{}}
+}
+
+func (s *fakeStore) ListHostKeys(_ context.Context, host string) ([]domain.HostKey, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.hostKeys[host]), nil
+}
+func (s *fakeStore) AddHostKey(_ context.Context, k domain.HostKey) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	keys := s.hostKeys[k.Host]
+	for i := range keys {
+		keys[i].Current = false
+	}
+	k.Current = true
+	s.hostKeys[k.Host] = append([]domain.HostKey{k}, keys...)
+	return nil
+}
+func (s *fakeStore) DeleteHostKey(_ context.Context, host, recipient string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.hostKeys[host] = slices.DeleteFunc(s.hostKeys[host], func(k domain.HostKey) bool { return k.Recipient == recipient })
+	return nil
 }
 
 func (s *fakeStore) ListHosts(context.Context) ([]domain.Host, error) {
@@ -195,9 +221,31 @@ func (g *fakeGit) define(sha, defs string) {
 	g.mu.Unlock()
 }
 
-type fakeSecrets struct{}
+// fakeSecrets records the identities of each DecryptDir call; with need set, it fails unless need is among them.
+type fakeSecrets struct {
+	mu    sync.Mutex
+	calls [][]string
+	need  string
+}
 
-func (fakeSecrets) DecryptDir(string) ([]string, error) { return nil, nil }
+func (f *fakeSecrets) DecryptDir(_ string, ids []string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, ids)
+	if f.need != "" && !slices.Contains(ids, f.need) {
+		return nil, &domain.WrongKeyError{File: "db.sops.env", Recipients: []string{"age1other"}}
+	}
+	return nil, nil
+}
+
+func (f *fakeSecrets) lastCall() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.calls) == 0 {
+		return nil
+	}
+	return f.calls[len(f.calls)-1]
+}
 
 type fakeEngine struct {
 	mu           sync.Mutex
@@ -290,16 +338,22 @@ func (e *fakeEngine) Close() error   { return nil }
 func (e *fakeEngine) syncCount() int { e.mu.Lock(); defer e.mu.Unlock(); return e.syncs }
 
 type rig struct {
-	c  *Controller
-	st *fakeStore
-	g  *fakeGit
-	e  *fakeEngine
+	c      *Controller
+	st     *fakeStore
+	g      *fakeGit
+	e      *fakeEngine
+	sec    *fakeSecrets
+	master *age.X25519Identity
 }
 
 func newRig(t *testing.T) rig {
 	t.Helper()
-	r := rig{st: newStore(), g: &fakeGit{sha: "aaaaaaaa"}, e: &fakeEngine{live: domain.LiveState{Health: domain.Healthy}}}
-	r.c = New(Config{Store: r.st, Git: r.g, Secrets: fakeSecrets{}, Engine: r.e, WorkDir: t.TempDir(), PollInterval: time.Hour})
+	master, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := rig{st: newStore(), g: &fakeGit{sha: "aaaaaaaa"}, e: &fakeEngine{live: domain.LiveState{Health: domain.Healthy}}, sec: &fakeSecrets{}, master: master}
+	r.c = New(Config{Store: r.st, Git: r.g, Secrets: r.sec, MasterKey: master, Engine: r.e, WorkDir: t.TempDir(), PollInterval: time.Hour})
 	return r
 }
 
@@ -1037,4 +1091,145 @@ func TestUnreachableHostIsUnknownNotMissing(t *testing.T) {
 	if v.Health != domain.HealthUnknown || !strings.Contains(v.SyncMessage, "unreachable") {
 		t.Fatalf("health %s, message %q; want Unknown with 'unreachable'", v.Health, v.SyncMessage)
 	}
+}
+
+func TestHostKeysDecryptSyncs(t *testing.T) {
+	r := newRig(t)
+	ctx := t.Context()
+	sync := func(name string) domain.SyncOperation {
+		t.Helper()
+		if _, err := r.c.Sync(ctx, name, domain.SyncRequest{}); err != nil {
+			t.Fatal(err)
+		}
+		r.waitIdle(t, name)
+		ops, _ := r.st.ListOps(ctx, name)
+		return ops[0]
+	}
+
+	// local decrypts with the Master Key
+	r.c.CreateApp(ctx, app("loc"))
+	if op := sync("loc"); op.Phase != domain.OpSucceeded || !slices.Equal(r.sec.lastCall(), []string{r.master.String()}) {
+		t.Fatalf("local: %+v %v", op, r.sec.lastCall())
+	}
+	if keys, _ := r.c.HostKeys(ctx, domain.LocalHost); len(keys) != 1 || !keys[0].Master || keys[0].Recipient != r.master.Recipient().String() || keys[0].PrivateKey != "" {
+		t.Fatalf("local keys %+v", keys)
+	}
+	if _, err := r.c.GenerateHostKey(ctx, domain.LocalHost); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("generate for local: %v", err)
+	}
+
+	// creating a remote Host generates its current key
+	v, err := r.c.SaveHost(ctx, domain.Host{Name: "prod", URL: "ssh://deploy@prod"}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := r.st.hostKeys["prod"][0]
+	if v.KeyRecipient == "" || v.KeyRecipient != first.Recipient || !strings.HasPrefix(first.PrivateKey, "AGE-SECRET-KEY-1") {
+		t.Fatalf("view %q, stored %+v", v.KeyRecipient, first)
+	}
+	a := app("web")
+	a.Host = "prod"
+	r.c.CreateApp(ctx, a)
+	if op := sync("web"); op.Phase != domain.OpSucceeded || !slices.Equal(r.sec.lastCall(), []string{first.PrivateKey}) {
+		t.Fatalf("remote: %+v %v", op, r.sec.lastCall())
+	}
+
+	// rotation: the previous key is still tried, after the new current one
+	second, err := r.c.GenerateHostKey(ctx, "prod")
+	if err != nil || second.PrivateKey != "" || !second.Current {
+		t.Fatalf("%+v %v", second, err)
+	}
+	r.sec.need = first.PrivateKey
+	if op := sync("web"); op.Phase != domain.OpSucceeded ||
+		!slices.Equal(r.sec.lastCall(), []string{r.st.hostKeys["prod"][0].PrivateKey, first.PrivateKey}) {
+		t.Fatalf("rotation: %+v %v", op, r.sec.lastCall())
+	}
+	keys, _ := r.c.HostKeys(ctx, "prod")
+	if len(keys) != 2 || keys[0].Recipient != second.Recipient || keys[1].Recipient != first.Recipient || keys[1].Current {
+		t.Fatalf("keys %+v", keys)
+	}
+	for _, k := range keys {
+		if k.PrivateKey != "" {
+			t.Fatal("HostKeys returned a private key")
+		}
+	}
+
+	// the current key can't be removed; once the previous one is, its files no longer decrypt
+	if err := r.c.RemoveHostKey(ctx, "prod", second.Recipient); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("remove current: %v", err)
+	}
+	if err := r.c.RemoveHostKey(ctx, "prod", "age1nope"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("remove unknown: %v", err)
+	}
+	if err := r.c.RemoveHostKey(ctx, "prod", first.Recipient); err != nil {
+		t.Fatal(err)
+	}
+	want := `db.sops.env is encrypted for age1other; Host "prod" has key ` + second.Recipient + ` — re-encrypt it for this Host (sops updatekeys)`
+	if op := sync("web"); op.Phase != domain.OpFailed || op.Message != want {
+		t.Fatalf("wrong key: %q", op.Message)
+	}
+	r.sec.need = r.master.String()
+	if op := sync("loc"); op.Phase != domain.OpSucceeded {
+		t.Fatalf("local: %q", op.Message)
+	}
+
+	// import: a whole age-keygen file is fine, anything else is not
+	if _, err := r.c.ImportHostKey(ctx, "prod", "not a key"); !errors.Is(err, domain.ErrInvalid) || strings.Contains(err.Error(), "not a key") {
+		t.Fatalf("import garbage: %v", err)
+	}
+	id, _ := age.GenerateX25519Identity()
+	k, err := r.c.ImportHostKey(ctx, "prod", "# created: now\n# public key: "+id.Recipient().String()+"\n"+id.String()+"\n")
+	if err != nil || k.Recipient != id.Recipient().String() || !k.Current || r.st.hostKeys["prod"][0].PrivateKey != id.String() {
+		t.Fatalf("import: %+v %v", k, err)
+	}
+}
+
+func TestKeylessHostBlocksSyncs(t *testing.T) {
+	r := newRig(t)
+	ctx := t.Context()
+	r.st.hosts["prod"] = domain.Host{Name: "prod", URL: "ssh://deploy@prod"} // e.g. created before Host Keys existed
+	a := app("web")
+	a.Host, a.AutoSync = "prod", true
+	want := `Host "prod" has no Host Key — generate or import one in Settings → Hosts`
+
+	v, err := r.c.CreateApp(ctx, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.SyncStatus != domain.OutOfSync || v.SyncMessage != want {
+		t.Fatalf("status: %s %q", v.SyncStatus, v.SyncMessage)
+	}
+	r.waitIdle(t, "web")
+	if ops, _ := r.st.ListOps(ctx, "web"); len(ops) != 0 {
+		t.Fatalf("auto-synced into a keyless Host: %+v", ops)
+	}
+	if hosts, _ := r.c.ListHosts(ctx); hosts[1].KeyRecipient != "" || hosts[0].KeyRecipient != r.master.Recipient().String() {
+		t.Fatalf("%+v", hosts)
+	}
+
+	// even without Encrypted Secrets, nothing deploys
+	if _, err := r.c.Sync(ctx, "web", domain.SyncRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	r.waitIdle(t, "web")
+	ops, _ := r.st.ListOps(ctx, "web")
+	if ops[0].Phase != domain.OpFailed || ops[0].Message != want || r.e.syncCount() != 0 || len(r.sec.calls) != 0 {
+		t.Fatalf("%+v syncs=%d", ops[0], r.e.syncCount())
+	}
+	if _, err := r.c.Diff(ctx, "web"); err == nil || err.Error() != want {
+		t.Fatalf("diff: %v", err)
+	}
+
+	// a key unblocks it, and Auto-Sync proceeds
+	if _, err := r.c.GenerateHostKey(ctx, "prod"); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for r.e.syncCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if r.e.syncCount() != 1 {
+		t.Fatal("no auto-sync after a Host Key was generated")
+	}
+	r.waitIdle(t, "web")
 }
