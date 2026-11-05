@@ -1,0 +1,55 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
+  "timezone": "Europe/Ljubljana",
+  "schedule": ["before 6am on monday"],
+  "labels": ["dependencies"],
+  "postUpdateOptions": ["gomodTidy"],
+  "packageRules": [
+    {
+      "description": "Go modules: one weekly PR for minor/patch updates",
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "Go modules"
+    },
+    {
+      "description": "The Compose SDK promises no API stability (ADR 0001): its own PR, reviewed against the integration tests, never automerged",
+      "matchManagers": ["gomod"],
+      "matchPackageNames": ["github.com/docker/compose/v5", "github.com/compose-spec/compose-go/v2", "github.com/docker/cli", "github.com/moby/moby/**"],
+      "groupName": "Docker Compose SDK",
+      "automerge": false
+    },
+    {
+      "description": "Web UI: one weekly PR",
+      "matchManagers": ["npm"],
+      "groupName": "web dependencies"
+    },
+    {
+      "description": "CI actions: low risk, merged automatically once CI passes",
+      "matchManagers": ["github-actions"],
+      "groupName": "GitHub Actions",
+      "automerge": true
+    },
+    {
+      "description": "Images: Dockerfile bases, the remote-copy helper, the test engine and the CI secret scanner",
+      "matchDatasources": ["docker"],
+      "groupName": "container images"
+    }
+  ],
+  "customManagers": [
+    {
+      "description": "gitleaks image run in CI",
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/workflows/.+\\.ya?ml$/"],
+      "matchStrings": ["(?<depName>ghcr\\.io/gitleaks/gitleaks):(?<currentValue>v[0-9.]+)"],
+      "datasourceTemplate": "docker"
+    },
+    {
+      "description": "Images pinned in Go code: the busybox helper that copies files to remote Hosts, and docker:dind for the remote-Host tests",
+      "customType": "regex",
+      "managerFilePatterns": ["/^internal/engine/.+\\.go$/"],
+      "matchStrings": ["\"(?<depName>busybox|docker):(?<currentValue>[0-9][^\"]*)\""],
+      "datasourceTemplate": "docker"
+    }
+  ]
+}
