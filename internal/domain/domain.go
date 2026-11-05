@@ -262,6 +262,10 @@ type DiffView struct {
 	ToSHA    string        `json:"toSHA"`
 	Services []ServiceDiff `json:"services"`
 	GitDiff  string        `json:"gitDiff"` // unified diff of the app path
+	// Live is the compose project of the deployed files in the work dir, Desired that of the target
+	// Revision, both rendered by Engine.Render; Live is empty before the first Sync.
+	Live    string `json:"live"`
+	Desired string `json:"desired"`
 }
 
 // Event is pushed to SSE subscribers.
@@ -380,6 +384,8 @@ type Engine interface {
 	// Diff compares the Desired State in dir against the Live State. When asDir is set, dir is a
 	// staging copy and paths are evaluated as if the files lived in asDir (the app's working dir).
 	Diff(ctx context.Context, app Application, dir, asDir string) ([]ServiceDiff, error)
+	// Render returns the compose project in dir as it runs, secrets masked (see engine.Render).
+	Render(ctx context.Context, app Application, dir string, maskDotEnv bool) (string, error)
 	// Sync pulls images and brings the project up; with Prune it removes orphaned containers/networks
 	// (and with PruneVolumes undeclared volumes), skipping networks and volumes a container still uses.
 	Sync(ctx context.Context, app Application, dir string, opts SyncOptions) error

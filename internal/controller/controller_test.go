@@ -270,6 +270,10 @@ type fakeEngine struct {
 }
 
 func (e *fakeEngine) Validate(context.Context, domain.Application, string) error { return nil }
+func (e *fakeEngine) Render(_ context.Context, _ domain.Application, dir string, _ bool) (string, error) {
+	b, err := os.ReadFile(filepath.Join(dir, "compose.yaml"))
+	return string(b), err
+}
 func (e *fakeEngine) Diff(context.Context, domain.Application, string, string) ([]domain.ServiceDiff, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()

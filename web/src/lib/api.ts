@@ -64,6 +64,8 @@ export interface DiffView {
 	toSHA: string;
 	services: ServiceDiff[] | null;
 	gitDiff: string;
+	live: string; // compose of the deployed files; "" before the first Sync
+	desired: string; // compose of the target Revision
 }
 
 export interface Container {

@@ -175,3 +175,68 @@ func TestValidateBindSources(t *testing.T) {
 		}
 	}
 }
+
+func TestRender(t *testing.T) {
+	files := map[string]string{
+		"compose.yaml": `services:
+  web:
+    image: nginx:${TAG}
+    command: ["serve", "--password", "${DB_PASSWORD}"]
+    env_file: web.env
+    configs: [conf]
+  debug:
+    image: busybox
+    profiles: [debug]
+configs:
+  conf: {file: ./conf.yaml}
+`,
+		"compose.override.yaml": "services:\n  web:\n    ports: [\"8080:80\"]\n",
+		".env":                  "TAG=1.27\nDB_PASSWORD=hunter2-secret\n",
+		"web.env":               "API_TOKEN=tok-in-env-file\n",
+		"conf.yaml":             "a: 1\n",
+	}
+	render := func(mask bool) string {
+		t.Helper()
+		var out string
+		for _, parent := range []string{"apps", "staging"} { // the same files in the work dir and in staging
+			dir := filepath.Join(t.TempDir(), parent, "web")
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for name, content := range files {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			app := domain.Application{Name: "web", ComposeFiles: []string{"compose.yaml", "compose.override.yaml"}}
+			got, err := (&Engine{}).Render(context.Background(), app, dir, mask)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(got, dir) {
+				t.Errorf("render contains the absolute dir %s:\n%s", dir, got)
+			}
+			if out != "" && got != out {
+				t.Errorf("render differs by location:\n%s\n---\n%s", out, got)
+			}
+			out = got
+		}
+		return out
+	}
+
+	plain := render(false)
+	for _, want := range []string{"nginx:1.27", "hunter2-secret", "8080", "web.env", "./conf.yaml"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("render lacks %q:\n%s", want, plain)
+		}
+	}
+	for _, unwanted := range []string{"tok-in-env-file", "debug"} {
+		if strings.Contains(plain, unwanted) {
+			t.Errorf("render contains %q (env_file inlined or inactive profile shown):\n%s", unwanted, plain)
+		}
+	}
+	masked := render(true)
+	if strings.Contains(masked, "hunter2") || strings.Contains(masked, "1.27") || !strings.Contains(masked, "••••") {
+		t.Errorf("decrypted .env values not masked:\n%s", masked)
+	}
+}

@@ -927,6 +927,16 @@ func (c *Controller) Diff(ctx context.Context, name string) (domain.DiffView, er
 	if dv.Services, err = c.cfg.Engine.Diff(ctx, a, stage, c.appDir(name)); err != nil {
 		return domain.DiffView{}, err
 	}
+	if dv.Desired, err = c.cfg.Engine.Render(ctx, a, stage, decrypted(filepath.Join(stage, ".env"))); err != nil {
+		return domain.DiffView{}, err
+	}
+	// Live: the deployed Revision's files, which the containers run from (also kept here for remote Hosts)
+	live := c.appDir(name)
+	if _, serr := os.Stat(live); serr == nil {
+		if dv.Live, err = c.cfg.Engine.Render(ctx, a, live, decrypted(filepath.Join(live, ".env"))); err != nil {
+			c.cfg.Log.Warn("render live compose", "app", name, "err", err)
+		}
+	}
 	return dv, nil
 }
 

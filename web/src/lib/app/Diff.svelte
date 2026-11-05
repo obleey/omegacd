@@ -2,6 +2,7 @@
 	import type { GitWeb } from '../gitweb.ts';
 	import GitLink from '../GitLink.svelte';
 	import { short, type DiffView } from '../api.ts';
+	import { lineDiff } from '../linediff.ts';
 
 	// apps: an App of Apps, whose diff entries are Child Applications rather than services
 	// prune / pruneVolumes: the app's Sync Policy, to say what the next Sync does with undeclared networks and volumes
@@ -27,6 +28,13 @@
 						: '';
 	let lines = $derived(diff?.gitDiff ? diff.gitDiff.replace(/\n$/, '').split('\n') : []);
 	const changeLabel = { added: '+ added', removed: '− removed', changed: '~ changed' };
+
+	// Live = the deployed Revision's files in the work dir (what the containers run from), Desired = the target
+	// Revision; both rendered: compose files merged, variables filled in, secrets from a SOPS .env as ••••.
+	let view = $state<'summary' | 'compose' | 'live' | 'desired'>('summary');
+	let composeDiff = $derived(view === 'compose' && diff ? lineDiff(diff.live, diff.desired) : []);
+	let composeChanged = $derived(!!diff && diff.live !== diff.desired);
+	const opCls = { ' ': '', '+': 'add', '-': 'del' };
 </script>
 
 {#if !diff}
@@ -34,6 +42,38 @@
 		<span class="skel" style="height: 24px; width: 40%"></span><span class="skel" style="height: 180px"></span>
 	</div>
 {:else}
+	{#if !apps}
+		<div class="seg views" role="group" aria-label="Diff view">
+			<button aria-pressed={view === 'summary'} onclick={() => (view = 'summary')}>Summary</button>
+			<button aria-pressed={view === 'compose'} onclick={() => (view = 'compose')}
+				>Compose diff{#if composeChanged}<span class="dot" title="Desired differs from Live"></span>{/if}</button
+			>
+			<button aria-pressed={view === 'live'} onclick={() => (view = 'live')}>Live</button>
+			<button aria-pressed={view === 'desired'} onclick={() => (view = 'desired')}>Desired</button>
+		</div>
+	{/if}
+	{#if view === 'compose'}
+		<p class="muted small">
+			Live <span class="mono">{short(diff.fromSHA) || '—'}</span> (deployed) → Desired <span class="mono">{short(diff.toSHA)}</span>, rendered as
+			OmegaCD runs them. Variables from an encrypted <span class="mono">.env</span> show as ••••.
+		</p>
+		{#if !composeChanged}
+			<p class="muted small">No differences: the target Revision runs the same compose project.</p>
+		{:else}
+			<pre class="diff" aria-label="Compose diff">{#each composeDiff as l, i (i)}<span class={opCls[l.op]}>{l.op} {l.text}</span>{'\n'}{/each}</pre>
+		{/if}
+	{:else if view === 'live' || view === 'desired'}
+		<p class="muted small">
+			{#if view === 'live'}The deployed Revision <span class="mono">{short(diff.fromSHA) || '—'}</span>: the files on the Host the containers run from.
+			{:else}The target Revision <span class="mono">{short(diff.toSHA)}</span>: what the next Sync deploys.{/if}
+			Rendered: compose files merged, variables filled in, profiles applied; variables from an encrypted <span class="mono">.env</span> show as ••••.
+		</p>
+		{#if view === 'live' && !diff.live}
+			<p class="muted small">Not deployed yet: there is no Live compose before the first Sync.</p>
+		{:else}
+			<pre class="diff" aria-label="{view} compose">{view === 'live' ? diff.live : diff.desired}</pre>
+		{/if}
+	{:else}
 	<h3>{apps ? 'Applications' : 'Services'}</h3>
 	{#if services.length}
 		<ul class="svc">
@@ -78,9 +118,13 @@
 		<p class="muted small">No changes in Git between the deployed and target Revision.</p>
 	{/if}
 {/if}
+{/if}
 
 <style>
 	.loading { display: grid; gap: 0.7rem; }
+	.views { margin-bottom: 0.8rem; }
+	.dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--yellow); margin-left: 0.4rem; vertical-align: middle; }
+	pre.diff:not(:has(span)) { padding: 0.6rem 0.8rem; }
 	h3 { margin: 1rem 0 0.5rem; }
 	h3:first-child { margin-top: 0; }
 	.svc { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.3rem; }
