@@ -30,7 +30,7 @@ You have a few servers running `docker compose`, and deploying means SSH-ing in 
 ## Features
 
 - **Applications** — a Compose project (one or more compose files, optional profiles) at a path in a Git repo, tracking a branch, tag or commit, deployed to one Host
-- **Sync Status and Health Status** — Synced / OutOfSync / Unknown; Healthy / Progressing / Degraded / Missing — live over Server-Sent Events
+- **Sync Status and Health Status** — Synced / OutOfSync / Unknown; Healthy / Progressing / Degraded / Missing / Unknown — live over Server-Sent Events, resynced after reconnects
 - **Sync Policy** — manual Sync, or Auto-Sync on new commits, Self-Heal on drift, and Prune
 - **Diff** — the per-service changes and the Git diff between the deployed and the target Revision
 - **History and Rollback** — every Sync Operation is recorded; roll back to any earlier Revision
@@ -38,7 +38,7 @@ You have a few servers running `docker compose`, and deploying means SSH-ing in 
 - **Remote Hosts** — Docker engines over `ssh://` (host keys verified) or `tcp://` with TLS
 - **Secrets** — SOPS + age encrypted files in Git, decrypted only at Sync time
 - **Change detection** — Git polling plus GitHub, GitLab and Gitea/Forgejo webhooks
-- **Web UI** — resource tree, diffs, live container logs, light and dark theme, works on phones
+- **Web UI** — resource tree, diffs, colored live container logs, repository access check while creating an Application, links to the Git host, light/dark/system theme, works on phones
 - **CLI and API** — REST API with API tokens; a CLI for scripts and CI (`omegacd app sync myapp --wait`)
 - **Prometheus metrics** at `/metrics`
 
@@ -87,7 +87,7 @@ Open http://localhost:8080, log in as `admin` with the password from the log, an
 
 **Why `/run/omegacd:/run/omegacd`?** On Sync, OmegaCD writes each Application's files (compose files, configs, decrypted secrets) to its work dir and asks the Docker engine to start the containers. Bind mounts like `./nginx.conf:/etc/nginx/nginx.conf` are resolved by the *engine*, on the host — so the work dir must exist at the same path on the host as inside the OmegaCD container.
 
-**After a reboot** `/run` is empty again (it's RAM-backed, so decrypted secrets never touch disk). Docker restarts your containers before OmegaCD is up, and their bind-mounted files are missing. On startup OmegaCD notices, restores every Application's files from its *deployed* Revision (nothing new is deployed), re-decrypts secrets and recreates the containers — it shows in History as a `restore` Sync. This covers the machine OmegaCD runs on. **Known limitation:** after a *remote* Host reboots, the same restore does not happen automatically yet, so containers with bind-mounted files there need a Sync that recreates them.
+**After a reboot** `/run` is empty again (it's RAM-backed, so decrypted secrets never touch disk). Docker restarts your containers before OmegaCD is up, and their bind-mounted files are missing. On startup OmegaCD notices, restores every Application's files from its *deployed* Revision (nothing new is deployed), re-decrypts secrets and recreates the containers — it shows in History as a `restore` Sync. This covers the machine OmegaCD runs on (its work dir is `OMEGACD_WORKDIR`, shown read-only under **Settings → Hosts**); [remote Hosts](#remote-hosts) use a persistent work dir instead.
 
 **Upgrade:** bump the image tag (or `docker compose pull` for `latest`) and run `docker compose up -d`. Data lives in the `omegacd-data` volume.
 
@@ -188,12 +188,12 @@ The version is always the Git release tag: pushing tag `v0.1.0` builds and stamp
 | --- | --- |
 | **Application** | A Compose project whose desired state lives at a path in a Git repository and is deployed to one Host. |
 | **App of Apps** | An Application whose path holds Application definitions instead of compose files. Syncing it creates and updates its Child Applications, and with Prune deletes those no longer declared. |
-| **Child Application** | An Application declared in an App of Apps. Its settings are owned by Git, not the UI. |
+| **Child Application** | An Application declared in an App of Apps. Its settings — and Rollback — are owned by Git, not the UI. A manual Sync of the parent also syncs children that are OutOfSync or whose last Sync failed. |
 | **Host** | A Docker engine Applications are deployed to. `local` (the mounted Docker socket) is built in. |
 | **Sync** | Making the running containers match the compose files at the target Revision (commit). Each attempt is a Sync Operation, recorded as Running, Succeeded or Failed. |
 | **Sync Status** | **Synced**, **OutOfSync** (Live State differs, or a new Revision is waiting), or **Unknown** (the desired state cannot be determined, e.g. Git is unreachable). |
-| **Health Status** | **Healthy**, **Progressing**, **Degraded** or **Missing**, from container state and healthchecks. A container that exited 0 counts as Healthy (one-shot jobs) — unless its service has a restart policy, then it is long-running and stopped means Degraded. |
-| **Rollback** | A Sync to an earlier Revision from the history. It turns Auto-Sync off so the next commit does not undo it. |
+| **Health Status** | **Healthy**, **Progressing**, **Degraded**, **Missing**, or **Unknown** (the Host is unreachable), from container state and healthchecks. A container that exited 0 counts as Healthy (one-shot jobs) — unless its service has a restart policy, then it is long-running and stopped means Degraded. |
+| **Rollback** | A Sync to an earlier Revision from the history. It turns Auto-Sync off so the next commit does not undo it; a manual Sync to the target Revision ends it. |
 
 **Sync Policy**, per Application:
 
@@ -202,7 +202,7 @@ The version is always the Git release tag: pushing tag `v0.1.0` builds and stamp
 - **Prune** — what happens to services no longer declared (removed from the compose files, or their profile switched off): with Prune **off**, a Sync *stops* their containers; with Prune **on**, it *deletes* their containers and the project networks no longer declared (a network still used by any container is kept and shown as prune pending). Volumes are kept. Prune is also available as a one-off Sync option.
 - **Prune volumes** — a sub-option of Prune (off by default, and turned off with Prune): a Sync also *deletes* the project's named volumes no longer declared, **with their data**, unless a container (of any project, even a stopped one) still uses them. External volumes, volumes OmegaCD's Compose project did not create, volumes of profile-disabled services and host paths are never touched. The Diff tab lists undeclared networks and volumes under *Would be pruned*; they never make an Application OutOfSync.
 
-**Change detection.** Compose recreates a container when its service definition changes. OmegaCD additionally hashes the *content* of file-based `configs:` and `secrets:` and of bind-mounted regular files inside the Application's path into a `dev.omegacd.content-hash` label — so editing `nginx.conf` in Git recreates the container that mounts it, and shows up as OutOfSync until synced.
+**Change detection.** Compose recreates a container when its service definition changes. OmegaCD additionally hashes the *content* of file-based `configs:` and `secrets:` and of bind-mounted regular files inside the Application's path into a `dev.omegacd.content-hash` label — so editing `nginx.conf` in Git recreates the container that mounts it, and shows up as OutOfSync until synced. Images are pulled by each service's `pull_policy` (Compose default: only when missing) — push a new tag rather than overwriting one.
 
 ## Defining Applications
 
@@ -249,7 +249,7 @@ Changes *inside* data folders and volumes never count as drift. Back up volumes 
 
 ## Git access
 
-Public repositories need no setup. For private ones, add a credential under **Settings → Repository credentials**, matched by URL prefix: a username and password/token for HTTPS, or an SSH private key. Registry credentials for private images are under **Settings → Registry credentials**.
+Public repositories need no setup; the New Application form checks access as you type (public / private with a credential / denied, with an inline *Add credential*). For private ones, add a credential under **Settings → Repository credentials** (for reading Git repositories), matched by URL prefix: a username and password/token for HTTPS, or an SSH private key. Private images need **Settings → Registry credentials** (for pulling Docker images), keyed by registry host such as `ghcr.io` — not a URL.
 
 SSH host keys are always verified against the `known_hosts` file (`OMEGACD_SSH_KNOWN_HOSTS`, default `/etc/omegacd/known_hosts`):
 
@@ -289,7 +289,7 @@ secrets:
     file: ./db-password.txt    # decrypted from db-password.sops.txt
 ```
 
-The format is taken from the decrypted file's extension: `.yaml`/`.yml`, `.json`, `.env`/`.dotenv`, `.ini`, anything else binary. Plaintext exists only in the Application's work dir (mode 0600; `/run` is a tmpfs on most Linux hosts) — never in Git and never in the UI, which shows only the keys of decrypted env files.
+The format is taken from the decrypted file's extension: `.yaml`/`.yml`, `.json`, `.env`/`.dotenv`, `.ini`, anything else binary. Plaintext exists only in the Application's work dir (mode 0600; on the local machine `/run` is a tmpfs on most Linux hosts, on [remote Hosts](#remote-hosts) it is on disk) — never in Git and never in the UI, which shows only the keys of decrypted env files.
 
 ## Webhooks
 
@@ -410,12 +410,11 @@ make docker             # build the container image
 | `internal/cli` | the CLI client |
 | `web` | SvelteKit UI, embedded into the binary |
 
-Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
-
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). What is tested, automatically and by hand, is in [TESTING.md](TESTING.md).
 
 ## Roadmap
 
-See [ROADMAP.md](ROADMAP.md) — next up: sync hooks and notifications.
+See [ROADMAP.md](ROADMAP.md) — next up: sync hooks and notifications. Related, planned as a separate project: a SOPS web GUI to encrypt secrets in the browser.
 
 ## License
 

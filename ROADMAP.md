@@ -13,7 +13,7 @@ OmegaCD is early. This is the plan, most important first — it changes as real 
 - [x] Restore working files after a reboot
 - [ ] Real-world test: a full arr stack as an App of Apps on a Hetzner VPS
 - [ ] Real-world test: private Git repos (token and SSH), webhooks from GitHub, private registry images
-- [ ] Repository access check in the Application form: shows public / private-with-credential / access denied while you type, with an inline "Add credential"
+- [x] Repository access check in the Application form: shows public / private-with-credential / access denied while you type, with an inline "Add credential"
 
 ## v0.2 — trustworthy for real sites
 
