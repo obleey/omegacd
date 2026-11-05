@@ -696,10 +696,11 @@ func (c *Controller) checkNew(ctx context.Context, a *domain.Application) error 
 	if err := normalize(a); err != nil {
 		return err
 	}
-	if err := c.checkHost(ctx, a.Host); err != nil {
-		return err
-	}
+	// an App of Apps deploys nothing, so it needs no Docker engine: it can be created where local is disabled
 	if a.Kind == domain.KindCompose {
+		if err := c.checkHost(ctx, a.Host); err != nil {
+			return err
+		}
 		exists, managed, err := c.cfg.Engine.ProjectExists(ctx, a.Host, a.Name)
 		if err != nil {
 			return err

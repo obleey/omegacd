@@ -297,3 +297,30 @@ func TestRefreshAppOfAppsRefreshesChildren(t *testing.T) {
 		}
 	}
 }
+
+func TestAppOfAppsWithoutLocalHost(t *testing.T) {
+	ctx := t.Context()
+	r := newRig(t)
+	r.c.cfg.NoLocalHost = true
+	if _, err := r.c.SaveHost(ctx, domain.Host{Name: "prod", URL: "ssh://deploy@prod"}, true); err != nil {
+		t.Fatal(err)
+	}
+	// with or without a host given: an App of Apps deploys nothing and needs no Docker engine
+	for name, h := range map[string]string{"root": "", "other": "prod"} {
+		p := parentApp(name)
+		p.Host = h
+		if _, err := r.c.CreateApp(ctx, p); err != nil {
+			t.Fatalf("create App of Apps with host %q: %v", h, err)
+		}
+	}
+	r.g.define("aaaaaaaa", "name: web\nrepoURL: x\nhost: prod\n")
+	r.mustSync(t, "root")
+	web, err := r.st.GetApp(ctx, "web")
+	if err != nil || web.Parent != "root" || web.Host != "prod" {
+		t.Fatalf("child: %+v %v", web, err)
+	}
+	// a Compose Application still may not use the disabled local Host
+	if _, err := r.c.CreateApp(ctx, app("api")); !errors.Is(err, domain.ErrLocalHostDisabled) {
+		t.Fatalf("compose app on local: %v", err)
+	}
+}
