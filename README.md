@@ -200,6 +200,35 @@ Keep `replicas: 1` (one controller per SQLite database) and the work dir on the 
 
 The version is always the Git release tag: pushing tag `v0.1.0` builds and stamps the binaries (`omegacd version` → `omegacd v0.1.0`) and the image (`ghcr.io/obleey/omegacd:0.1.0`, `:0.1` and `:latest`). The server reports it at `GET /api/version`, and the UI shows it in the sidebar and on the login page.
 
+## Your first Application
+
+This repository has a ready example, [`examples/hello`](examples/hello): nginx serving a page that lives in Git.
+
+```yaml
+# examples/hello/compose.yaml
+services:
+  web:
+    image: nginx:1.29-alpine
+    ports:
+      - "8081:80"
+    volumes:
+      - ./index.html:/usr/share/nginx/html/index.html:ro # a file from Git, restored on every Sync
+    restart: unless-stopped
+```
+
+**In the UI:** **New Application** → name `hello`, repository `https://github.com/obleey/omegacd`, path `examples/hello`, turn on **Auto-Sync**, **Create**. OmegaCD deploys it within seconds; open http://localhost:8081 (or the server's address). The Application page shows its containers, the Diff, History and Logs.
+
+**With the CLI** (`omegacd login` first, see [CLI](#cli)):
+
+```sh
+omegacd app create hello --repo https://github.com/obleey/omegacd --path examples/hello --auto-sync
+omegacd app wait hello --sync --health
+```
+
+**Make it yours:** copy `examples/hello` into your own repository, point the Application at it, change `index.html` and push — OmegaCD sees the new commit (on the next poll, or within seconds [with a webhook](#webhooks)) and recreates the container with the new page. Add a `.sops.env` next to it for [secrets](#secrets).
+
+**Declaratively:** [`examples/apps.yaml`](examples/apps.yaml) defines the same Application; an [App of Apps](#defining-applications) with path `examples` creates it. In your own repository, one such folder of definitions per server describes everything that runs there.
+
 ## Concepts
 
 | Term | Meaning |

@@ -1,0 +1,10 @@
+# A first Application: nginx serving a page that lives in Git.
+# Change index.html and push: OmegaCD notices the new commit and recreates the container with the new page.
+services:
+  web:
+    image: nginx:1.29-alpine
+    ports:
+      - "8081:80"
+    volumes:
+      - ./index.html:/usr/share/nginx/html/index.html:ro # a file from Git, restored on every Sync
+    restart: unless-stopped
