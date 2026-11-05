@@ -22,6 +22,12 @@ const (
 // ManagedLabel is set on every container omegacd creates; its value is the Application name.
 const ManagedLabel = "dev.omegacd.application"
 
+// ManagedByLabel=ManagedByValue marks every container OmegaCD creates, for people and other tools filtering on it.
+const (
+	ManagedByLabel = "managed-by"
+	ManagedByValue = "omegacd"
+)
+
 var (
 	ErrNotFound      = errors.New("not found")
 	ErrAlreadyExists = errors.New("already exists")

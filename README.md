@@ -243,6 +243,8 @@ prune: false
 
 ![App of Apps](assets/screenshots/app-of-apps.png)
 
+**Labels.** Every container OmegaCD creates carries `managed-by=omegacd` and `dev.omegacd.application=<name>` (on Docker and Podman alike), so `docker ps --filter label=managed-by=omegacd` lists everything OmegaCD manages. Containers created before an upgrade get the label on their next recreate.
+
 ## Where your data lives
 
 OmegaCD writes each Application's files from Git into its work dir on every Sync, so **data must not live there**:

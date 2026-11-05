@@ -132,6 +132,9 @@ func TestLifecycle(t *testing.T) {
 			if c.Labels[domain.ManagedLabel] != app.Name {
 				t.Errorf("%s: missing managed label", svc)
 			}
+			if c.Labels[domain.ManagedByLabel] != domain.ManagedByValue {
+				t.Errorf("%s: missing managed-by=omegacd label", svc)
+			}
 		}
 	})
 

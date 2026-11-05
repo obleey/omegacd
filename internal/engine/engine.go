@@ -110,13 +110,14 @@ func (e *Engine) load(ctx context.Context, app domain.Application, dir string) (
 	// Same labels compose's own LoadProject sets, plus ours. CustomLabels are not hashed.
 	for name, s := range p.Services {
 		s.CustomLabels = map[string]string{
-			api.ProjectLabel:     p.Name,
-			api.ServiceLabel:     name,
-			api.VersionLabel:     api.ComposeVersion,
-			api.WorkingDirLabel:  p.WorkingDir,
-			api.ConfigFilesLabel: strings.Join(p.ComposeFiles, ","),
-			api.OneoffLabel:      "False",
-			domain.ManagedLabel:  app.Name,
+			api.ProjectLabel:      p.Name,
+			api.ServiceLabel:      name,
+			api.VersionLabel:      api.ComposeVersion,
+			api.WorkingDirLabel:   p.WorkingDir,
+			api.ConfigFilesLabel:  strings.Join(p.ComposeFiles, ","),
+			api.OneoffLabel:       "False",
+			domain.ManagedLabel:   app.Name,
+			domain.ManagedByLabel: domain.ManagedByValue,
 		}
 		p.Services[name] = s
 	}

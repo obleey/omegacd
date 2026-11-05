@@ -27,7 +27,7 @@ OmegaCD is early. This is the plan, most important first — it changes as real 
 - **ApplicationSet** — one template + generators (list, Git directories, Hosts) generate Applications
 - **Image updater** — watch registries for new tags and commit the bump to Git
 - **Follow the latest Git tag** — `targetRevision: "v1.*"` or a semver range (`>=1.4 <2.0`): deploy the newest matching tag automatically, instead of editing the Application for each release
-- **Podman support** — run against Podman's Docker-compatible API socket (rootful and rootless): enable/check `podman-restart.service` so containers come back after a reboot, an SSH transport that doesn't need the Docker CLI on the server, rootless notes (ports < 1024, UID mapping on bind mounts), and the integration test suite running against Podman in CI; the engine (Docker or Podman, with version) detected per Host and shown as a badge on the Host and on every Application deployed there, so mixed fleets are obvious
+- **Podman support** — run against Podman's Docker-compatible API socket (rootful and rootless): enable/check `podman-restart.service` so containers come back after a reboot, an SSH transport that doesn't need the Docker CLI on the server, rootless notes (ports < 1024, UID mapping on bind mounts), and the integration test suite running against Podman in CI; the engine (Docker or Podman, with version) detected per Host and shown as a badge on the Host and on every Application deployed there, so mixed fleets are obvious. Quick test against Podman 5.8 (Docker-compatible API): deploy, SOPS, bind-mounted files, diff, logs, events/drift and delete-with-volumes work; healthchecks need systemd on the Podman host (document it)
 - Nested App of Apps
 - Theme picker (all Catppuccin flavors)
 
@@ -51,6 +51,8 @@ OmegaCD is early. This is the plan, most important first — it changes as real 
 - **SOPS web GUI** (separate project, planned) — encrypt secrets in the browser and commit them, without the `sops` CLI; like kubeseal-webgui for Sealed Secrets. OmegaCD could embed it as an "Encrypt secret" page.
 
 ## Housekeeping
+
+- Start watching a newly added Host's events immediately (today: within 30 s)
 
 - Dependabot/Renovate for Go, npm and GitHub Actions
 - Copy only changed files to remote Hosts
