@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { ago, enc, short, type AppView } from '../api.ts';
+	import { ago, enc, get, short, type AppView, type DiffView } from '../api.ts';
 	import Badge from '../Badge.svelte';
 	import Icon from '../Icon.svelte';
 	import Empty from '../Empty.svelte';
@@ -10,6 +10,15 @@
 	let { app, apps }: { app: AppView; apps: AppView[] } = $props();
 
 	let mode = $state<'graph' | 'list'>(matchMedia('(max-width: 640px)').matches ? 'list' : 'graph');
+
+	// Children declared in Git but not created yet: the App of Apps' next Sync creates them
+	let pending = $state<{ name: string; host?: string }[]>([]);
+	$effect(() => {
+		const key = `${app.targetSHA}:${apps.length}`;
+		get<DiffView>(`/apps/${enc(app.name)}/diff`)
+			.then((d) => key && (pending = (d.services ?? []).filter((s) => !s.kind && s.change === 'added').map((s) => ({ name: s.service, host: s.host }))))
+			.catch(() => (pending = []));
+	});
 	let nodes = $derived<GNode[]>([
 		{ id: app.name, icon: 'apps', kind: 'App of Apps', name: app.name, status: [['Sync Status', shownSync(app)], ['Health Status', app.health]] },
 		...apps.map(
@@ -26,17 +35,30 @@
 				onclick: () => goto(`/apps/${enc(a.name)}`),
 				action: `Open ${a.name}`
 			})
+		),
+		...pending.map(
+			(p): GNode => ({
+				id: `p:${p.name}`,
+				parent: app.name,
+				icon: 'app',
+				kind: 'Child Application',
+				name: p.name,
+				sub: `${p.host || 'local'} · Sync ${app.name} to create`,
+				status: [['Sync Status', 'OutOfSync'], ['Health Status', 'Missing']],
+				tag: 'pending',
+				dim: true
+			})
 		)
 	]);
 </script>
 
-{#if apps.length === 0}
+{#if apps.length === 0 && pending.length === 0}
 	<Empty icon="apps" title="No Child Applications yet">
 		<p>Sync to create them from the Application definitions in Git.</p>
 	</Empty>
 {:else}
 	<div class="bar">
-		<span class="muted small">{apps.length} Child Application{apps.length === 1 ? '' : 's'}</span>
+		<span class="muted small">{apps.length} Child Application{apps.length === 1 ? '' : 's'}{#if pending.length} · {pending.length} pending{/if}</span>
 		<span class="spacer"></span>
 		<div class="seg" role="group" aria-label="Child Applications view">
 			<button aria-pressed={mode === 'graph'} onclick={() => (mode = 'graph')}><Icon name="tree" size={15} />Tree</button>
@@ -79,6 +101,15 @@
 							</td>
 						</tr>
 					{/each}
+					{#each pending as p (p.name)}
+						<tr class="pending">
+							<td><span class="name">{p.name}</span> <span class="tag">pending</span></td>
+							<td class="mono small">{p.host || 'local'}</td>
+							<td><Badge status="OutOfSync" label="Sync Status" /></td>
+							<td><Badge status="Missing" label="Health Status" /></td>
+							<td class="small muted">Sync {app.name} to create</td>
+						</tr>
+					{/each}
 				</tbody>
 			</table>
 		</div>
@@ -88,4 +119,5 @@
 <style>
 	.bar { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; margin-bottom: 0.6rem; }
 	.name { font-weight: 600; }
+	.pending { opacity: 0.65; }
 </style>

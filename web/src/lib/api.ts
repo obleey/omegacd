@@ -59,6 +59,8 @@ export interface ServiceDiff {
 	service: string;
 	change: 'added' | 'removed' | 'changed';
 	fields?: string[];
+	/** a Child Application's Host, in an App of Apps' diff */
+	host?: string;
 }
 
 export interface DiffView {

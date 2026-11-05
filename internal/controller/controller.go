@@ -1501,7 +1501,7 @@ func (c *Controller) childDiff(ctx context.Context, parent, dir string) ([]domai
 		declared[d.Name] = true
 		i := slices.IndexFunc(children, func(ch domain.Application) bool { return ch.Name == d.Name })
 		if i < 0 {
-			diffs = append(diffs, domain.ServiceDiff{Service: d.Name, Change: "added"})
+			diffs = append(diffs, domain.ServiceDiff{Service: d.Name, Change: "added", Host: d.Host})
 			continue
 		}
 		fields := changedFields(children[i], d)
@@ -1509,12 +1509,12 @@ func (c *Controller) childDiff(ctx context.Context, parent, dir string) ([]domai
 			fields = append(fields, "notInGit")
 		}
 		if len(fields) > 0 {
-			diffs = append(diffs, domain.ServiceDiff{Service: d.Name, Change: "changed", Fields: fields})
+			diffs = append(diffs, domain.ServiceDiff{Service: d.Name, Change: "changed", Fields: fields, Host: d.Host})
 		}
 	}
 	for _, ch := range children {
 		if !declared[ch.Name] {
-			diffs = append(diffs, domain.ServiceDiff{Service: ch.Name, Change: "removed"})
+			diffs = append(diffs, domain.ServiceDiff{Service: ch.Name, Change: "removed", Host: ch.Host})
 		}
 	}
 	return diffs, nil

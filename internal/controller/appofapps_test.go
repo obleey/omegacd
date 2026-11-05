@@ -366,3 +366,27 @@ func TestAppOfAppsWithoutLocalHost(t *testing.T) {
 		t.Fatalf("compose app on local: %v", err)
 	}
 }
+
+func TestAppOfAppsDiffShowsChildHosts(t *testing.T) {
+	r := newRig(t)
+	ctx := t.Context()
+	if _, err := r.c.SaveHost(ctx, domain.Host{Name: "prod", URL: "ssh://deploy@prod"}, true); err != nil {
+		t.Fatal(err)
+	}
+	r.c.CreateApp(ctx, parentApp("root"))
+	r.g.define("aaaaaaaa", "name: web\nrepoURL: x\nhost: prod\n---\nname: api\nrepoURL: x\nhost: local\n")
+	// before the first Sync, the children are pending: added in the Diff, with the Host from Git
+	d, err := r.c.Diff(ctx, "root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hosts := map[string]string{}
+	for _, s := range d.Services {
+		if s.Change == "added" {
+			hosts[s.Service] = s.Host
+		}
+	}
+	if hosts["web"] != "prod" || hosts["api"] != "local" {
+		t.Fatalf("pending children and their Hosts: %+v", d.Services)
+	}
+}
