@@ -359,7 +359,8 @@ type Git interface {
 
 // Secrets decrypts Encrypted Secrets (*.sops.* files) in a directory.
 type Secrets interface {
-	// DecryptDir writes each "x.sops.ext" as "x.ext" (mode 0600) next to it and returns the written paths.
+	// DecryptDir writes each "x.sops.ext" as "x.ext" (mode 0600) next to it, deletes "x.sops.ext", and returns
+	// the written paths (also those written before an error).
 	// identities are age secret keys (AGE-SECRET-KEY-1...), tried in order; only they are used.
 	// A file none of them can decrypt fails with a *WrongKeyError.
 	DecryptDir(dir string, identities []string) ([]string, error)

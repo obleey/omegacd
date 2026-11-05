@@ -2,6 +2,8 @@ package secrets
 
 import (
 	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -90,6 +92,15 @@ func TestDecryptDir(t *testing.T) {
 	}
 	check(envOut, "DB_PASSWORD=s3cret")
 	check(want[1], "key: abc123")
+	// the encrypted copies are gone once decrypted; other files stay
+	for _, enc := range []string{"db.sops.env", filepath.Join("sub", "config.sops.yaml")} {
+		if _, err := os.Stat(filepath.Join(dir, enc)); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("%s still there: %v", enc, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "compose.yaml")); err != nil {
+		t.Fatal(err)
+	}
 	if inode(t, envOut) != before {
 		t.Fatal("inode changed")
 	}
@@ -145,8 +156,20 @@ func TestDecryptDirUsesOnlyGivenIdentities(t *testing.T) {
 	dirA, dirB := t.TempDir(), t.TempDir()
 	sopsEncrypt(t, dirA, "a.sops.env", "WHO=a\n", a.Recipient().String())
 	sopsEncrypt(t, dirB, "b.sops.env", "WHO=b\n", b.Recipient().String(), stray.Recipient().String())
+	// DecryptDir deletes the encrypted copy (a Sync writes it from Git again each time): every call gets a fresh dir
+	encA, _ := os.ReadFile(filepath.Join(dirA, "a.sops.env"))
+	encB, _ := os.ReadFile(filepath.Join(dirB, "b.sops.env"))
+	fresh := func(enc []byte, name string) string {
+		d := t.TempDir()
+		if err := os.WriteFile(filepath.Join(d, name), enc, 0o644); err != nil {
+			t.Error(err)
+		}
+		return d
+	}
+	freshA := func() string { return fresh(encA, "a.sops.env") }
+	freshB := func() string { return fresh(encB, "b.sops.env") }
 
-	if _, err := (Decryptor{}).DecryptDir(dirA, []string{b.String()}); err == nil {
+	if _, err := (Decryptor{}).DecryptDir(freshA(), []string{b.String()}); err == nil {
 		t.Fatal("a's file decrypted with b's key")
 	} else {
 		var wk *domain.WrongKeyError
@@ -157,27 +180,36 @@ func TestDecryptDirUsesOnlyGivenIdentities(t *testing.T) {
 			t.Fatalf("%q, want %q", err, want)
 		}
 	}
-	if _, err := (Decryptor{}).DecryptDir(dirB, nil); err == nil {
+	if _, err := (Decryptor{}).DecryptDir(freshB(), nil); err == nil {
 		t.Fatal("decrypted without identities (environment key used?)")
 	}
 	// previous keys are tried after the current one
-	if _, err := (Decryptor{}).DecryptDir(dirA, []string{b.String(), a.String()}); err != nil {
+	if _, err := (Decryptor{}).DecryptDir(freshA(), []string{b.String(), a.String()}); err != nil {
 		t.Fatal(err)
 	}
 
 	// concurrent calls with different keys don't mix them
+	decrypts := func(dir, id, who string) error {
+		if _, err := (Decryptor{}).DecryptDir(dir, []string{id}); err != nil {
+			return err
+		}
+		if got, _ := os.ReadFile(filepath.Join(dir, who+".env")); !strings.Contains(string(got), "WHO="+who) {
+			return fmt.Errorf("%s: %q", who, got)
+		}
+		return nil
+	}
 	var wg sync.WaitGroup
 	errs := make(chan error, 40)
 	for range 10 {
-		wg.Go(func() { _, err := (Decryptor{}).DecryptDir(dirA, []string{a.String()}); errs <- err })
-		wg.Go(func() { _, err := (Decryptor{}).DecryptDir(dirB, []string{b.String()}); errs <- err })
+		wg.Go(func() { errs <- decrypts(freshA(), a.String(), "a") })
+		wg.Go(func() { errs <- decrypts(freshB(), b.String(), "b") })
 		wg.Go(func() {
-			if _, err := (Decryptor{}).DecryptDir(dirA, []string{b.String()}); err == nil {
+			if _, err := (Decryptor{}).DecryptDir(freshA(), []string{b.String()}); err == nil {
 				errs <- errors.New("a decrypted with b")
 			}
 		})
 		wg.Go(func() {
-			if _, err := (Decryptor{}).DecryptDir(dirB, []string{a.String()}); err == nil {
+			if _, err := (Decryptor{}).DecryptDir(freshB(), []string{a.String()}); err == nil {
 				errs <- errors.New("b decrypted with a")
 			}
 		})
@@ -187,12 +219,6 @@ func TestDecryptDirUsesOnlyGivenIdentities(t *testing.T) {
 	for err := range errs {
 		if err != nil {
 			t.Fatal(err)
-		}
-	}
-	for dir, who := range map[string]string{dirA: "a", dirB: "b"} {
-		got, _ := os.ReadFile(filepath.Join(dir, who+".env"))
-		if !strings.Contains(string(got), "WHO="+who) {
-			t.Fatalf("%s: %q", dir, got)
 		}
 	}
 }

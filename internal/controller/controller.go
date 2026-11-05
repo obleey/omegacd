@@ -814,6 +814,9 @@ func (c *Controller) deleteAppLocked(ctx context.Context, a domain.Application, 
 		if err := os.RemoveAll(c.appDir(a.Name)); err != nil {
 			return err
 		}
+		if err := os.Remove(c.decryptedList(a.Name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
 	}
 	if err := c.cfg.Store.DeleteApp(ctx, a.Name); err != nil {
 		return err
@@ -960,8 +963,9 @@ func (c *Controller) Resources(ctx context.Context, name string) (domain.LiveSta
 	if err != nil {
 		c.cfg.Log.Warn("list project files", "app", name, "err", err)
 	}
+	secret := c.readDecrypted(name)
 	for _, f := range files {
-		f.Secret = f.Secret || f.Kind == "secret" || decrypted(filepath.Join(dir, f.Name))
+		f.Secret = f.Secret || f.Kind == "secret" || secret[filepath.ToSlash(f.Name)] || decrypted(filepath.Join(dir, f.Name))
 		live.Resources = append(live.Resources, f)
 	}
 	return live, nil
@@ -1075,6 +1079,41 @@ func dirExists(path string) bool {
 	return err == nil && fi.IsDir()
 }
 
+// decryptedList records which files in the app dir were decrypted from SOPS (their *.sops.* copies are
+// deleted after decrypting). It sits next to the app dir, not in it, so Export's pruning and the copy to a
+// remote Host never touch it.
+func (c *Controller) decryptedList(name string) string {
+	return filepath.Join(c.cfg.WorkDir, "apps", "."+name+".decrypted")
+}
+
+func (c *Controller) writeDecrypted(name, dir string, written []string) error {
+	var b strings.Builder
+	for _, p := range written {
+		rel, err := filepath.Rel(dir, p)
+		if err != nil {
+			return err
+		}
+		b.WriteString(filepath.ToSlash(rel) + "\n")
+	}
+	list := c.decryptedList(name)
+	if err := os.WriteFile(list+".tmp", []byte(b.String()), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(list+".tmp", list)
+}
+
+func (c *Controller) readDecrypted(name string) map[string]bool {
+	b, _ := os.ReadFile(c.decryptedList(name))
+	set := map[string]bool{}
+	for line := range strings.Lines(string(b)) {
+		if line = strings.TrimSpace(line); line != "" {
+			set[line] = true
+		}
+	}
+	return set
+}
+
+// decrypted is the fallback for work dirs from before the decrypted list, which still have the *.sops.* sibling.
 func decrypted(path string) bool {
 	entries, _ := os.ReadDir(filepath.Dir(path))
 	return slices.ContainsFunc(entries, func(e os.DirEntry) bool {
@@ -1535,7 +1574,13 @@ func (c *Controller) decrypt(a domain.Application, dir string, keys []domain.Hos
 	for i, k := range keys {
 		ids[i], recipients[i] = k.PrivateKey, k.Recipient
 	}
-	_, err := c.cfg.Secrets.DecryptDir(dir, ids)
+	written, err := c.cfg.Secrets.DecryptDir(dir, ids)
+	if dir == c.appDir(a.Name) {
+		// recorded even after an error: whatever was decrypted is in the app dir now and must stay masked
+		if werr := c.writeDecrypted(a.Name, dir, written); werr != nil {
+			return fmt.Errorf("record decrypted files: %w", werr)
+		}
+	}
 	var wk *domain.WrongKeyError
 	switch {
 	case err == nil:

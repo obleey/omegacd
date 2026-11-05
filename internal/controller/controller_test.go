@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -223,19 +224,29 @@ func (g *fakeGit) define(sha, defs string) {
 
 // fakeSecrets records the identities of each DecryptDir call; with need set, it fails unless need is among them.
 type fakeSecrets struct {
-	mu    sync.Mutex
-	calls [][]string
-	need  string
+	mu     sync.Mutex
+	calls  [][]string
+	need   string
+	writes map[string]string // relative path -> plaintext "decrypted" into the dir
+	err    error             // returned after writing
 }
 
-func (f *fakeSecrets) DecryptDir(_ string, ids []string) ([]string, error) {
+func (f *fakeSecrets) DecryptDir(dir string, ids []string) ([]string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, ids)
 	if f.need != "" && !slices.Contains(ids, f.need) {
 		return nil, &domain.WrongKeyError{File: "db.sops.env", Recipients: []string{"age1other"}}
 	}
-	return nil, nil
+	var written []string
+	for name, plain := range f.writes {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(plain), 0o600); err != nil {
+			return written, err
+		}
+		written = append(written, p)
+	}
+	return written, f.err
 }
 
 func (f *fakeSecrets) lastCall() []string {
@@ -1265,5 +1276,72 @@ func TestComposeText(t *testing.T) {
 	}
 	if _, err := composeText(domain.Application{ComposeFiles: []string{"missing.yaml"}}, dir); err == nil {
 		t.Fatal("missing file: no error")
+	}
+}
+
+func TestDecryptedFilesAreRecordedAndMasked(t *testing.T) {
+	ctx := t.Context()
+	r := newRig(t)
+	r.sec.writes = map[string]string{"db.env": "PASSWORD=first-secret\n"}
+	r.e.files = []domain.Resource{{Kind: "env_file", Name: "db.env"}, {Kind: "env_file", Name: "plain.env"}}
+	if _, err := r.c.CreateApp(ctx, app("web")); err != nil {
+		t.Fatal(err)
+	}
+	sync := func() {
+		t.Helper()
+		if _, err := r.c.Sync(ctx, "web", domain.SyncRequest{}); err != nil {
+			t.Fatal(err)
+		}
+		r.waitIdle(t, "web")
+	}
+	sync()
+	os.WriteFile(filepath.Join(r.c.appDir("web"), "plain.env"), []byte("A=1\n"), 0o644)
+
+	list := r.c.decryptedList("web")
+	if b, err := os.ReadFile(list); err != nil || string(b) != "db.env\n" {
+		t.Fatalf("decrypted list: %q, %v", b, err)
+	}
+	if filepath.Dir(list) == r.c.appDir("web") {
+		t.Fatal("the list must live outside the app dir (Export prunes it, remote Hosts get a copy)")
+	}
+	live, err := r.c.Resources(ctx, "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := map[string]bool{}
+	for _, f := range live.Resources {
+		secret[f.Name] = f.Secret
+	}
+	if !secret["db.env"] || secret["plain.env"] {
+		t.Fatalf("secret flags: %v (db.env has no *.sops.* sibling any more, only the list says it was decrypted)", secret)
+	}
+	d, err := r.c.ResourceDetail(ctx, "web", "env_file", "db.env")
+	if err != nil || !d.Masked || strings.Contains(d.Content, "first-secret") || d.Content != "PASSWORD=••••" {
+		t.Fatalf("db.env not masked: %+v, %v", d, err)
+	}
+
+	// a Diff decrypts into staging: the app's list must stay as it is
+	r.sec.writes = map[string]string{"db.env": "PASSWORD=x\n", "new.env": "B=2\n"}
+	if _, err := r.c.Diff(ctx, "web"); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(list); string(b) != "db.env\n" {
+		t.Fatalf("Diff changed the list: %q", b)
+	}
+
+	// a Sync failing after decrypting some files still records them: they are in the app dir now
+	r.sec.err = errors.New("boom")
+	sync()
+	if set := r.c.readDecrypted("web"); !set["db.env"] || !set["new.env"] {
+		t.Fatalf("after a failed decrypt: %v", set)
+	}
+
+	// deleting the app removes the list with the app dir
+	r.sec.err = nil
+	if err := r.c.DeleteApp(ctx, "web", true, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(list); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("list left behind: %v", err)
 	}
 }

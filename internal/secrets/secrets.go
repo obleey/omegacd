@@ -70,7 +70,8 @@ func (Decryptor) DecryptDir(dir string, identities []string) ([]string, error) {
 			return err
 		}
 		written = append(written, out)
-		return nil
+		// the containers read the plaintext; the encrypted copy stays in Git, where it belongs
+		return os.Remove(path)
 	})
 	return written, err
 }
