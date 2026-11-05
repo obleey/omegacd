@@ -429,15 +429,35 @@ Set the same value in `OMEGACD_WEBHOOK_SECRET`. A webhook only triggers a refres
 
 ## CLI
 
-The same binary is also the client: `omegacd` (or `omegacd server`) runs the server, any other command talks to one. Create an API token under **Settings → API tokens**, then:
+The same binary is also the client: `omegacd` (or `omegacd server`) runs the server, any other command talks to one. On a laptop or in CI, get it from [Releases](https://github.com/obleey/omegacd/releases) (see [Option 3](#option-3-cli-only)). Create an API token under **Settings → API tokens**, then log in once:
 
 ```sh
 omegacd login --server https://omegacd.example.com --token ocd_...   # saved to ~/.config/omegacd/config.json (0600)
-omegacd app list                       # Child Applications indented under their App of Apps
-omegacd app sync myapp --wait          # waits for the Sync Operation, then for Healthy
 ```
 
-In CI, pass the server and token as environment variables:
+### Everyday use
+
+```sh
+omegacd app list                          # all Applications, Child Applications indented under their App of Apps
+omegacd app get web                       # status, Revisions, Sync Policy; -o json for the API object
+omegacd app diff web                      # what the next Sync changes (exit 1 if anything)
+omegacd app sync web --wait               # Sync, then wait until it succeeded and the app is Healthy
+omegacd app logs web nginx -f --tail 50   # follow one service's logs
+omegacd app history web                   # past Sync Operations with their IDs
+omegacd app rollback web 42 --wait        # back to the Revision of operation 42 (turns Auto-Sync off)
+omegacd app refresh platform              # re-read Git now; on an App of Apps, its children too
+omegacd app export web > web.yaml         # the definition, for an App of Apps folder
+
+# create an Application from the command line (or app create -f web.yaml)
+omegacd app create web --repo https://github.com/acme/deploy --path apps/web --host vps --auto-sync --self-heal
+
+# delete it: containers too (asks first); --volumes also deletes its named volumes and their data
+omegacd app delete web
+```
+
+### In CI
+
+Pass the server and token as environment variables, and let `--wait` fail the job when a deployment fails:
 
 ```yaml
 # GitHub Actions, after pushing a new image tag to the deploy repo
@@ -447,25 +467,71 @@ In CI, pass the server and token as environment variables:
     OMEGACD_TOKEN: ${{ secrets.OMEGACD_TOKEN }}
 ```
 
-`--wait` exits 0 when the Sync Operation succeeded and the Application is Healthy, and 1 when the operation failed, the Application is Degraded, or `--timeout` (default 10m) passes. `--no-health` stops after the operation.
+`--wait` exits 0 when the Sync Operation succeeded and the Application is Healthy, and 1 when the operation failed, the Application is Degraded, or `--timeout` (default 10m) passes. `--no-health` stops after the operation. `app diff` exits 0 without differences, 1 with, 2 on an error — handy as a check.
+
+### Moving an existing server to OmegaCD
+
+Stacks you started by hand with `docker compose up` can move into Git without downtime planning. `omegacd import` runs **on your laptop, in your repository's checkout**, and reads the stacks running on a server over your own SSH (keys, agent, `~/.ssh/config`) — nothing is installed there and nothing on the server changes:
+
+```sh
+cd ~/code/server-apps                      # your (possibly brand-new) Git repo
+omegacd import --ssh deploy@vps.example.com --host vps --dry-run   # see what would happen
+omegacd import --ssh deploy@vps.example.com --host vps             # write it
+```
+
+```text
+✓ blog → apps/blog (2 services)
+    config   nginx.conf
+    data     wp-content → /opt/stacks/blog/wp-content (stays on the host)
+    secret   db.env → db.sops.env, encrypted for age1qv7…8x2c
+    moved    wordpress: WORDPRESS_DB_PASSWORD from the compose file into the encrypted .sops.env
+    takeover recreates its containers once (they mount files that now come from Git)
+✓ uptime → apps/uptime (1 service)
+    takeover keeps its containers running
+```
+
+For each stack it:
+
+- copies the compose files and the **config** they mount (files up to 1 MB, read-only folders up to 1 MB) into `apps/<name>/`;
+- leaves **data** where it is: writable or big folders become absolute paths on the server (`./wp-content` → `/opt/stacks/blog/wp-content`), named volumes stay as they are;
+- **encrypts secrets** with the server's Host Key: env files with password-like keys become `*.sops.env`, Compose secret files `*.sops.*`, and passwords written in `environment:` move into an encrypted `.sops.env` (the compose file then says `${WORDPRESS_DB_PASSWORD}`). The key is looked up on your OmegaCD by `--host`, or given with `--recipient age1…`;
+- adds a definition to `platform/apps.yaml` with `host: vps` and `adopt: true`, Auto-Sync **off**;
+- says what the takeover will do: containers that only use images and volumes keep running; those mounting files from the stack's folder are recreated once.
+
+Then review with `git diff`, commit and push, add the server under **Settings → Hosts** (if it isn't there yet), and create an App of Apps with path `platform`. Check each Application's Diff and Sync it to take its stack over. Without `--ssh`, `import` reads the local Docker engine; name stacks (`omegacd import blog uptime`) to import only those. Stacks already managed by OmegaCD or already defined are skipped, and an existing `apps/<name>` is only overwritten with `--force`.
+
+### Hosts and keys
+
+```sh
+omegacd host list                          # Hosts with status, Docker version and Host Key
+omegacd host test vps                      # can OmegaCD reach its Docker engine?
+omegacd host key show vps                  # the public key, for .sops.yaml
+omegacd host key generate vps              # a new Host Key; the old one stays as "previous" until removed
+omegacd host key import vps --file key.txt # use a key made elsewhere (- reads stdin)
+omegacd keygen --out age.key               # a new age key, e.g. the Master Key for a fresh install
+```
+
+### All commands
 
 | Command | |
 | --- | --- |
 | `login --server URL --token TOKEN`, `logout`, `version` | |
-| `keygen [--out FILE]` | a new age key (the Master Key, or one to import as a Host Key), like `age-keygen`; works offline, never overwrites a file |
 | `app list`, `app get NAME` | `-o json` for the raw API object |
 | `app create NAME --repo URL [--path P] [--revision R] [--file F]... [--profile P]... [--host H] [--kind apps] [--auto-sync] [--self-heal] [--prune [--prune-volumes]] [--adopt]` | or `app create -f app.yaml` |
 | `app sync NAME [--prune] [--wait] [--no-health] [--timeout 10m]` | |
-| `app refresh NAME` | re-read Git and the Live State now |
+| `app refresh NAME` | re-read Git and the Live State now; an App of Apps refreshes its children too |
 | `app diff NAME` | exit 0: no differences, 1: differences, 2: error |
 | `app history NAME`, `app rollback NAME OP_ID [--wait]` | |
 | `app wait NAME [--sync] [--health] [--timeout 10m]` | |
 | `app logs NAME [CONTAINER_OR_SERVICE] [-f] [--tail N]` | |
 | `app export NAME` | Application definition YAML |
 | `app delete NAME [--cascade=false \| --volumes] [--yes]` | asks first on a terminal; `--cascade=false` keeps the containers; `--volumes` also deletes the volumes and their data |
+| `import [STACK]... [--ssh user@host --host NAME] [--recipient age1…] [--apps-dir apps] [--definitions platform/apps.yaml] [--repo-url URL] [--dry-run] [--force]` | run in your repository's checkout — see [Moving an existing server](#moving-an-existing-server-to-omegacd) |
 | `host list`, `host test NAME` | |
+| `host key show HOST`, `host key generate HOST`, `host key import HOST --file PATH`, `host key remove HOST RECIPIENT` | private keys are read from a file or stdin, never from the command line, and never shown |
+| `keygen [--out FILE]` | a new age key, like `age-keygen`; works offline, never overwrites a file |
 
-Every command takes `--server`, `--token` and `-o table|json`; `OMEGACD_SERVER` and `OMEGACD_TOKEN` override the saved login. Colors are used only on a terminal and honour `NO_COLOR`.
+Every command talking to a server takes `--server`, `--token` and `-o table|json`; `OMEGACD_SERVER` and `OMEGACD_TOKEN` override the saved login. Colors are used only on a terminal and honour `NO_COLOR`.
 
 ![History and Rollback](assets/screenshots/history.png)
 

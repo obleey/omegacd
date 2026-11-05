@@ -222,3 +222,61 @@ func TestDecryptDirUsesOnlyGivenIdentities(t *testing.T) {
 		}
 	}
 }
+
+func TestEncrypt(t *testing.T) {
+	id := newID(t)
+	for name, plain := range map[string]string{
+		"db.sops.env":    "DB_PASSWORD=s3cret\nDB_USER=app\n",
+		"conf.sops.yaml": "api:\n  key: abc123\n",
+		"pw.sops.txt":    "hunter2\n",
+		"raw.sops.json":  `{"token":"t0k"}`,
+	} {
+		enc, err := Encrypt([]byte(plain), name, []string{id.Recipient().String()})
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if strings.Contains(string(enc), "s3cret") || strings.Contains(string(enc), "abc123") || strings.Contains(string(enc), "hunter2") || strings.Contains(string(enc), "t0k") {
+			t.Fatalf("%s: plaintext in the encrypted file:\n%s", name, enc)
+		}
+		// OmegaCD reads it back
+		dir := t.TempDir()
+		os.WriteFile(filepath.Join(dir, name), enc, 0o644)
+		if _, err := (Decryptor{}).DecryptDir(dir, []string{id.String()}); err != nil {
+			t.Fatalf("%s: decrypt: %v", name, err)
+		}
+		got, _ := os.ReadFile(filepath.Join(dir, strings.Replace(name, ".sops.", ".", 1)))
+		if name == "raw.sops.json" || name == "conf.sops.yaml" { // SOPS re-indents structured files, like its CLI
+			if !strings.Contains(string(got), "t0k") && !strings.Contains(string(got), "key: abc123") {
+				t.Fatalf("%s: %q", name, got)
+			}
+		} else if string(got) != plain {
+			t.Fatalf("%s: round trip %q, want %q", name, got, plain)
+		}
+	}
+	if _, err := Encrypt([]byte("A=1\n"), "x.sops.env", nil); err == nil {
+		t.Fatal("encrypted without a recipient")
+	}
+	if _, err := Encrypt([]byte("A=1\n"), "x.sops.env", []string{"age1notakey"}); err == nil {
+		t.Fatal("accepted a bad recipient")
+	}
+}
+
+// The sops CLI opens what Encrypt writes.
+func TestEncryptReadableBySopsCLI(t *testing.T) {
+	if _, err := exec.LookPath("sops"); err != nil {
+		t.Skip("sops not on PATH")
+	}
+	id := newID(t)
+	enc, err := Encrypt([]byte("DB_PASSWORD=s3cret\n"), "db.sops.env", []string{id.Recipient().String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := filepath.Join(t.TempDir(), "db.sops.env")
+	os.WriteFile(f, enc, 0o644)
+	cmd := exec.Command("sops", "--decrypt", "--input-type", "dotenv", "--output-type", "dotenv", f)
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + t.TempDir(), "SOPS_AGE_KEY=" + id.String()}
+	out, err := cmd.CombinedOutput()
+	if err != nil || string(out) != "DB_PASSWORD=s3cret\n" {
+		t.Fatalf("sops --decrypt: %v\n%s", err, out)
+	}
+}

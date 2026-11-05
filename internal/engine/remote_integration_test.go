@@ -84,7 +84,7 @@ func startDind(t *testing.T) dind {
 	}
 	sshPub, _ := ssh.NewPublicKey(pub)
 	setup := `set -e
-apk add --no-cache openssh-server >/dev/null
+apk add --no-cache --upgrade openssh-server openssh-client >/dev/null # --upgrade: the image ships an older openssh-client
 ln -sf /usr/local/bin/docker /usr/bin/docker
 ssh-keygen -A >/dev/null
 mkdir -p /root/.ssh && chmod 700 /root/.ssh
@@ -93,7 +93,7 @@ sed -i 's/^root:[!*]*:/root::/' /etc/shadow
 /usr/sbin/sshd
 cat /etc/ssh/ssh_host_ed25519_key.pub`
 	if out, err := dockerCmd("exec", id, "sh", "-c", setup, "sh", string(ssh.MarshalAuthorizedKey(sshPub))); err != nil {
-		t.Logf("ssh setup failed, ssh:// untested: %v: %s", err, out)
+		t.Fatalf("ssh setup in dind failed (a silent skip once left ssh:// untested): %v: %s", err, out)
 	} else {
 		sshPort := port("22")
 		d.knownHosts = filepath.Join(t.TempDir(), "known_hosts")

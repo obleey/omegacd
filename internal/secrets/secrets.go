@@ -11,12 +11,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/getsops/sops/v3"
 	"github.com/getsops/sops/v3/aes"
 	sopsage "github.com/getsops/sops/v3/age"
 	"github.com/getsops/sops/v3/cmd/sops/common"
 	"github.com/getsops/sops/v3/cmd/sops/formats"
 	"github.com/getsops/sops/v3/config"
 	"github.com/getsops/sops/v3/keyservice"
+	"github.com/getsops/sops/v3/version"
 	"google.golang.org/grpc"
 
 	"github.com/obleey/omegacd/internal/domain"
@@ -74,6 +76,37 @@ func (Decryptor) DecryptDir(dir string, identities []string) ([]string, error) {
 		return os.Remove(path)
 	})
 	return written, err
+}
+
+// Encrypt encrypts plain for the age recipients as a SOPS file named name ("x.sops.env"): the format comes
+// from the decrypted name's extension, as DecryptDir reads it back. Used by omegacd import; the result is a
+// regular SOPS file the sops CLI opens too.
+func Encrypt(plain []byte, name string, recipients []string) ([]byte, error) {
+	if len(recipients) == 0 {
+		return nil, errors.New("encrypt: no age recipient")
+	}
+	keys, err := sopsage.MasterKeysFromRecipients(strings.Join(recipients, ","))
+	if err != nil {
+		return nil, fmt.Errorf("encrypt: %w", err)
+	}
+	group := make(sops.KeyGroup, len(keys))
+	for i, k := range keys {
+		group[i] = k
+	}
+	store := common.StoreForFormat(formatFor(strings.Replace(name, ".sops.", ".", 1)), config.NewStoresConfig())
+	branches, err := store.LoadPlainFile(plain)
+	if err != nil {
+		return nil, fmt.Errorf("encrypt %s: %w", name, err)
+	}
+	tree := sops.Tree{Branches: branches, Metadata: sops.Metadata{KeyGroups: []sops.KeyGroup{group}, Version: version.Version}}
+	dataKey, errs := tree.GenerateDataKeyWithKeyServices([]keyservice.KeyServiceClient{keyservice.NewLocalClient()})
+	if len(errs) > 0 {
+		return nil, fmt.Errorf("encrypt %s: %v", name, errors.Join(errs...))
+	}
+	if err := common.EncryptTree(common.EncryptTreeOpts{DataKey: dataKey, Tree: &tree, Cipher: aes.NewCipher()}); err != nil {
+		return nil, fmt.Errorf("encrypt %s: %w", name, err)
+	}
+	return store.EmitEncryptedFile(tree)
 }
 
 // decryptData is decrypt.DataWithFormat with our key service instead of the environment-reading local one.

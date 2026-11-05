@@ -25,6 +25,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/obleey/omegacd/internal/domain"
+	"github.com/obleey/omegacd/internal/secretkey"
 )
 
 const (
@@ -1081,13 +1082,6 @@ func (c *Controller) resolveInAppDir(name, rel string) (string, error) {
 	return path, nil
 }
 
-// decrypted reports whether path was written by Secrets.DecryptDir from a sibling "x.sops.ext".
-var (
-	secretKey  = regexp.MustCompile(`(?i)PASSWORD|PASSWD|SECRET|TOKEN|API_?KEY|PRIVATE_?KEY|ACCESS_?KEY`)
-	notSecret  = regexp.MustCompile(`(?i)_(FILE|PATH)$`)
-	plainValue = regexp.MustCompile(`(?i)^(true|false|yes|no|on|off|0|1)?$`)
-)
-
 // plainSecrets warns about environment values in the compose files that look like secrets and are written out
 // in Git instead of coming from ${VAR} (a SOPS-encrypted .env) or an env_file. Files are read as written,
 // before interpolation; unreadable ones are skipped (Validate reports them).
@@ -1122,7 +1116,7 @@ func plainSecrets(a domain.Application, dir string) []string {
 			}
 			for _, kv := range pairs {
 				k, v := strings.TrimSpace(kv[0]), strings.TrimSpace(kv[1])
-				if secretKey.MatchString(k) && !notSecret.MatchString(k) && !plainValue.MatchString(v) && !strings.Contains(v, "$") {
+				if secretkey.Plain(k, v) {
 					warnings = append(warnings, fmt.Sprintf("%s: %s is in plain text in %s, readable by anyone with access to the repository; "+
 						"put it in a SOPS-encrypted .env and write %s: ${%s}", svc, k, f, k, k))
 				}
@@ -1225,7 +1219,8 @@ func (c *Controller) readDecrypted(name string) map[string]bool {
 	return set
 }
 
-// decrypted is the fallback for work dirs from before the decrypted list, which still have the *.sops.* sibling.
+// decrypted reports whether path was written by Secrets.DecryptDir from a sibling "x.sops.ext" — the fallback
+// for work dirs from before the decrypted list.
 func decrypted(path string) bool {
 	entries, _ := os.ReadDir(filepath.Dir(path))
 	return slices.ContainsFunc(entries, func(e os.DirEntry) bool {

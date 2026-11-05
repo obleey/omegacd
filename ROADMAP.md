@@ -18,7 +18,8 @@ OmegaCD is early. This is the plan, most important first — it changes as real 
 - [x] Relative bind mounts not in Git are refused (every Sync would delete their data); warning for secrets written in plain text in compose files
 - [x] Work dir holds only what containers read (no `*.sops.*` copies); a persistent work dir (e.g. `/opt/services`) as an option
 - [x] Install script for Docker Compose and Kubernetes (`deploy/install.sh`), `deploy/compose.yaml`, `deploy/kubernetes.yaml`, `omegacd keygen`
-- [x] Release candidates `v0.1.0-rc.1` / `rc.2`: binaries and multi-arch image published by CI
+- [x] `omegacd import`: move stacks started by hand into Git from your laptop over SSH — config into Git, data stays, secrets encrypted for the Host Key, `adopt: true` definitions
+- [x] Release candidates `v0.1.0-rc.1` … `rc.3`: binaries and multi-arch image published by CI
 
 ## v0.2 — trustworthy for real sites
 

@@ -35,8 +35,13 @@ type def struct {
 }
 
 // Marshal writes a's settings as a definition; Adopt and runtime state are left out.
-func Marshal(a domain.Application) ([]byte, error) {
-	d := def{a.Name, a.Kind, a.RepoURL, a.Path, a.TargetRevision, a.ComposeFiles, a.Profiles, a.Host, a.AutoSync, a.SelfHeal, a.Prune, a.PruneVolumes, false}
+func Marshal(a domain.Application) ([]byte, error) { return marshal(a, false) }
+
+// MarshalAdopting is Marshal with adopt: true, for definitions that take over running stacks (omegacd import).
+func MarshalAdopting(a domain.Application) ([]byte, error) { return marshal(a, true) }
+
+func marshal(a domain.Application, adopt bool) ([]byte, error) {
+	d := def{a.Name, a.Kind, a.RepoURL, a.Path, a.TargetRevision, a.ComposeFiles, a.Profiles, a.Host, a.AutoSync, a.SelfHeal, a.Prune, a.PruneVolumes, adopt}
 	if d.Kind == domain.KindCompose {
 		d.Kind = ""
 	}

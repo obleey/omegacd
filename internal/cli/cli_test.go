@@ -4,10 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"filippo.io/age"
+	"github.com/obleey/omegacd/internal/importer"
+	"github.com/obleey/omegacd/internal/secrets"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -72,6 +76,17 @@ type result struct {
 
 func run(t *testing.T, srv *httptest.Server, env map[string]string, stdin string, args ...string) result {
 	t.Helper()
+	return runCLI(t, srv, env, stdin, nil, args...)
+}
+
+// runWith is run with a hook to set up the CLI (e.g. a fake Docker host for import).
+func runWith(t *testing.T, srv *httptest.Server, env map[string]string, setup func(*CLI), args ...string) result {
+	t.Helper()
+	return runCLI(t, srv, env, "", setup, args...)
+}
+
+func runCLI(t *testing.T, srv *httptest.Server, env map[string]string, stdin string, setup func(*CLI), args ...string) result {
+	t.Helper()
 	if env == nil {
 		env = map[string]string{}
 	}
@@ -91,6 +106,9 @@ func run(t *testing.T, srv *httptest.Server, env map[string]string, stdin string
 		Stdin: strings.NewReader(stdin), Stdout: &out, Stderr: &errOut,
 		Getenv: func(k string) string { return env[k] }, Poll: time.Millisecond,
 		StdinTTY: env["STDIN_TTY"] == "1",
+	}
+	if setup != nil {
+		setup(c)
 	}
 	code := c.Run(context.Background(), args)
 	return result{code, out.String(), errOut.String()}
@@ -395,5 +413,116 @@ func TestKeygen(t *testing.T) {
 	r1, r2 := run(t, nil, nil, "", "keygen"), run(t, nil, nil, "", "keygen")
 	if r1.code != 0 || !strings.Contains(r1.stdout, "AGE-SECRET-KEY-1") || r1.stdout == r2.stdout {
 		t.Fatalf("%+v", r1)
+	}
+}
+
+// importHost is one running stack with a secret in an env file, as importer.Host.
+type importHost struct{}
+
+func (importHost) Stacks(context.Context) ([]importer.Stack, error) {
+	return []importer.Stack{{Name: "blog", Dir: "/srv/blog", Files: []string{"compose.yaml"}}}, nil
+}
+func (importHost) Info(_ context.Context, _ string, paths []string) (map[string]importer.Info, error) {
+	out := map[string]importer.Info{}
+	for _, p := range paths {
+		if p == "app.env" {
+			out[p] = importer.Info{Kind: 'f', Size: 20}
+		}
+	}
+	return out, nil
+}
+func (importHost) Read(_ context.Context, _ string, paths []string) (map[string][]byte, error) {
+	all := map[string][]byte{
+		"compose.yaml": []byte("services:\n  web:\n    image: nginx\n    env_file: app.env\n"),
+		"app.env":      []byte("DB_PASSWORD=s3cret\n"),
+	}
+	out := map[string][]byte{}
+	for _, p := range paths {
+		if b, ok := all[p]; ok {
+			out[p] = b
+		}
+	}
+	return out, nil
+}
+
+func gitRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, args := range [][]string{{"init", "-q", "-b", "main"}, {"remote", "add", "origin", "git@github.com:acme/server.git"}} {
+		if out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	t.Chdir(dir)
+	return dir
+}
+
+func TestImport(t *testing.T) {
+	id, _ := age.GenerateX25519Identity()
+	_, srv := newAPI(t, map[string]any{"GET /api/settings/hosts": []domain.HostView{
+		{Host: domain.Host{Name: "local"}, KeyRecipient: "age1master"},
+		{Host: domain.Host{Name: "vps"}, KeyRecipient: id.Recipient().String()},
+	}})
+	repo := gitRepo(t)
+	var dialed string
+	withHost := func(c *CLI) {
+		c.ImportHost = func(target string) (importer.Host, error) { dialed = target; return importHost{}, nil }
+	}
+	r := runWith(t, srv, nil, withHost, "import", "--ssh", "root@vps.example.com", "--host", "vps")
+	if r.code != 0 || dialed != "root@vps.example.com" {
+		t.Fatalf("%+v dialed %q", r, dialed)
+	}
+	enc, err := os.ReadFile(filepath.Join(repo, "apps/blog/app.sops.env"))
+	if err != nil || bytes.Contains(enc, []byte("s3cret")) {
+		t.Fatalf("app.sops.env: %v\n%s", err, enc)
+	}
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "app.sops.env"), enc, 0o600)
+	if _, err := (secrets.Decryptor{}).DecryptDir(dir, []string{id.String()}); err != nil {
+		t.Fatalf("encrypted for the Host Key looked up on the server? %v", err)
+	}
+	defs, _ := os.ReadFile(filepath.Join(repo, "platform/apps.yaml"))
+	for _, want := range []string{"name: blog", "repoURL: git@github.com:acme/server.git", "path: apps/blog", "targetRevision: main", "host: vps", "adopt: true", "autoSync: false"} {
+		if !strings.Contains(string(defs), want) {
+			t.Errorf("definitions lack %q:\n%s", want, defs)
+		}
+	}
+	if !strings.Contains(r.stdout, "✓ blog → apps/blog") || !strings.Contains(r.stdout, "git diff") {
+		t.Errorf("stdout:\n%s", r.stdout)
+	}
+}
+
+func TestImportRecipientFlagAndErrors(t *testing.T) {
+	id, _ := age.GenerateX25519Identity()
+	withHost := func(c *CLI) { c.ImportHost = func(string) (importer.Host, error) { return importHost{}, nil } }
+	repo := gitRepo(t)
+	// --recipient: no server needed
+	if r := runWith(t, nil, nil, withHost, "import", "--recipient", id.Recipient().String(), "--dry-run"); r.code != 0 || !strings.Contains(r.stdout, "blog would go to apps/blog") {
+		t.Fatalf("%+v", r)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "apps")); err == nil {
+		t.Fatal("--dry-run wrote files")
+	}
+	for _, c := range []struct {
+		args []string
+		srv  bool
+		want string
+	}{
+		{[]string{"import", "--ssh", "root@vps"}, false, "--ssh needs --host NAME"},
+		{[]string{"import"}, false, "pass --recipient age1"},                        // secrets, not logged in
+		{[]string{"import", "--host", "edge"}, true, "Host edge is not in OmegaCD"}, // unknown Host on the server
+	} {
+		var srv *httptest.Server
+		if c.srv {
+			_, srv = newAPI(t, map[string]any{"GET /api/settings/hosts": []domain.HostView{{Host: domain.Host{Name: "local"}}}})
+		}
+		r := runWith(t, srv, nil, withHost, c.args...)
+		if r.code == 0 || !strings.Contains(r.stdout+r.stderr, c.want) {
+			t.Errorf("%v: %+v, want %q", c.args, r, c.want)
+		}
+	}
+	t.Chdir(t.TempDir()) // not a Git checkout
+	if r := runWith(t, nil, nil, withHost, "import", "--recipient", id.Recipient().String()); r.code == 0 || !strings.Contains(r.stderr, "inside your Git repository") {
+		t.Errorf("outside a repository: %+v", r)
 	}
 }

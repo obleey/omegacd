@@ -1,0 +1,195 @@
+//go:build integration
+
+package importer
+
+import (
+	"bytes"
+	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/pem"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"filippo.io/age"
+	"golang.org/x/crypto/ssh"
+
+	"github.com/obleey/omegacd/internal/secrets"
+)
+
+func docker(args ...string) (string, error) {
+	out, err := exec.Command("docker", args...).CombinedOutput()
+	return strings.TrimSpace(string(out)), err
+}
+
+const itCompose = `services:
+  web:
+    image: nginx:1.29-alpine
+    volumes:
+      - ./site.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./data:/data
+    env_file: app.env
+    environment:
+      ADMIN_PASSWORD: hunter2
+`
+
+func writeStack(t *testing.T, dir string) {
+	t.Helper()
+	os.MkdirAll(filepath.Join(dir, "data"), 0o755)
+	for name, content := range map[string]string{
+		"compose.yaml": itCompose,
+		"site.conf":    "server { listen 80; }\n",
+		"app.env":      "API_TOKEN=t0ken-value\nMODE=prod\n",
+		"data/db.bin":  "user data",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// checkImported verifies apps/<name> in repo against itCompose imported from hostDir.
+func checkImported(t *testing.T, repo, name, hostDir, report string, id *age.X25519Identity) {
+	t.Helper()
+	app := filepath.Join(repo, "apps", name)
+	b, err := os.ReadFile(filepath.Join(app, "compose.yaml"))
+	if err != nil {
+		t.Fatalf("%v\n%s", err, report)
+	}
+	for _, want := range []string{"- " + hostDir + "/data:/data", "- ./site.conf:/etc/nginx/conf.d/default.conf:ro", "ADMIN_PASSWORD: ${ADMIN_PASSWORD}"} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("compose.yaml lacks %q:\n%s", want, b)
+		}
+	}
+	if c, _ := os.ReadFile(filepath.Join(app, "site.conf")); string(c) != "server { listen 80; }\n" {
+		t.Errorf("site.conf: %q", c)
+	}
+	for _, gone := range []string{"data", "app.env", ".env"} {
+		if _, err := os.Stat(filepath.Join(app, gone)); err == nil {
+			t.Errorf("%s was written to Git", gone)
+		}
+	}
+	dir := t.TempDir()
+	for _, f := range []string{"app.sops.env", ".sops.env"} {
+		c, err := os.ReadFile(filepath.Join(app, f))
+		if err != nil {
+			t.Fatalf("%s: %v\n%s", f, err, report)
+		}
+		if bytes.Contains(c, []byte("t0ken-value")) || bytes.Contains(c, []byte("hunter2")) {
+			t.Fatalf("%s holds a secret in plain text", f)
+		}
+		os.WriteFile(filepath.Join(dir, f), c, 0o600)
+	}
+	if _, err := (secrets.Decryptor{}).DecryptDir(dir, []string{id.String()}); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ := os.ReadFile(filepath.Join(dir, ".env")); string(c) != "ADMIN_PASSWORD=hunter2\n" {
+		t.Errorf(".env decrypts to %q", c)
+	}
+	if !strings.Contains(report, "takeover recreates its containers once") || !strings.Contains(report, "data     data → "+hostDir+"/data") {
+		t.Errorf("report:\n%s", report)
+	}
+}
+
+func importInto(t *testing.T, h Host, name, hostName string, id *age.X25519Identity) (string, string) {
+	t.Helper()
+	repo := t.TempDir()
+	var out bytes.Buffer
+	err := Run(context.Background(), h, Options{
+		Repo: repo, AppsDir: "apps", Definitions: "platform/apps.yaml", RepoURL: "https://example.com/r.git", Revision: "main",
+		HostName: hostName, Only: []string{name}, Out: &out,
+		Recipients: func() ([]string, error) { return []string{id.Recipient().String()}, nil },
+	})
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	return repo, out.String()
+}
+
+func TestImportLocal(t *testing.T) {
+	dir := t.TempDir()
+	writeStack(t, dir)
+	const name = "omegacd-it-import"
+	if out, err := docker("compose", "-p", name, "--project-directory", dir, "-f", filepath.Join(dir, "compose.yaml"), "up", "-d", "--quiet-pull"); err != nil {
+		t.Fatalf("compose up: %v: %s", err, out)
+	}
+	t.Cleanup(func() { docker("compose", "-p", name, "down", "-v") })
+	h, err := Dial("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	id, _ := age.GenerateX25519Identity()
+	repo, report := importInto(t, h, name, "", id)
+	real, _ := filepath.EvalSymlinks(dir) // compose records the resolved path (macOS: /private/var/…)
+	if !strings.Contains(report, real) {
+		real = dir
+	}
+	checkImported(t, repo, name, real, report, id)
+}
+
+// TestImportOverSSH imports a stack running inside a Docker host reachable only over ssh, as from a laptop.
+func TestImportOverSSH(t *testing.T) {
+	id, err := docker("run", "-d", "--privileged", "-e", "DOCKER_TLS_CERTDIR=", "-p", "127.0.0.1::22", "docker:29-dind")
+	if err != nil {
+		t.Skipf("cannot start docker:dind: %v: %s", err, id)
+	}
+	id = id[strings.LastIndex(id, "\n")+1:]
+	t.Cleanup(func() { docker("rm", "-f", "-v", id) })
+	for deadline := time.Now().Add(60 * time.Second); ; time.Sleep(500 * time.Millisecond) {
+		if _, err := docker("exec", id, "docker", "version"); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Skip("dind did not come up")
+		}
+	}
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	block, _ := ssh.MarshalPrivateKey(priv, "")
+	sshPub, _ := ssh.NewPublicKey(pub)
+	setup := `set -e
+apk add --no-cache --upgrade openssh-server openssh-client >/dev/null # --upgrade: the image ships an older openssh-client
+ln -sf /usr/local/bin/docker /usr/bin/docker
+ssh-keygen -A >/dev/null
+mkdir -p /root/.ssh && chmod 700 /root/.ssh
+echo "$1" > /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys
+sed -i 's/^root:[!*]*:/root::/' /etc/shadow
+/usr/sbin/sshd
+cat /etc/ssh/ssh_host_ed25519_key.pub`
+	hostKey, err := docker("exec", id, "sh", "-c", setup, "sh", string(ssh.MarshalAuthorizedKey(sshPub)))
+	if err != nil {
+		t.Fatalf("ssh setup in dind failed: %v: %s", err, hostKey)
+	}
+	portOut, _ := docker("port", id, "22")
+	port := portOut[strings.LastIndex(portOut, ":")+1:]
+	tmp := t.TempDir()
+	keyFile, known := filepath.Join(tmp, "id"), filepath.Join(tmp, "known_hosts")
+	os.WriteFile(keyFile, pem.EncodeToMemory(block), 0o600)
+	os.WriteFile(known, []byte("[127.0.0.1]:"+port+" "+hostKey[strings.LastIndex(hostKey, "ssh-ed25519"):]+"\n"), 0o600)
+
+	// the stack lives on the remote host only: write it there and start it with plain docker compose
+	local := t.TempDir()
+	writeStack(t, local)
+	if out, err := docker("cp", local+"/.", id+":/srv/shop"); err != nil {
+		t.Fatalf("copy stack: %v: %s", err, out)
+	}
+	if out, err := docker("exec", "-w", "/srv/shop", id, "docker", "compose", "-p", "shop", "up", "-d", "--quiet-pull"); err != nil {
+		t.Fatalf("compose up in dind: %v: %s", err, out)
+	}
+
+	h, err := Dial("root@127.0.0.1:"+port, "-i", keyFile, "-o", "IdentitiesOnly=yes", "-o", "UserKnownHostsFile="+known, "-o", "StrictHostKeyChecking=yes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	ageID, _ := age.GenerateX25519Identity()
+	repo, report := importInto(t, h, "shop", "vps", ageID)
+	checkImported(t, repo, "shop", "/srv/shop", report, ageID)
+	if b, _ := os.ReadFile(filepath.Join(repo, "platform", "apps.yaml")); !strings.Contains(string(b), "host: vps") || !strings.Contains(string(b), "adopt: true") {
+		t.Errorf("definition:\n%s", b)
+	}
+}
