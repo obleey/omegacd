@@ -279,6 +279,7 @@ type AppView struct {
 	LastOperation *SyncOperation `json:"lastOperation,omitempty"`
 	ReconciledAt  time.Time      `json:"reconciledAt,omitzero"`
 	PrunePending  []string       `json:"prunePending,omitempty"` // stopped undeclared services, and undeclared "network <name>" / "volume <name>"
+	Hosts         []string       `json:"hosts,omitempty"`        // App of Apps: the Hosts its Child Applications deploy to, sorted
 }
 
 type DiffView struct {

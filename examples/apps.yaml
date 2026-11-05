@@ -4,6 +4,7 @@
 name: hello
 repoURL: https://github.com/obleey/omegacd.git
 path: examples/hello
+host: local
 targetRevision: main
 autoSync: true   # deploy every new commit
 selfHeal: true   # restart or recreate containers changed by hand
@@ -12,5 +13,6 @@ prune: false     # services removed from compose.yaml are stopped, not deleted
 name: whoami
 repoURL: https://github.com/obleey/omegacd.git
 path: examples/whoami
+host: local
 targetRevision: main
 autoSync: false  # waits for a Sync: click Sync on the App of Apps to deploy it

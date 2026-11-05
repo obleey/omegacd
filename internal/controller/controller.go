@@ -229,6 +229,7 @@ func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fe
 		c.mu.Lock()
 		v.Health = c.worstHealth(children)
 		c.mu.Unlock()
+		v.Host, v.Hosts = "", childHosts(children) // stored as "local" before it had no Host
 	}
 
 	sha, targetTree, err := c.target(ctx, a, fetch)
@@ -696,10 +697,11 @@ func (c *Controller) checkNew(ctx context.Context, a *domain.Application) error 
 	if err := normalize(a); err != nil {
 		return err
 	}
-	if err := c.checkHost(ctx, a.Host); err != nil {
-		return err
-	}
+	// an App of Apps deploys nothing, so it needs no Docker engine: it can be created where local is disabled
 	if a.Kind == domain.KindCompose {
+		if err := c.checkHost(ctx, a.Host); err != nil {
+			return err
+		}
 		exists, managed, err := c.cfg.Engine.ProjectExists(ctx, a.Host, a.Name)
 		if err != nil {
 			return err
@@ -739,7 +741,7 @@ func (c *Controller) UpdateApp(ctx context.Context, a domain.Application) (domai
 
 // checkUpdate carries over what an update may not change.
 func checkUpdate(old domain.Application, a *domain.Application) error {
-	if a.Host != old.Host {
+	if a.Kind == domain.KindCompose && a.Host != old.Host {
 		return fmt.Errorf("%w: delete and recreate the Application %q to move it to another Host", domain.ErrInvalid, a.Name)
 	}
 	a.CreatedAt, a.Adopt = old.CreatedAt, old.Adopt
@@ -1326,8 +1328,8 @@ func normalize(a *domain.Application) error {
 	// Prune volumes is a sub-option of Prune, and an App of Apps has no volumes of its own
 	a.PruneVolumes = a.PruneVolumes && a.Prune && a.Kind == domain.KindCompose
 	if a.Kind == domain.KindApps {
-		// an App of Apps deploys nothing itself
-		a.ComposeFiles, a.Profiles, a.Host = nil, nil, domain.LocalHost
+		// an App of Apps deploys nothing itself: no Host; its Child Applications each name their own
+		a.ComposeFiles, a.Profiles, a.Host = nil, nil, ""
 	}
 	for _, f := range a.ComposeFiles {
 		if filepath.IsAbs(f) || strings.Contains(f, "..") {
@@ -1359,6 +1361,16 @@ func (c *Controller) children(ctx context.Context, parent string) ([]domain.Appl
 }
 
 var healthOrder = []domain.HealthStatus{domain.Healthy, domain.Progressing, domain.HealthUnknown, domain.Missing, domain.Degraded}
+
+// childHosts is the sorted, distinct Hosts of an App of Apps' children.
+func childHosts(children []domain.Application) []string {
+	var hosts []string
+	for _, ch := range children {
+		hosts = append(hosts, cmp.Or(ch.Host, domain.LocalHost))
+	}
+	slices.Sort(hosts)
+	return slices.Compact(hosts)
+}
 
 // worstHealth is the worst last-known Health of children; Missing when there are none. Caller holds c.mu.
 func (c *Controller) worstHealth(children []domain.Application) domain.HealthStatus {
@@ -1576,7 +1588,9 @@ func (c *Controller) appsByHost(ctx context.Context) (map[string][]string, error
 	}
 	m := map[string][]string{}
 	for _, a := range apps {
-		m[a.Host] = append(m[a.Host], a.Name)
+		if a.Kind == domain.KindCompose { // an App of Apps runs on no Host
+			m[a.Host] = append(m[a.Host], a.Name)
+		}
 	}
 	return m, nil
 }

@@ -58,7 +58,7 @@
 	let collapsed = $state<Record<string, boolean>>({});
 	let q = $derived(filter.trim().toLowerCase());
 	const matches = (a: AppView) =>
-		(!q || [a.name, a.host, a.repoURL, a.path, a.syncStatus, a.health].some((s) => s?.toLowerCase().includes(q))) &&
+		(!q || [a.name, a.host, a.hosts?.join(' '), a.repoURL, a.path, a.syncStatus, a.health].some((s) => s?.toLowerCase().includes(q))) &&
 		(!selSync.length || selSync.includes(shownSync(a))) &&
 		(!selHealth.length || selHealth.includes(a.health));
 
@@ -253,7 +253,7 @@
 								<GitLink href={gitWeb(a.repoURL)?.repo}>{a.repoURL.replace(/^https?:\/\//, '')}</GitLink>{a.path && a.path !== '.' ? ` · ${a.path}` : ''}
 							</div>
 						</td>
-						<td class="mono small">{a.kind === 'apps' ? '—' : a.host || 'local'}</td>
+						<td class="mono small">{a.kind === 'apps' ? a.hosts?.join(', ') || '—' : a.host || 'local'}</td>
 						<td class="mono small">
 							{a.targetRevision}
 							<div class="muted"><GitLink href={a.targetSHA && gitWeb(a.repoURL)?.commit(a.targetSHA)}>{short(a.targetSHA)}</GitLink></div>

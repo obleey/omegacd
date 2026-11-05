@@ -18,13 +18,14 @@ func TestParse(t *testing.T) {
 		err   string
 	}{
 		{"multi-doc and both extensions", map[string]string{
-			"a.yaml": "name: web\nrepoURL: x\nprofiles: [prod]\n---\n---\nname: api\nrepoURL: x\n",
-			"b.yml":  "name: db\nrepoURL: x\nadopt: true\n",
+			"a.yaml": "name: web\nrepoURL: x\nprofiles: [prod]\nhost: local\n---\n---\nname: api\nrepoURL: x\nhost: local\n",
+			"b.yml":  "name: db\nrepoURL: x\nadopt: true\nhost: local\n",
 			"c.txt":  "not: yaml",
 		}, []string{"api", "db", "web"}, ""},
 		{"empty dir", map[string]string{}, nil, ""},
 		{"unknown field", map[string]string{"a.yaml": "name: web\nrepoURL: x\nimage: nginx\n"}, nil, "field image not found"},
-		{"duplicate name", map[string]string{"a.yaml": "name: web\nrepoURL: x\n", "b.yaml": "name: web\nrepoURL: y\n"}, nil, `"web" is already declared in a.yaml`},
+		{"no host", map[string]string{"a.yaml": "name: web\nrepoURL: x\n"}, nil, `"web" has no host:`},
+		{"duplicate name", map[string]string{"a.yaml": "name: web\nrepoURL: x\nhost: local\n", "b.yaml": "name: web\nrepoURL: y\nhost: local\n"}, nil, `"web" is already declared in a.yaml`},
 		{"nested", map[string]string{"a.yaml": "name: web\nkind: apps\nrepoURL: x\n"}, nil, "nested App of Apps"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

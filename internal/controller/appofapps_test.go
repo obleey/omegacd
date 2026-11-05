@@ -35,15 +35,25 @@ func (r rig) mustSync(t *testing.T, name string) {
 	}
 }
 
+// childrenSynced waits for the Syncs an App of Apps' Sync started for its children: they run in the background,
+// and may not have started yet when the parent's operation finished.
+func (r rig) childrenSynced(t *testing.T, names ...string) {
+	t.Helper()
+	for _, n := range names {
+		r.waitOp(t, n, triggerParent)
+		r.waitIdle(t, n)
+	}
+}
+
 func TestAppOfAppsCreatesUpdatesAndKeepsChildren(t *testing.T) {
 	r := newRig(t)
 	ctx := t.Context()
 	p := parentApp("root")
 	p.ComposeFiles, p.Host = []string{"x.yaml"}, "elsewhere"
-	if v, err := r.c.CreateApp(ctx, p); err != nil || v.ComposeFiles != nil || v.Host != domain.LocalHost {
+	if v, err := r.c.CreateApp(ctx, p); err != nil || v.ComposeFiles != nil || v.Host != "" {
 		t.Fatalf("create parent: %+v %v", v.Application, err)
 	}
-	r.g.define("aaaaaaaa", "name: web\nrepoURL: x\n---\nname: api\nrepoURL: x\nprofiles: [prod]\n")
+	r.g.define("aaaaaaaa", "name: web\nrepoURL: x\nhost: local\n---\nname: api\nrepoURL: x\nhost: local\nprofiles: [prod]\n")
 	r.mustSync(t, "root")
 
 	web, err := r.st.GetApp(ctx, "web")
@@ -54,7 +64,7 @@ func TestAppOfAppsCreatesUpdatesAndKeepsChildren(t *testing.T) {
 		t.Fatalf("parent: %s %q", v.SyncStatus, v.SyncMessage)
 	}
 
-	r.g.define("bbbbbbbb", "name: web\nrepoURL: x\ntargetRevision: v2\n")
+	r.g.define("bbbbbbbb", "name: web\nrepoURL: x\nhost: local\ntargetRevision: v2\n")
 	d, err := r.c.Diff(ctx, "root")
 	if err != nil {
 		t.Fatal(err)
@@ -78,7 +88,7 @@ func TestAppOfAppsCreatesUpdatesAndKeepsChildren(t *testing.T) {
 		t.Fatalf("parent: %s %q", v.SyncStatus, v.SyncMessage)
 	}
 
-	r.g.define("cccccccc", "name: web\nrepoURL: x\ntargetRevision: v2\n---\nname: api\nrepoURL: x\nprofiles: [prod]\n")
+	r.g.define("cccccccc", "name: web\nrepoURL: x\nhost: local\ntargetRevision: v2\n---\nname: api\nrepoURL: x\nhost: local\nprofiles: [prod]\n")
 	r.mustSync(t, "root")
 	if api, _ = r.st.GetApp(ctx, "api"); api.NotInGit {
 		t.Fatal("re-declared child still NotInGit")
@@ -90,9 +100,10 @@ func TestAppOfAppsPrunesChildren(t *testing.T) {
 	p := parentApp("root")
 	p.Prune = true
 	r.c.CreateApp(t.Context(), p)
-	r.g.define("aaaaaaaa", "name: web\nrepoURL: x\n---\nname: api\nrepoURL: x\n")
+	r.g.define("aaaaaaaa", "name: web\nrepoURL: x\nhost: local\n---\nname: api\nrepoURL: x\nhost: local\n")
 	r.mustSync(t, "root")
-	r.g.define("bbbbbbbb", "name: web\nrepoURL: x\n")
+	r.childrenSynced(t, "web", "api")
+	r.g.define("bbbbbbbb", "name: web\nrepoURL: x\nhost: local\n")
 	r.mustSync(t, "root")
 	if _, err := r.st.GetApp(t.Context(), "api"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("pruned child still stored: %v", err)
@@ -104,9 +115,10 @@ func TestAppOfAppsPrunesChildren(t *testing.T) {
 
 func TestAppOfAppsRejectsInvalidDefinitionsAndAppliesNothing(t *testing.T) {
 	for _, tc := range []struct{ name, defs, msg string }{
-		{"not owned", "name: api\nrepoURL: x\n---\nname: web\nrepoURL: x\n", `"web" already exists and is not managed by "root"`},
-		{"nested", "name: api\nrepoURL: x\n---\nname: sub\nkind: apps\nrepoURL: x\n", "nested App of Apps is not supported"},
-		{"unknown host", "name: api\nrepoURL: x\n---\nname: db\nrepoURL: x\nhost: nope\n", `host "nope" does not exist`},
+		{"not owned", "name: api\nrepoURL: x\nhost: local\n---\nname: web\nrepoURL: x\nhost: local\n", `"web" already exists and is not managed by "root"`},
+		{"nested", "name: api\nrepoURL: x\nhost: local\n---\nname: sub\nkind: apps\nrepoURL: x\n", "nested App of Apps is not supported"},
+		{"unknown host", "name: api\nrepoURL: x\nhost: local\n---\nname: db\nrepoURL: x\nhost: nope\n", `host "nope" does not exist`},
+		{"no host", "name: api\nrepoURL: x\nhost: local\n---\nname: db\nrepoURL: x\n", `"db" has no host:`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newRig(t)
@@ -127,7 +139,7 @@ func TestChildIsOwnedByGit(t *testing.T) {
 	r := newRig(t)
 	ctx := t.Context()
 	r.c.CreateApp(ctx, parentApp("root"))
-	r.g.define("aaaaaaaa", "name: web\nrepoURL: x\n")
+	r.g.define("aaaaaaaa", "name: web\nrepoURL: x\nhost: local\n")
 	r.mustSync(t, "root")
 	r.g.files = nil      // the child's path holds a compose.yaml
 	r.mustSync(t, "web") // manual Sync of a child is allowed
@@ -166,7 +178,7 @@ func TestAppOfAppsHealthIsWorstChild(t *testing.T) {
 		t.Fatalf("no children: %s", v.Health)
 	}
 	r.e.health = map[string]domain.HealthStatus{"web": domain.Healthy, "api": domain.Degraded}
-	r.g.define("aaaaaaaa", "name: web\nrepoURL: x\n---\nname: api\nrepoURL: x\n")
+	r.g.define("aaaaaaaa", "name: web\nrepoURL: x\nhost: local\n---\nname: api\nrepoURL: x\nhost: local\n")
 	r.mustSync(t, "root")
 	if v, _ := r.c.Refresh(ctx, "root"); v.Health != domain.Degraded {
 		t.Fatalf("health %s", v.Health)
@@ -189,8 +201,9 @@ func TestDeleteAppOfApps(t *testing.T) {
 		r := newRig(t)
 		ctx := t.Context()
 		r.c.CreateApp(ctx, parentApp("root"))
-		r.g.define("aaaaaaaa", "name: web\nrepoURL: x\n")
+		r.g.define("aaaaaaaa", "name: web\nrepoURL: x\nhost: local\n")
 		r.mustSync(t, "root")
+		r.childrenSynced(t, "web") // deleting during a child's Sync is refused
 		if err := r.c.DeleteApp(ctx, "root", cascade, false); err != nil {
 			t.Fatal(err)
 		}
@@ -221,7 +234,7 @@ func TestManualParentSyncDeploysPendingChildren(t *testing.T) {
 	r := newRig(t)
 	ctx := t.Context()
 	r.c.CreateApp(ctx, parentApp("root"))
-	r.g.define("aaaaaaaa", "name: web\nrepoURL: x\n---\nname: api\nrepoURL: x\n")
+	r.g.define("aaaaaaaa", "name: web\nrepoURL: x\nhost: local\n---\nname: api\nrepoURL: x\nhost: local\n")
 
 	// first manual Sync: both children are new (never synced) and get deployed
 	r.mustSync(t, "root")
@@ -256,8 +269,9 @@ func TestDeleteAppOfAppsWithVolumes(t *testing.T) {
 	r := newRig(t)
 	ctx := t.Context()
 	r.c.CreateApp(ctx, parentApp("root"))
-	r.g.define("aaaaaaaa", "name: web\nrepoURL: x\n---\nname: api\nrepoURL: x\n")
+	r.g.define("aaaaaaaa", "name: web\nrepoURL: x\nhost: local\n---\nname: api\nrepoURL: x\nhost: local\n")
 	r.mustSync(t, "root")
+	r.childrenSynced(t, "web", "api") // deleting during a child's Sync is refused
 	if err := r.c.DeleteApp(ctx, "root", true, true); err != nil {
 		t.Fatal(err)
 	}
@@ -272,8 +286,9 @@ func TestRefreshAppOfAppsRefreshesChildren(t *testing.T) {
 	if _, err := r.c.CreateApp(ctx, parentApp("root")); err != nil {
 		t.Fatal(err)
 	}
-	r.g.define("aaaaaaaa", "name: web\nrepoURL: https://example.com/r.git\n---\nname: api\nrepoURL: https://example.com/other.git\n")
+	r.g.define("aaaaaaaa", "name: web\nrepoURL: https://example.com/r.git\nhost: local\n---\nname: api\nrepoURL: https://example.com/other.git\nhost: local\n")
 	r.mustSync(t, "root")
+	r.childrenSynced(t, "web", "api")
 	r.mustSync(t, "web")
 	r.mustSync(t, "api")
 
@@ -295,5 +310,59 @@ func TestRefreshAppOfAppsRefreshesChildren(t *testing.T) {
 		if v, _ := r.c.GetApp(ctx, name); v.SyncStatus != domain.Synced {
 			t.Fatalf("%s after refreshing the App of Apps: %s %q", name, v.SyncStatus, v.SyncMessage)
 		}
+	}
+}
+
+func TestAppOfAppsWithoutLocalHost(t *testing.T) {
+	ctx := t.Context()
+	r := newRig(t)
+	r.c.cfg.NoLocalHost = true
+	for _, h := range []string{"prod", "edge"} {
+		if _, err := r.c.SaveHost(ctx, domain.Host{Name: h, URL: "ssh://deploy@" + h}, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// with or without a host given: an App of Apps deploys nothing and needs no Docker engine
+	for name, h := range map[string]string{"root": "", "other": "prod"} {
+		p := parentApp(name)
+		p.Host = h
+		if _, err := r.c.CreateApp(ctx, p); err != nil {
+			t.Fatalf("create App of Apps with host %q: %v", h, err)
+		}
+	}
+	// its children may each deploy to a different Host
+	r.g.define("aaaaaaaa", "name: web\nrepoURL: x\nhost: prod\n---\nname: cdn\nrepoURL: x\nhost: edge\n---\nname: api\nrepoURL: x\nhost: prod\n")
+	r.mustSync(t, "root")
+	web, err := r.st.GetApp(ctx, "web")
+	if err != nil || web.Parent != "root" || web.Host != "prod" {
+		t.Fatalf("child: %+v %v", web, err)
+	}
+	if v, err := r.c.GetApp(ctx, "root"); err != nil || v.Host != "" || !slices.Equal(v.Hosts, []string{"edge", "prod"}) {
+		t.Fatalf("parent shows host %q, hosts %v: %v", v.Host, v.Hosts, err)
+	}
+	// it runs on no Host: not listed among a Host's Applications
+	hosts, _ := r.c.ListHosts(ctx)
+	for _, h := range hosts {
+		if slices.Contains(h.Apps, "root") || slices.Contains(h.Apps, "other") {
+			t.Fatalf("Host %s lists an App of Apps: %v", h.Name, h.Apps)
+		}
+	}
+	// an App of Apps stored with "local" before it had no Host still updates, and shows no Host
+	old := parentApp("legacy")
+	old.Host = domain.LocalHost
+	r.st.apps["legacy"] = old
+	upd := parentApp("legacy")
+	upd.AutoSync = true
+	if v, err := r.c.UpdateApp(ctx, upd); err != nil || v.Host != "" {
+		t.Fatalf("update legacy App of Apps: %+v %v", v.Application, err)
+	}
+	// a child without host: in Git fails the Sync, pointing at the definition
+	r.g.define("bbbbbbbb", "name: web\nrepoURL: x\nhost: prod\n---\nname: nohost\nrepoURL: x\n")
+	if op := r.syncNow(t, "root"); op.Phase != domain.OpFailed || !strings.Contains(op.Message, `"nohost" has no host:`) {
+		t.Fatalf("child without host: %s %q", op.Phase, op.Message)
+	}
+	// a Compose Application still may not use the disabled local Host
+	if _, err := r.c.CreateApp(ctx, app("api")); !errors.Is(err, domain.ErrLocalHostDisabled) {
+		t.Fatalf("compose app on local: %v", err)
 	}
 }
