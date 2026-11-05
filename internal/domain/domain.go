@@ -230,6 +230,7 @@ type ServiceDiff struct {
 	Service string   `json:"service"`
 	Change  string   `json:"change"`           // "added", "removed", "changed"
 	Fields  []string `json:"fields,omitempty"` // e.g. "image", "environment", "ports"
+	Host    string   `json:"host,omitempty"`   // a Child Application's Host, in an App of Apps' diff
 }
 
 type Container struct {
