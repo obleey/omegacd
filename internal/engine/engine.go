@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"sync"
 
 	"github.com/compose-spec/compose-go/v2/cli"
+	"github.com/compose-spec/compose-go/v2/loader"
 	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/docker/cli/cli/command"
 	"github.com/docker/cli/cli/config/configfile"
@@ -83,30 +85,10 @@ func newCompose(c command.Cli, progress func(domain.ProgressEvent)) (api.Compose
 }
 
 func (e *Engine) load(ctx context.Context, app domain.Application, dir string) (*types.Project, error) {
-	files := app.ComposeFiles
-	if len(files) == 0 {
-		files = []string{"compose.yaml"}
-	}
-	paths := make([]string, len(files))
-	for i, f := range files {
-		paths[i] = filepath.Join(dir, f)
-	}
-	// Interpolation sees dir/.env only, never omegacd's process env (unlike compose's
-	// default WithOsEnv): the Desired State must come from Git alone, and our env holds secrets.
-	opts, err := cli.NewProjectOptions(paths,
-		cli.WithWorkingDirectory(dir),
-		cli.WithEnvFiles(),
-		cli.WithDotEnv,
-		cli.WithProfiles(app.Profiles),
-		cli.WithName(app.Name))
+	p, err := loadProject(ctx, app, dir, true)
 	if err != nil {
 		return nil, err
 	}
-	p, err := opts.LoadProject(ctx)
-	if err != nil {
-		return nil, err
-	}
-	p = p.WithoutUnnecessaryResources()
 	// Same labels compose's own LoadProject sets, plus ours. CustomLabels are not hashed.
 	for name, s := range p.Services {
 		s.CustomLabels = map[string]string{
@@ -125,6 +107,36 @@ func (e *Engine) load(ctx context.Context, app domain.Application, dir string) (
 		return nil, err
 	}
 	return p, nil
+}
+
+func loadProject(ctx context.Context, app domain.Application, dir string, resolvePaths bool) (*types.Project, error) {
+	files := app.ComposeFiles
+	if len(files) == 0 {
+		files = []string{"compose.yaml"}
+	}
+	paths := make([]string, len(files))
+	for i, f := range files {
+		paths[i] = filepath.Join(dir, f)
+	}
+	// Interpolation sees dir/.env only, never omegacd's process env (unlike compose's
+	// default WithOsEnv): the Desired State must come from Git alone, and our env holds secrets.
+	opts, err := cli.NewProjectOptions(paths,
+		cli.WithWorkingDirectory(dir),
+		cli.WithEnvFiles(),
+		cli.WithDotEnv,
+		cli.WithProfiles(app.Profiles),
+		cli.WithName(app.Name),
+		cli.WithResolvedPaths(resolvePaths),
+		// unresolved env_file paths would be read relative to omegacd's own cwd; that read only needs paths
+		cli.WithLoadOptions(func(o *loader.Options) { o.SkipResolveEnvironment = !resolvePaths }))
+	if err != nil {
+		return nil, err
+	}
+	p, err := opts.LoadProject(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return p.WithoutUnnecessaryResources(), nil
 }
 
 // contentHashLabel carries a hash of the files a service reads but compose does not hash:
@@ -203,7 +215,10 @@ func (e *Engine) Validate(ctx context.Context, app domain.Application, dir strin
 	if err != nil {
 		return fmt.Errorf("%w: %v", domain.ErrInvalid, err)
 	}
-	return checkNoBuild(p)
+	if err := checkNoBuild(p); err != nil {
+		return err
+	}
+	return checkBindSources(ctx, app, dir)
 }
 
 // rebase rewrites path fields of a project loaded from dir from as if it had been loaded from dir to:
@@ -256,6 +271,33 @@ func checkNoBuild(p *types.Project) error {
 	for _, name := range slices.Sorted(maps.Keys(p.Services)) {
 		if p.Services[name].Build != nil {
 			return fmt.Errorf("%w: service %q uses build:, only pre-built images are supported", domain.ErrInvalid, name)
+		}
+	}
+	return nil
+}
+
+// checkBindSources refuses relative bind mounts that are not in Git: every Sync makes the app dir match Git
+// exactly, so files a container writes there would be deleted on the next Sync (and on reboot, with the
+// work dir in /run). Only named volumes and absolute paths keep data.
+func checkBindSources(ctx context.Context, app domain.Application, dir string) error {
+	p, err := loadProject(ctx, app, dir, false) // paths as written, to tell ./data from /data
+	if err != nil {
+		return fmt.Errorf("%w: %v", domain.ErrInvalid, err)
+	}
+	for _, name := range slices.Sorted(maps.Keys(p.Services)) {
+		for _, v := range p.Services[name].Volumes {
+			if v.Type != types.VolumeTypeBind || filepath.IsAbs(v.Source) || strings.HasPrefix(v.Source, "~") {
+				continue
+			}
+			src := filepath.Join(dir, v.Source)
+			if !insideDir(dir, src) {
+				return fmt.Errorf("%w: service %q mounts %s, outside the Application's files; "+
+					"use a named volume or an absolute path", domain.ErrInvalid, name, v.Source)
+			}
+			if _, err := os.Stat(src); errors.Is(err, fs.ErrNotExist) {
+				return fmt.Errorf("%w: service %q mounts %s, which is not in Git: OmegaCD deletes files that are not in Git on every Sync, "+
+					"so data written there would be lost; use a named volume or an absolute path", domain.ErrInvalid, name, v.Source)
+			}
 		}
 	}
 	return nil

@@ -247,14 +247,15 @@ prune: false
 
 ## Where your data lives
 
-OmegaCD writes each Application's files from Git into its work dir on every Sync, so **data must not live there**:
+OmegaCD makes each Application's work dir match Git on every Sync (files not in Git are deleted), so **data must not live there**. Only named volumes and absolute paths keep data:
 
 | In your compose file | Where the data is | Kept across reboots, Syncs and deletes? |
 |---|---|---|
 | `- media:/data` (named volume) | Docker's volume storage | ✅ kept, even with Prune — deleted only by **Prune volumes** once no longer declared, or by deleting the Application with **Also delete its volumes** (`app delete --volumes`) |
 | `- /opt/media/torrents:/data` (absolute path) | that folder **on the Host running the container** | ✅ OmegaCD never touches it; a missing folder is created by Docker (as root, so `chown` it for non-root images) |
 | `- ./nginx.conf:/etc/nginx/nginx.conf:ro` | a file from Git | ✅ restored from Git; changing it recreates the container |
-| `- ./data:/data` | the work dir (`/run/omegacd/apps/<app>/data`) | ❌ **lost on reboot** — use a named volume or an absolute path |
+| `- ./conf.d:/etc/nginx/conf.d:ro` | a folder from Git | ✅ for config only: anything a container writes into it is deleted on the next Sync (a `.gitkeep` doesn't make it a data folder) |
+| `- ./data:/data` (not in Git) | — | ⛔ **refused**: every Sync deletes files that are not in Git, so the Sync fails and asks for a named volume or an absolute path. The same goes for `../` paths |
 
 Changes *inside* data folders and volumes never count as drift. Back up volumes and data folders yourself (e.g. restic or borg) — OmegaCD doesn't.
 

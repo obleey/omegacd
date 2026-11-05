@@ -921,6 +921,9 @@ func (c *Controller) Diff(ctx context.Context, name string) (domain.DiffView, er
 	if err := c.decrypt(a, stage, keys); err != nil {
 		return domain.DiffView{}, err
 	}
+	if err := c.cfg.Engine.Validate(ctx, a, stage); err != nil {
+		return domain.DiffView{}, err
+	}
 	if dv.Services, err = c.cfg.Engine.Diff(ctx, a, stage, c.appDir(name)); err != nil {
 		return domain.DiffView{}, err
 	}
