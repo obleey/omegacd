@@ -82,8 +82,8 @@
 	{/if}
 	{#if view === 'compose'}
 		<p class="muted small">
-			Compose files of Live <span class="mono">{short(diff.fromSHA) || '—'}</span> (deployed) → Desired <span class="mono">{short(diff.toSHA)}</span>, as
-			written in Git.
+			Live: the compose files on the Host (<span class="mono">{short(diff.fromSHA) || '—'}</span>) → Desired: the compose files in Git
+			(<span class="mono">{short(diff.toSHA)}</span>).
 		</p>
 		{#if !composeChanged}
 			<p class="muted small">No differences: the compose files are the same in both Revisions.</p>
@@ -92,9 +92,10 @@
 		{/if}
 	{:else if view === 'live' || view === 'desired'}
 		<p class="muted small">
-			{#if view === 'live'}The deployed Revision <span class="mono">{short(diff.fromSHA) || '—'}</span>: the files on the Host the containers run from.
-			{:else}The target Revision <span class="mono">{short(diff.toSHA)}</span>: what the next Sync deploys.{/if}
-			The compose files as written in Git.
+			{#if view === 'live'}The compose files on the Host, which the containers run from (deployed Revision <span class="mono"
+					>{short(diff.fromSHA) || '—'}</span
+				>).
+			{:else}The compose files in Git at the target Revision <span class="mono">{short(diff.toSHA)}</span>: what the next Sync deploys.{/if}
 		</p>
 		{#if view === 'live' && !diff.live}
 			<p class="muted small">Not deployed yet: there is no Live compose before the first Sync.</p>

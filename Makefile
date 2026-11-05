@@ -2,6 +2,8 @@
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/obleey/omegacd/internal/version.Version=$(VERSION)
+# where `make run` writes Application files; override with make run OMEGACD_WORKDIR=/some/dir
+OMEGACD_WORKDIR ?= $(CURDIR)/data/work
 
 build: web
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/omegacd ./cmd/omegacd
@@ -19,7 +21,7 @@ docker:
 	docker build --build-arg VERSION=$(VERSION) -t omegacd:$(VERSION) .
 
 run: build
-	OMEGACD_DATA=./data OMEGACD_WORKDIR=$(CURDIR)/data/work OMEGACD_AGE_KEY_FILE=./data/age.key ./bin/omegacd
+	OMEGACD_DATA=./data OMEGACD_WORKDIR=$(OMEGACD_WORKDIR) OMEGACD_AGE_KEY_FILE=./data/age.key ./bin/omegacd
 
 # Stops only the process LISTENING on the port. Never `kill $$(lsof -ti tcp:8080)`: that also hits
 # everything merely connected to it, e.g. OrbStack/Docker Desktop relaying a scrape, or your browser.

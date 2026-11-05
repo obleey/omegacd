@@ -66,6 +66,10 @@
 	let base = $derived(`/apps/${enc(name)}`);
 
 	let tab = $state<Tab>('resources');
+	// Moving between apps keeps the page mounted: a tab the new app lacks (Logs on an App of Apps) falls back to the first.
+	$effect(() => {
+		if (!tabs.some(([t]) => t === tab)) tab = tabs[0][0];
+	});
 	let error = $state('');
 	let notFound = $state(false);
 	let busy = $state('');
