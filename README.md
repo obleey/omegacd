@@ -494,7 +494,7 @@ For each stack it:
 
 - copies the compose files and the **config** they mount (files up to 1 MB, read-only folders up to 1 MB) into `apps/<name>/`;
 - leaves **data** where it is: writable or big folders become absolute paths on the server (`./wp-content` → `/opt/stacks/blog/wp-content`), named volumes stay as they are;
-- **encrypts secrets** with the server's Host Key: env files with password-like keys become `*.sops.env`, Compose secret files `*.sops.*`, and passwords written in `environment:` move into an encrypted `.sops.env` (the compose file then says `${WORDPRESS_DB_PASSWORD}`). The key is looked up on your OmegaCD by `--host`, or given with `--recipient age1…`;
+- **encrypts secrets** with the server's Host Key: env files with password-like keys become `*.sops.env`, Compose secret files and bind-mounted files that hold a key or credential (by name, or by content: private keys, age keys, `password:`/`token=` settings) `*.sops.*` — never as is; one without a file extension is left out with a warning — and passwords written in `environment:` move into an encrypted `.sops.env` (the compose file then says `${WORDPRESS_DB_PASSWORD}`). The key is looked up on your OmegaCD by `--host`, or given with `--recipient age1…`;
 - adds a definition to `platform/apps.yaml` with `host: vps` and `adopt: true`, Auto-Sync **off**;
 - says what the takeover will do: containers that only use images and volumes keep running; those mounting files from the stack's folder are recreated once.
 

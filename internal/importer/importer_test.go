@@ -82,11 +82,20 @@ services:
     secrets: [db_pass]
   builder:
     build: .
-    volumes: [./tls/server.pem:/tls/server.pem:ro]
+    volumes:
+      - ./tls/server.pem:/tls/server.pem:ro     # a private key: encrypted
+      - ./config.yaml:/etc/app/config.yaml:ro   # an innocent name, a secret inside: encrypted
+      - ./id_ed25519:/root/.ssh/id_ed25519:ro    # a key without an extension: left out
 secrets:
   db_pass:
     file: ./db_pass.txt
 `
+
+// fake key files, assembled at run time so no key block is ever committed (gitleaks)
+var (
+	pemKey = "-----BEGIN " + "PRIVATE KEY-----\nk3y\n-----END " + "PRIVATE KEY-----\n"
+	sshKey = "-----BEGIN " + "OPENSSH PRIVATE KEY-----\nk3y\n"
+)
 
 func shopHost() *fakeHost {
 	d := "/opt/stacks/shop"
@@ -105,7 +114,9 @@ func shopHost() *fakeHost {
 			d + "/web.env":                     "SESSION_SECRET=s3ss10n\nLOG_LEVEL=info\n",
 			d + "/plain.env":                   "WORKERS=4\n",
 			d + "/db_pass.txt":                 "pa55word\n",
-			d + "/tls/server.pem":              "-----BEGIN PRIVATE KEY-----\n",
+			d + "/tls/server.pem":              pemKey,
+			d + "/config.yaml":                 "listen: :80\ndataStoreEncryptionKey: c2VjcmV0\n",
+			d + "/id_ed25519":                  sshKey,
 			"/opt/stacks/managed/compose.yaml": "services: {}\n",
 		},
 		big: map[string]bool{d + "/dump.sql": true},
@@ -147,12 +158,12 @@ func TestImport(t *testing.T) {
 	exists := func(rel string) bool { _, err := os.Stat(filepath.Join(app, rel)); return err == nil }
 
 	// config into Git; data, missing, big and outside paths stay on the host
-	for _, rel := range []string{"compose.yaml", "nginx.conf", "html/index.html", "plain.env", "tls/server.pem"} {
+	for _, rel := range []string{"compose.yaml", "nginx.conf", "html/index.html", "plain.env", "tls/server.sops.pem", "config.sops.yaml"} {
 		if !exists(rel) {
 			t.Errorf("%s not copied\n%s", rel, report)
 		}
 	}
-	for _, rel := range []string{"uploads", "uploads/photo.jpg", "dump.sql", "cache", ".env", "web.env", "db_pass.txt"} {
+	for _, rel := range []string{"uploads", "uploads/photo.jpg", "dump.sql", "cache", ".env", "web.env", "db_pass.txt", "tls/server.pem", "config.yaml", "id_ed25519"} {
 		if exists(rel) {
 			t.Errorf("%s copied (data, or a secret that must only exist encrypted)", rel)
 		}
@@ -174,7 +185,7 @@ func TestImport(t *testing.T) {
 			return nil
 		}
 		b, _ := os.ReadFile(p)
-		for _, secret := range []string{"hunter2", "s3ss10n", "pa55word", "tok-from-dotenv"} {
+		for _, secret := range []string{"hunter2", "s3ss10n", "pa55word", "tok-from-dotenv", "k3y", "c2VjcmV0"} {
 			if strings.Contains(string(b), secret) {
 				t.Errorf("%s holds the secret %q in plain text", p, secret)
 			}
@@ -184,16 +195,19 @@ func TestImport(t *testing.T) {
 
 	// the encrypted files decrypt to the originals, the moved secret included
 	dir := t.TempDir()
-	for _, rel := range []string{".sops.env", "web.sops.env", "db_pass.sops.txt"} {
+	os.MkdirAll(filepath.Join(dir, "tls"), 0o700)
+	for _, rel := range []string{".sops.env", "web.sops.env", "db_pass.sops.txt", "tls/server.sops.pem", "config.sops.yaml"} {
 		os.WriteFile(filepath.Join(dir, rel), []byte(read(rel)), 0o600)
 	}
 	if _, err := (secrets.Decryptor{}).DecryptDir(dir, []string{id.String()}); err != nil {
 		t.Fatal(err)
 	}
 	for rel, want := range map[string]string{
-		".env":        "API_TOKEN=tok-from-dotenv\nTZ=Europe/Ljubljana\nDB_PASSWORD=hunter2\n",
-		"web.env":     "SESSION_SECRET=s3ss10n\nLOG_LEVEL=info\n",
-		"db_pass.txt": "pa55word\n",
+		".env":           "API_TOKEN=tok-from-dotenv\nTZ=Europe/Ljubljana\nDB_PASSWORD=hunter2\n",
+		"web.env":        "SESSION_SECRET=s3ss10n\nLOG_LEVEL=info\n",
+		"db_pass.txt":    "pa55word\n",
+		"tls/server.pem": pemKey,
+		"config.yaml":    "listen: :80\ndataStoreEncryptionKey: c2VjcmV0\n",
 	} {
 		if b, _ := os.ReadFile(filepath.Join(dir, rel)); string(b) != want {
 			t.Errorf("%s decrypts to %q, want %q", rel, b, want)
@@ -216,7 +230,7 @@ func TestImport(t *testing.T) {
 	// the report says what happened and what the takeover does
 	for _, want := range []string{
 		"✓ shop → apps/shop (2 services)", "config   nginx.conf", "data     uploads → /opt/stacks/shop/uploads (stays on the host)",
-		"secret   web.env → web.sops.env", "moved    web: DB_PASSWORD", "builder uses build:", "tls/server.pem goes to Git as is",
+		"secret   web.env → web.sops.env", "moved    web: DB_PASSWORD", "builder uses build:", "secret   tls/server.pem → tls/server.sops.pem", "secret   config.yaml → config.sops.yaml", "id_ed25519 holds secrets but has no file extension",
 		"takeover recreates its containers once", "managed: already managed by OmegaCD, skipped",
 	} {
 		if !strings.Contains(report, want) {
