@@ -23,6 +23,7 @@ OmegaCD is early. This is the plan, most important first — it changes as real 
 ## v0.2 — trustworthy for real sites
 
 - **Sync hooks** — jobs before/after a Sync: `artisan migrate`, `cache:clear`, `wp core update-db`, backups before upgrades
+- **Order between Child Applications** — `dependsOn: [caddy]` in a definition: the App of Apps syncs children in that order (e.g. the app that creates a shared network before those that join it), instead of a failed first attempt and a retry
 - **Notifications** — Slack, Discord, email, generic webhook on Sync failed / Degraded / recovered
 - [x] `OMEGACD_LOCAL_HOST=false` hides the `local` Host where no Docker engine runs (Kubernetes)
 - **Kubernetes polish** — on startup, check remote Hosts' files on the Host itself (today a pod without its work dir volume would restore and recreate every Application)
