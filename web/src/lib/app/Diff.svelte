@@ -3,7 +3,7 @@
 	import GitLink from '../GitLink.svelte';
 	import { short, type DiffView } from '../api.ts';
 	import { lineDiff } from '../linediff.ts';
-	import { highlight } from '../syntax.ts';
+	import { lineToks, tokenize, type Tok } from '../highlight.ts';
 
 	// apps: an App of Apps, whose diff entries are Child Applications rather than services
 	// prune / pruneVolumes: the app's Sync Policy, to say what the next Sync does with undeclared networks and volumes
@@ -36,7 +36,34 @@
 	let composeDiff = $derived(view === 'compose' && diff ? lineDiff(diff.live, diff.desired) : []);
 	let composeChanged = $derived(!!diff && diff.live !== diff.desired);
 	const opCls = { ' ': '', '+': 'add', '-': 'del' };
+
+	let liveToks = $state.raw<Tok[][] | null>(null);
+	let desiredToks = $state.raw<Tok[][] | null>(null);
+	$effect(() => {
+		const d = diff;
+		if (!d || apps || view === 'summary') return;
+		let stale = false;
+		Promise.all([tokenize(d.live, 'yaml'), tokenize(d.desired, 'yaml')])
+			.then(([l, r]) => {
+				if (!stale) [liveToks, desiredToks] = [l, r];
+			})
+			.catch(() => {}); // stays plain text
+		return () => (stale = true);
+	});
+	// each diff line takes its colors from the side it comes from
+	let composeRows = $derived.by(() => {
+		let i = 0;
+		let j = 0;
+		return composeDiff.map((l) => {
+			const toks = l.op === '+' ? lineToks(desiredToks, j, l.text) : lineToks(liveToks, i, l.text);
+			if (l.op !== '+') i++;
+			if (l.op !== '-') j++;
+			return { op: l.op, toks };
+		});
+	});
 </script>
+
+{#snippet code(toks: Tok[])}{#each toks as t, k (k)}<span class="tk" style={t.style}>{t.text}</span>{/each}{/snippet}
 
 {#if !diff}
 	<div class="loading" aria-busy="true" aria-label="Loading diff">
@@ -61,7 +88,7 @@
 		{#if !composeChanged}
 			<p class="muted small">No differences: the target Revision runs the same compose project.</p>
 		{:else}
-			<pre class="diff" aria-label="Compose diff">{#each composeDiff as l, i (i)}<span class={opCls[l.op]}><span class="op">{l.op}</span> {#each highlight(l.text) as k, j (j)}<span class={k.cls}>{k.text}</span>{/each}</span>{'\n'}{/each}</pre>
+			<pre class="diff" aria-label="Compose diff">{#each composeRows as l, i (i)}<span class={opCls[l.op]}><span class="op">{l.op}</span> {@render code(l.toks)}</span>{'\n'}{/each}</pre>
 		{/if}
 	{:else if view === 'live' || view === 'desired'}
 		<p class="muted small">
@@ -72,7 +99,7 @@
 		{#if view === 'live' && !diff.live}
 			<p class="muted small">Not deployed yet: there is no Live compose before the first Sync.</p>
 		{:else}
-			<pre class="diff plain" aria-label="{view} compose">{#each (view === 'live' ? diff.live : diff.desired).replace(/\n$/, '').split('\n') as l, i (i)}{#each highlight(l) as k, j (j)}<span class={k.cls}>{k.text}</span>{/each}{'\n'}{/each}</pre>
+			<pre class="diff plain" aria-label="{view} compose">{#each (view === 'live' ? diff.live : diff.desired).replace(/\n$/, '').split('\n') as l, i (i)}{@render code(lineToks(view === 'live' ? liveToks : desiredToks, i, l))}{'\n'}{/each}</pre>
 		{/if}
 	{:else}
 	<h3>{apps ? 'Applications' : 'Services'}</h3>

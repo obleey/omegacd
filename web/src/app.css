@@ -219,13 +219,9 @@ tbody tr:last-child td { border-bottom: 0; }
 	*, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
 
-/* syntax colors for YAML and env files (lib/syntax.ts) */
-.tk-key { color: var(--blue); }
-.tk-punct { color: var(--subtext0); }
-.tk-str { color: var(--green); }
-.tk-val { color: var(--text); }
-.tk-num { color: var(--peach); }
-.tk-bool { color: var(--mauve); }
-.tk-var { color: var(--yellow); }
-.tk-masked { color: var(--overlay1); letter-spacing: 0.05em; }
-.tk-comment { color: var(--overlay1); font-style: italic; }
+/* Shiki tokens (lib/highlight.ts) carry both Catppuccin themes as variables; pick the active one */
+.tk { color: var(--shiki-dark); font-style: var(--shiki-dark-font-style); }
+@media (prefers-color-scheme: light) {
+	:root:not([data-theme]) .tk { color: var(--shiki-light); font-style: var(--shiki-light-font-style); }
+}
+:root[data-theme='latte'] .tk { color: var(--shiki-light); font-style: var(--shiki-light-font-style); }

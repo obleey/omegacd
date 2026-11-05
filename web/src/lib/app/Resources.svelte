@@ -5,6 +5,7 @@
 	import Icon, { type IconName } from '../Icon.svelte';
 	import Empty from '../Empty.svelte';
 	import Graph, { type GNode } from './Graph.svelte';
+	import { langFor, lineToks, tokenize, type Tok } from '../highlight.ts';
 
 	let {
 		name,
@@ -78,6 +79,20 @@
 	let err = $state('');
 	let info = $derived(Object.entries(detail?.info ?? {}).filter(([, v]) => v).sort(([a], [b]) => a.localeCompare(b)));
 	let lines = $derived(detail?.content ? detail.content.replace(/\n$/, '').split('\n') : []);
+	let toks = $state.raw<Tok[][] | null>(null);
+	$effect(() => {
+		const d = detail;
+		toks = null;
+		const lang = d?.content ? (d.masked ? 'dotenv' : langFor(d.name)) : null;
+		if (!d?.content || !lang) return;
+		let stale = false;
+		tokenize(d.content, lang)
+			.then((t) => {
+				if (!stale) toks = t;
+			})
+			.catch(() => {}); // stays plain text
+		return () => (stale = true);
+	});
 
 	async function show(r: Resource) {
 		sel = r;
@@ -198,7 +213,7 @@
 			<p class="muted small">Directory: its contents are not shown.</p>
 		{/if}
 		{#if lines.length}
-			<pre class="code" aria-label="Content of {detail.name}">{#each lines as l, i (i)}<span class="ln" aria-hidden="true">{i + 1}</span>{l}{'\n'}{/each}</pre>
+			<pre class="code" aria-label="Content of {detail.name}">{#each lines as l, i (i)}<span class="ln" aria-hidden="true">{i + 1}</span>{#each lineToks(toks, i, l) as t, k (k)}<span class="tk" style={t.style}>{t.text}</span>{/each}{'\n'}{/each}</pre>
 		{:else if detail.info?.type === 'file' && !detail.secret}
 			<p class="muted small">Empty file.</p>
 		{/if}
