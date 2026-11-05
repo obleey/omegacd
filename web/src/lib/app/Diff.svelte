@@ -30,8 +30,8 @@
 	let lines = $derived(diff?.gitDiff ? diff.gitDiff.replace(/\n$/, '').split('\n') : []);
 	const changeLabel = { added: '+ added', removed: '− removed', changed: '~ changed' };
 
-	// Live = the deployed Revision's files in the work dir (what the containers run from), Desired = the target
-	// Revision; both rendered: compose files merged, variables filled in, secrets from a SOPS .env as ••••.
+	// Live = the compose files as written in the deployed Revision (the copy on the Host the containers run
+	// from), Desired = the same files at the target Revision.
 	let view = $state<'summary' | 'compose' | 'live' | 'desired'>('summary');
 	let composeDiff = $derived(view === 'compose' && diff ? lineDiff(diff.live, diff.desired) : []);
 	let composeChanged = $derived(!!diff && diff.live !== diff.desired);
@@ -82,11 +82,11 @@
 	{/if}
 	{#if view === 'compose'}
 		<p class="muted small">
-			Live <span class="mono">{short(diff.fromSHA) || '—'}</span> (deployed) → Desired <span class="mono">{short(diff.toSHA)}</span>, rendered as
-			OmegaCD runs them. Variables from an encrypted <span class="mono">.env</span> show as ••••.
+			Compose files of Live <span class="mono">{short(diff.fromSHA) || '—'}</span> (deployed) → Desired <span class="mono">{short(diff.toSHA)}</span>, as
+			written in Git.
 		</p>
 		{#if !composeChanged}
-			<p class="muted small">No differences: the target Revision runs the same compose project.</p>
+			<p class="muted small">No differences: the compose files are the same in both Revisions.</p>
 		{:else}
 			<pre class="diff" aria-label="Compose diff">{#each composeRows as l, i (i)}<span class={opCls[l.op]}><span class="op">{l.op}</span> {@render code(l.toks)}</span>{'\n'}{/each}</pre>
 		{/if}
@@ -94,7 +94,7 @@
 		<p class="muted small">
 			{#if view === 'live'}The deployed Revision <span class="mono">{short(diff.fromSHA) || '—'}</span>: the files on the Host the containers run from.
 			{:else}The target Revision <span class="mono">{short(diff.toSHA)}</span>: what the next Sync deploys.{/if}
-			Rendered: compose files merged, variables filled in, profiles applied; variables from an encrypted <span class="mono">.env</span> show as ••••.
+			The compose files as written in Git.
 		</p>
 		{#if view === 'live' && !diff.live}
 			<p class="muted small">Not deployed yet: there is no Live compose before the first Sync.</p>

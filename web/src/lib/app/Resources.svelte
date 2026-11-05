@@ -83,7 +83,7 @@
 	$effect(() => {
 		const d = detail;
 		toks = null;
-		const lang = d?.content ? (d.masked ? 'dotenv' : langFor(d.name)) : null;
+		const lang = d?.content ? (d.masked ? 'dotenv' : langFor(d.name, d.content)) : null;
 		if (!d?.content || !lang) return;
 		let stale = false;
 		tokenize(d.content, lang)

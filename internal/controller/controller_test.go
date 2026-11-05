@@ -270,10 +270,6 @@ type fakeEngine struct {
 }
 
 func (e *fakeEngine) Validate(context.Context, domain.Application, string) error { return nil }
-func (e *fakeEngine) Render(_ context.Context, _ domain.Application, dir string, _ bool) (string, error) {
-	b, err := os.ReadFile(filepath.Join(dir, "compose.yaml"))
-	return string(b), err
-}
 func (e *fakeEngine) Diff(context.Context, domain.Application, string, string) ([]domain.ServiceDiff, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -1251,4 +1247,23 @@ func TestKeylessHostBlocksSyncs(t *testing.T) {
 		t.Fatal("no auto-sync after a Host Key was generated")
 	}
 	r.waitIdle(t, "web")
+}
+
+func TestComposeText(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte("# mine\nservices:\n  web: {image: nginx}"), 0o644)
+	os.WriteFile(filepath.Join(dir, "prod.yaml"), []byte("services:\n  web: {restart: always}\n"), 0o644)
+
+	got, err := composeText(domain.Application{ComposeFiles: []string{"compose.yaml"}}, dir)
+	if want := "# mine\nservices:\n  web: {image: nginx}\n"; err != nil || got != want {
+		t.Fatalf("one file: %q, %v", got, err)
+	}
+	got, err = composeText(domain.Application{ComposeFiles: []string{"compose.yaml", "prod.yaml"}}, dir)
+	want := "# ---- compose.yaml ----\n# mine\nservices:\n  web: {image: nginx}\n# ---- prod.yaml ----\nservices:\n  web: {restart: always}\n"
+	if err != nil || got != want {
+		t.Fatalf("two files:\n%s\n%v", got, err)
+	}
+	if _, err := composeText(domain.Application{ComposeFiles: []string{"missing.yaml"}}, dir); err == nil {
+		t.Fatal("missing file: no error")
+	}
 }

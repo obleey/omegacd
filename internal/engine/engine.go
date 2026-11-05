@@ -18,7 +18,6 @@ import (
 	"sync"
 
 	"github.com/compose-spec/compose-go/v2/cli"
-	"github.com/compose-spec/compose-go/v2/dotenv"
 	"github.com/compose-spec/compose-go/v2/loader"
 	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/docker/cli/cli/command"
@@ -110,7 +109,7 @@ func (e *Engine) load(ctx context.Context, app domain.Application, dir string) (
 	return p, nil
 }
 
-func loadProject(ctx context.Context, app domain.Application, dir string, resolvePaths bool, extra ...cli.ProjectOptionsFn) (*types.Project, error) {
+func loadProject(ctx context.Context, app domain.Application, dir string, resolvePaths bool) (*types.Project, error) {
 	files := app.ComposeFiles
 	if len(files) == 0 {
 		files = []string{"compose.yaml"}
@@ -121,7 +120,7 @@ func loadProject(ctx context.Context, app domain.Application, dir string, resolv
 	}
 	// Interpolation sees dir/.env only, never omegacd's process env (unlike compose's
 	// default WithOsEnv): the Desired State must come from Git alone, and our env holds secrets.
-	opts, err := cli.NewProjectOptions(paths, append([]cli.ProjectOptionsFn{
+	opts, err := cli.NewProjectOptions(paths,
 		cli.WithWorkingDirectory(dir),
 		cli.WithEnvFiles(),
 		cli.WithDotEnv,
@@ -129,8 +128,7 @@ func loadProject(ctx context.Context, app domain.Application, dir string, resolv
 		cli.WithName(app.Name),
 		cli.WithResolvedPaths(resolvePaths),
 		// unresolved env_file paths would be read relative to omegacd's own cwd; that read only needs paths
-		cli.WithLoadOptions(func(o *loader.Options) { o.SkipResolveEnvironment = !resolvePaths }),
-	}, extra...)...)
+		cli.WithLoadOptions(func(o *loader.Options) { o.SkipResolveEnvironment = !resolvePaths }))
 	if err != nil {
 		return nil, err
 	}
@@ -139,30 +137,6 @@ func loadProject(ctx context.Context, app domain.Application, dir string, resolv
 		return nil, err
 	}
 	return p.WithoutUnnecessaryResources(), nil
-}
-
-// Render returns the compose project in dir as it runs: files merged, variables filled in, profiles applied,
-// paths as written. env_file contents are never inlined; with maskDotEnv (a .env decrypted from SOPS) its
-// variables are filled in as •••• so secret values never reach the output.
-func (e *Engine) Render(ctx context.Context, app domain.Application, dir string, maskDotEnv bool) (string, error) {
-	var extra []cli.ProjectOptionsFn
-	if maskDotEnv {
-		env, err := dotenv.Read(filepath.Join(dir, ".env"))
-		if err != nil {
-			return "", err
-		}
-		masked := make([]string, 0, len(env))
-		for k := range env {
-			masked = append(masked, k+"=••••")
-		}
-		extra = append(extra, cli.WithEnv(masked)) // applied after .env, so it overrides every real value
-	}
-	p, err := loadProject(ctx, app, dir, false, extra...)
-	if err != nil {
-		return "", err
-	}
-	b, err := p.MarshalYAML()
-	return string(b), err
 }
 
 // contentHashLabel carries a hash of the files a service reads but compose does not hash:

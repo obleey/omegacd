@@ -927,14 +927,13 @@ func (c *Controller) Diff(ctx context.Context, name string) (domain.DiffView, er
 	if dv.Services, err = c.cfg.Engine.Diff(ctx, a, stage, c.appDir(name)); err != nil {
 		return domain.DiffView{}, err
 	}
-	if dv.Desired, err = c.cfg.Engine.Render(ctx, a, stage, decrypted(filepath.Join(stage, ".env"))); err != nil {
+	if dv.Desired, err = composeText(a, stage); err != nil {
 		return domain.DiffView{}, err
 	}
-	// Live: the deployed Revision's files, which the containers run from (also kept here for remote Hosts)
-	live := c.appDir(name)
-	if _, serr := os.Stat(live); serr == nil {
-		if dv.Live, err = c.cfg.Engine.Render(ctx, a, live, decrypted(filepath.Join(live, ".env"))); err != nil {
-			c.cfg.Log.Warn("render live compose", "app", name, "err", err)
+	// Live: the copy of the deployed Revision on the Host (kept here too for remote Hosts)
+	if live := c.appDir(name); dirExists(live) {
+		if dv.Live, err = composeText(a, live); err != nil {
+			c.cfg.Log.Warn("read live compose files", "app", name, "err", err)
 		}
 	}
 	return dv, nil
@@ -1052,6 +1051,30 @@ func (c *Controller) resolveInAppDir(name, rel string) (string, error) {
 }
 
 // decrypted reports whether path was written by Secrets.DecryptDir from a sibling "x.sops.ext".
+// composeText is the app's compose files in dir as written, one after another when there are several.
+func composeText(a domain.Application, dir string) (string, error) {
+	var b strings.Builder
+	for _, f := range a.ComposeFiles {
+		content, err := os.ReadFile(filepath.Join(dir, f))
+		if err != nil {
+			return "", err
+		}
+		if len(a.ComposeFiles) > 1 {
+			fmt.Fprintf(&b, "# ---- %s ----\n", f)
+		}
+		b.Write(content)
+		if len(content) > 0 && content[len(content)-1] != '\n' {
+			b.WriteByte('\n')
+		}
+	}
+	return b.String(), nil
+}
+
+func dirExists(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.IsDir()
+}
+
 func decrypted(path string) bool {
 	entries, _ := os.ReadDir(filepath.Dir(path))
 	return slices.ContainsFunc(entries, func(e os.DirEntry) bool {
