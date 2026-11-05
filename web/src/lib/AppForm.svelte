@@ -197,7 +197,7 @@
 				<div class="hint help" transition:slide={{ duration: ms(220) }}>
 					<p>
 						Each YAML file in Path defines one Child Application. Syncing creates and updates them; with Prune it also
-						deletes the ones no longer declared. Each Child Application picks its own Host. For example:
+						deletes the ones no longer declared. Each Child Application names its own Host — <code>host:</code> is required. For example:
 					</p>
 					<pre>name: web
 repoURL: https://github.com/org/repo.git

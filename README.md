@@ -236,12 +236,14 @@ Instead of creating each Application by hand, declare them in Git. [`examples/ap
 name: hello
 repoURL: https://github.com/obleey/omegacd.git
 path: examples/hello
+host: local
 autoSync: true
 selfHeal: true
 ---
 name: whoami
 repoURL: https://github.com/obleey/omegacd.git
 path: examples/whoami
+host: local
 autoSync: false
 ```
 
@@ -281,7 +283,7 @@ path: apps/web                 # directory with the compose files
 targetRevision: main           # branch, tag or commit
 composeFiles: [compose.yaml]   # default: compose.yaml
 profiles: [prod]               # optional Compose profiles
-host: edge-01                  # default: local
+host: edge-01                  # required: the Host to deploy to (local for OmegaCD's own Docker engine)
 autoSync: true
 selfHeal: true
 prune: true
@@ -290,12 +292,13 @@ pruneVolumes: false            # with prune: also delete volumes no longer decla
 name: cache
 repoURL: https://github.com/acme/deploy.git
 path: apps/cache
+host: edge-01
 autoSync: true
 selfHeal: false
 prune: false
 ```
 
-`omegacd app export NAME` (or **Export YAML** in the UI) writes this format for an existing Application, and `omegacd app create -f FILE` reads it. Nested App of Apps are not supported. `adopt: true` lets an Application take over an existing, unmanaged Compose project of the same name.
+`omegacd app export NAME` (or **Export YAML** in the UI) writes this format for an existing Application, and `omegacd app create -f FILE` reads it. Every definition in an App of Apps names its `host:` (`local` for OmegaCD's own Docker engine): there is no default, and a definition without one fails the App of Apps' Sync, so nothing is deployed to a Host Git didn't name. Nested App of Apps are not supported. `adopt: true` lets an Application take over an existing, unmanaged Compose project of the same name.
 
 ![App of Apps](assets/screenshots/app-of-apps.png)
 

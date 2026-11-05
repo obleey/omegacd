@@ -78,6 +78,9 @@ func Parse(dir string) ([]domain.Application, error) {
 			if d.Kind == domain.KindApps {
 				return nil, fmt.Errorf("%w: %s: application %q: nested App of Apps is not supported", domain.ErrInvalid, e.Name(), d.Name)
 			}
+			if strings.TrimSpace(d.Host) == "" {
+				return nil, fmt.Errorf("%w: %s: application %q has no host: — every Child Application names its Host in Git (host: local for OmegaCD's own Docker engine)", domain.ErrInvalid, e.Name(), d.Name)
+			}
 			apps = append(apps, d)
 		}
 	}
