@@ -258,7 +258,7 @@
 							{a.targetRevision}
 							<div class="muted"><GitLink href={a.targetSHA && gitWeb(a.repoURL)?.commit(a.targetSHA)}>{short(a.targetSHA)}</GitLink></div>
 						</td>
-						<td>
+						<td title={a.syncStatus === 'Unknown' ? a.syncMessage : undefined}>
 							<Badge status={shownSync(a)} label="Sync Status" />
 							<div class="pol"><PolicyChips {a} /></div>
 						</td>

@@ -34,6 +34,10 @@
 		<Badge status={a.health} label="Health Status" />
 		<PolicyChips {a} />
 	</div>
+	{#if a.syncStatus === 'Unknown' && a.syncMessage}
+		<!-- why OmegaCD can't tell, e.g. a Git token that stopped working, without opening the app -->
+		<p class="why small" title={a.syncMessage}><Icon name="info" size={13} /><span>{a.syncMessage}</span></p>
+	{/if}
 	<dl>
 		{#if a.kind === 'apps'}
 			<dt><Icon name="apps" size={13} />Children</dt>
@@ -107,6 +111,8 @@
 	.stretch:focus-visible { outline: none; }
 	.stretch:focus-visible::after { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: var(--radius-lg); }
 	.status { display: flex; gap: 0.4rem; flex-wrap: wrap; align-items: center; }
+	.why { display: flex; gap: 0.35rem; align-items: flex-start; margin: 0; color: var(--subtext0); }
+	.why span { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
 	dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0.32rem 0.8rem; margin: 0; padding-top: 0.7rem; border-top: 1px dashed var(--border); font-size: 0.85rem; }
 	dt { display: flex; align-items: center; gap: 0.35rem; color: var(--subtext0); font-size: 0.78rem; }
 	dd { margin: 0; display: flex; align-items: center; gap: 0.4rem; min-width: 0; }

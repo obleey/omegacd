@@ -265,3 +265,35 @@ func TestDeleteAppOfAppsWithVolumes(t *testing.T) {
 		t.Fatalf("removed %v, volumes %v", r.e.removedApps, r.e.removedVols)
 	}
 }
+
+func TestRefreshAppOfAppsRefreshesChildren(t *testing.T) {
+	r := newRig(t)
+	ctx := t.Context()
+	if _, err := r.c.CreateApp(ctx, parentApp("root")); err != nil {
+		t.Fatal(err)
+	}
+	r.g.define("aaaaaaaa", "name: web\nrepoURL: https://example.com/r.git\n---\nname: api\nrepoURL: https://example.com/other.git\n")
+	r.mustSync(t, "root")
+	r.mustSync(t, "web")
+	r.mustSync(t, "api")
+
+	// the Git token stops working: a child's own reconcile says why
+	r.g.mu.Lock()
+	r.g.err = errors.New("fetch https://example.com/r.git: authentication required")
+	r.g.mu.Unlock()
+	if v, _ := r.c.Refresh(ctx, "web"); v.SyncStatus != domain.Unknown || !strings.Contains(v.SyncMessage, "authentication required") {
+		t.Fatalf("web: %s %q", v.SyncStatus, v.SyncMessage)
+	}
+	// a new token: refreshing the App of Apps brings its children back right away, no poll needed
+	r.g.mu.Lock()
+	r.g.err = nil
+	r.g.mu.Unlock()
+	if v, _ := r.c.Refresh(ctx, "root"); v.SyncStatus != domain.Synced {
+		t.Fatalf("root: %s %q", v.SyncStatus, v.SyncMessage)
+	}
+	for _, name := range []string{"web", "api"} {
+		if v, _ := r.c.GetApp(ctx, name); v.SyncStatus != domain.Synced {
+			t.Fatalf("%s after refreshing the App of Apps: %s %q", name, v.SyncStatus, v.SyncMessage)
+		}
+	}
+}

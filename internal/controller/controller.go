@@ -872,12 +872,28 @@ func (c *Controller) Rollback(ctx context.Context, name string, opID int64) (int
 	return c.startSync(a, op.Revision, "rollback")
 }
 
+// Refresh re-reads Git now, past the fetch cooldown. An App of Apps refreshes its children first, so its own
+// status is built from theirs; each Repository is fetched once however many children share it.
 func (c *Controller) Refresh(ctx context.Context, name string) (domain.AppView, error) {
 	a, err := c.cfg.Store.GetApp(ctx, name)
 	if err != nil {
 		return domain.AppView{}, err
 	}
 	c.cfg.Git.Invalidate(a.RepoURL)
+	if a.Kind == domain.KindApps {
+		children, err := c.children(ctx, a.Name)
+		if err != nil {
+			return domain.AppView{}, err
+		}
+		for _, ch := range children {
+			if ch.RepoURL != a.RepoURL {
+				c.cfg.Git.Invalidate(ch.RepoURL)
+			}
+		}
+		for _, ch := range children {
+			c.reconcile(ctx, ch)
+		}
+	}
 	return c.reconcile(ctx, a), nil
 }
 
