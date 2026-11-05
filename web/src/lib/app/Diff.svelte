@@ -3,6 +3,7 @@
 	import GitLink from '../GitLink.svelte';
 	import { short, type DiffView } from '../api.ts';
 	import { lineDiff } from '../linediff.ts';
+	import { highlight } from '../syntax.ts';
 
 	// apps: an App of Apps, whose diff entries are Child Applications rather than services
 	// prune / pruneVolumes: the app's Sync Policy, to say what the next Sync does with undeclared networks and volumes
@@ -60,7 +61,7 @@
 		{#if !composeChanged}
 			<p class="muted small">No differences: the target Revision runs the same compose project.</p>
 		{:else}
-			<pre class="diff" aria-label="Compose diff">{#each composeDiff as l, i (i)}<span class={opCls[l.op]}>{l.op} {l.text}</span>{'\n'}{/each}</pre>
+			<pre class="diff" aria-label="Compose diff">{#each composeDiff as l, i (i)}<span class={opCls[l.op]}><span class="op">{l.op}</span> {#each highlight(l.text, 'yaml') as k, j (j)}<span class={k.cls}>{k.text}</span>{/each}</span>{'\n'}{/each}</pre>
 		{/if}
 	{:else if view === 'live' || view === 'desired'}
 		<p class="muted small">
@@ -71,7 +72,7 @@
 		{#if view === 'live' && !diff.live}
 			<p class="muted small">Not deployed yet: there is no Live compose before the first Sync.</p>
 		{:else}
-			<pre class="diff" aria-label="{view} compose">{view === 'live' ? diff.live : diff.desired}</pre>
+			<pre class="diff plain" aria-label="{view} compose">{#each (view === 'live' ? diff.live : diff.desired).replace(/\n$/, '').split('\n') as l, i (i)}{#each highlight(l, 'yaml') as k, j (j)}<span class={k.cls}>{k.text}</span>{/each}{'\n'}{/each}</pre>
 		{/if}
 	{:else}
 	<h3>{apps ? 'Applications' : 'Services'}</h3>
@@ -124,7 +125,10 @@
 	.loading { display: grid; gap: 0.7rem; }
 	.views { margin-bottom: 0.8rem; }
 	.dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--yellow); margin-left: 0.4rem; vertical-align: middle; }
-	pre.diff:not(:has(span)) { padding: 0.6rem 0.8rem; }
+	pre.plain { padding: 0.6rem 0.8rem; }
+	pre.plain span { display: inline; min-width: 0; padding: 0; }
+	.diff .op { display: inline; min-width: 0; padding: 0; }
+	.diff span span { display: inline; min-width: 0; padding: 0; }
 	h3 { margin: 1rem 0 0.5rem; }
 	h3:first-child { margin-top: 0; }
 	.svc { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.3rem; }
