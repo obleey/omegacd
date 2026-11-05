@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
@@ -160,13 +161,16 @@ func TestLifecycle(t *testing.T) {
 	var buf bytes.Buffer
 	for range 20 {
 		buf.Reset()
-		if err := e.Logs(ctx, domain.LocalHost, once, false, 0, &buf); err != nil {
+		if err := e.Logs(ctx, app, once, false, 0, &buf); err != nil {
 			t.Fatal(err)
 		}
 		if strings.Contains(buf.String(), "hello-from-once") {
 			break
 		}
 		time.Sleep(250 * time.Millisecond)
+	}
+	if err := e.Logs(ctx, domain.Application{Name: app.Name + "-other"}, once, false, 0, io.Discard); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("Logs of another project's container = %v; want ErrNotFound", err)
 	}
 	if !strings.Contains(buf.String(), "hello-from-once") {
 		t.Errorf("Logs = %q", buf.String())

@@ -20,6 +20,7 @@ import (
 	"github.com/compose-spec/compose-go/v2/cli"
 	"github.com/compose-spec/compose-go/v2/loader"
 	"github.com/compose-spec/compose-go/v2/types"
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/cli/cli/command"
 	"github.com/docker/cli/cli/config/configfile"
 	"github.com/docker/cli/cli/config/credentials"
@@ -756,13 +757,16 @@ func (e *Engine) ProjectExists(ctx context.Context, host, name string) (exists, 
 	return len(ctrs) > 0, managed, nil
 }
 
-func (e *Engine) Logs(ctx context.Context, host, containerID string, follow bool, tail int, w io.Writer) error {
-	hc, err := e.conn(ctx, host)
+func (e *Engine) Logs(ctx context.Context, app domain.Application, containerID string, follow bool, tail int, w io.Writer) error {
+	hc, err := e.conn(ctx, app.Host)
 	if err != nil {
 		return err
 	}
 	c := hc.cli.Client()
 	insp, err := c.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
+	if cerrdefs.IsNotFound(err) || err == nil && (insp.Container.Config == nil || insp.Container.Config.Labels[api.ProjectLabel] != app.Name) {
+		return fmt.Errorf("container %q: %w", containerID, domain.ErrNotFound)
+	}
 	if err != nil {
 		return err
 	}
@@ -777,7 +781,7 @@ func (e *Engine) Logs(ctx context.Context, host, containerID string, follow bool
 		return err
 	}
 	defer rc.Close()
-	if insp.Container.Config != nil && insp.Container.Config.Tty {
+	if insp.Container.Config.Tty {
 		_, err = io.Copy(w, rc)
 	} else {
 		_, err = stdcopy.StdCopy(w, w, rc)

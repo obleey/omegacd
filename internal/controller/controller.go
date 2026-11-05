@@ -1249,14 +1249,7 @@ func (c *Controller) Logs(ctx context.Context, name, containerID string, follow 
 	if err != nil {
 		return err
 	}
-	live, err := c.cfg.Engine.Status(ctx, a)
-	if err != nil {
-		return err
-	}
-	if !slices.ContainsFunc(live.Containers, func(ct domain.Container) bool { return ct.ID == containerID || ct.Name == containerID }) {
-		return fmt.Errorf("container %q: %w", containerID, domain.ErrNotFound)
-	}
-	return c.cfg.Engine.Logs(ctx, a.Host, containerID, follow, tail, w)
+	return c.cfg.Engine.Logs(ctx, a, containerID, follow, tail, w)
 }
 
 func (c *Controller) RepoChanged(ctx context.Context, repoURL string) {
