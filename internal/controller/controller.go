@@ -1432,6 +1432,10 @@ func (c *Controller) syncChildren(ctx context.Context, parent domain.Application
 		if ok && old.Parent != parent.Name {
 			return fmt.Errorf("%w: application %q already exists and is not managed by %q", domain.ErrInvalid, d.Name, parent.Name)
 		}
+		if strings.TrimSpace(d.Host) == "" && c.cfg.NoLocalHost && d.Kind != domain.KindApps {
+			// a Child Application's Host comes from Git; without one it would default to the disabled local Host
+			return fmt.Errorf("%w: application %q has no host: in its definition — set host: (the local Host is disabled)", domain.ErrInvalid, d.Name)
+		}
 		if !ok {
 			err = c.checkNew(ctx, &d)
 		} else if err = normalize(&d); err == nil {

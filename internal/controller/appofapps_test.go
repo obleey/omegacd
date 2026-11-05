@@ -344,6 +344,11 @@ func TestAppOfAppsWithoutLocalHost(t *testing.T) {
 	if v, err := r.c.UpdateApp(ctx, upd); err != nil || v.Host != "" {
 		t.Fatalf("update legacy App of Apps: %+v %v", v.Application, err)
 	}
+	// a child without host: in Git fails the Sync, pointing at the definition
+	r.g.define("bbbbbbbb", "name: web\nrepoURL: x\nhost: prod\n---\nname: nohost\nrepoURL: x\n")
+	if op := r.syncNow(t, "root"); op.Phase != domain.OpFailed || !strings.Contains(op.Message, `"nohost" has no host: in its definition`) {
+		t.Fatalf("child without host: %s %q", op.Phase, op.Message)
+	}
 	// a Compose Application still may not use the disabled local Host
 	if _, err := r.c.CreateApp(ctx, app("api")); !errors.Is(err, domain.ErrLocalHostDisabled) {
 		t.Fatalf("compose app on local: %v", err)
