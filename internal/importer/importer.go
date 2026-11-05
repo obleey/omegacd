@@ -5,6 +5,7 @@
 package importer
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -368,7 +369,7 @@ func importStack(ctx context.Context, h Host, o Options, s Stack) (report, error
 	}
 	def, err := appdef.MarshalAdopting(domain.Application{
 		Name: s.Name, RepoURL: o.RepoURL, Path: r.appDir, TargetRevision: o.Revision,
-		ComposeFiles: composeFiles, Host: o.HostName,
+		ComposeFiles: composeFiles, Host: cmp.Or(o.HostName, domain.LocalHost),
 	})
 	if err != nil {
 		return r, err
