@@ -427,8 +427,9 @@ type Engine interface {
 	HostStatus(ctx context.Context, host string) HostStatus
 	// HostChanged drops cached connections after a Host is edited or deleted.
 	HostChanged(host string)
-	// Logs streams container logs (stdout+stderr, demultiplexed, with timestamps) to w until ctx ends or, if !follow, EOF.
-	Logs(ctx context.Context, host, containerID string, follow bool, tail int, w io.Writer) error
+	// Logs streams the logs (stdout+stderr, demultiplexed, with timestamps) of one of app's containers to w
+	// until ctx ends or, if !follow, EOF. A container of another project is ErrNotFound.
+	Logs(ctx context.Context, app Application, containerID string, follow bool, tail int, w io.Writer) error
 	// ProjectFiles lists the env files, configs, secrets and bind mounts (inside dir) of the project in dir.
 	ProjectFiles(ctx context.Context, app Application, dir string) ([]Resource, error)
 	// Inspect describes a volume or network of the project.

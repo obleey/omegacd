@@ -251,7 +251,7 @@ secrets:
 	}
 
 	var buf strings.Builder
-	if err := e.Logs(ctx, app.Host, ls.Containers[0].ID, false, 0, &buf); err != nil {
+	if err := e.Logs(ctx, app, ls.Containers[0].ID, false, 0, &buf); err != nil {
 		t.Errorf("Logs on remote container: %v", err)
 	}
 

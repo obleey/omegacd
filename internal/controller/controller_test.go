@@ -337,7 +337,9 @@ func (e *fakeEngine) ProjectFiles(context.Context, domain.Application, string) (
 func (e *fakeEngine) Inspect(_ context.Context, _ domain.Application, kind, name string) (map[string]string, error) {
 	return map[string]string{"inspected": kind + "/" + name}, nil
 }
-func (e *fakeEngine) Logs(context.Context, string, string, bool, int, io.Writer) error { return nil }
+func (e *fakeEngine) Logs(context.Context, domain.Application, string, bool, int, io.Writer) error {
+	return nil
+}
 func (e *fakeEngine) Watch(ctx context.Context, changed func(string, string)) error {
 	e.mu.Lock()
 	e.changed = changed

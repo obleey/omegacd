@@ -40,8 +40,17 @@
 	});
 	const clock = (ts: string) => ts.slice(11, 23);
 
+	// A Sync recreates containers with new IDs: follow the selected service to its new container.
+	let service = '';
 	$effect(() => {
-		if (!selected && containers.length) selected = containers[0].id;
+		const cur = containers.find((c) => c.id === selected);
+		if (cur) {
+			service = cur.service;
+			return;
+		}
+		const next =
+			containers.find((c) => c.service === service) ?? containers.find((c) => c.state === 'running') ?? containers[0];
+		if (next) selected = next.id;
 	});
 
 	$effect(() => {
