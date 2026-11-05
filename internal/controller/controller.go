@@ -82,21 +82,26 @@ func New(cfg Config) *Controller {
 	return &Controller{cfg: cfg, apps: map[string]*appState{}, subs: map[chan domain.Event]struct{}{}}
 }
 
-// Run reconciles every Application each PollInterval and drives retries until ctx ends.
+// Run reconciles every Application each PollInterval (never when 0: webhooks, Refresh and restarts only)
+// and drives retries until ctx ends.
 func (c *Controller) Run(ctx context.Context) {
 	// restore before watching Docker events, so Self-Heal can't race the restore
 	c.restoreWorkDirs(ctx)
 	go c.watch(ctx)
 	c.reconcileAll(ctx)
-	poll := time.NewTicker(c.cfg.PollInterval)
+	var pollC <-chan time.Time // nil: never fires
+	if c.cfg.PollInterval > 0 {
+		poll := time.NewTicker(c.cfg.PollInterval)
+		defer poll.Stop()
+		pollC = poll.C
+	}
 	retry := time.NewTicker(retryTick)
-	defer poll.Stop()
 	defer retry.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-poll.C:
+		case <-pollC:
 			c.reconcileAll(ctx)
 		case <-retry.C:
 			for _, name := range c.dueRetries() {

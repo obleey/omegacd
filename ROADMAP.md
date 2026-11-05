@@ -12,7 +12,7 @@ OmegaCD is early. This is the plan, most important first — it changes as real 
 - [x] Web UI, REST API, CLI (`omegacd app sync --wait` for CI), Prometheus metrics
 - [x] Restore working files after a reboot
 - [ ] Real-world test: a full arr stack as an App of Apps on a Hetzner VPS
-- [ ] Real-world test: private Git repos (token and SSH), webhooks from GitHub, private registry images
+- [x] Real-world test: private Git repo with a token, and webhooks (local Forgejo); SSH repo and private registry images still open
 - [x] Repository access check in the Application form: shows public / private-with-credential / access denied while you type, with an inline "Add credential"
 - [x] Diff tab with Live (compose files on the Host), Desired (in Git) and a Compose diff; syntax colors for ~240 config formats
 - [x] Relative bind mounts not in Git are refused (every Sync would delete their data); warning for secrets written in plain text in compose files

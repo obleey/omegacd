@@ -46,7 +46,7 @@ func run(log *slog.Logger) error {
 		workDir    = cmp.Or(os.Getenv("OMEGACD_WORKDIR"), "/run/omegacd")
 		ageKeyFile = cmp.Or(os.Getenv("OMEGACD_AGE_KEY_FILE"), "/etc/omegacd/age.key")
 	)
-	poll, err := time.ParseDuration(cmp.Or(os.Getenv("OMEGACD_POLL_INTERVAL"), "3m"))
+	poll, err := pollInterval(os.Getenv("OMEGACD_POLL_INTERVAL"))
 	if err != nil {
 		return err
 	}
@@ -144,4 +144,13 @@ func localHostDisabled(v string) (bool, error) {
 		return true, nil
 	}
 	return false, fmt.Errorf("OMEGACD_LOCAL_HOST must be true or false, not %q", v)
+}
+
+// pollInterval reads OMEGACD_POLL_INTERVAL (default 3m); 0 turns polling off, leaving webhooks and Refresh.
+func pollInterval(v string) (time.Duration, error) {
+	d, err := time.ParseDuration(cmp.Or(strings.TrimSpace(v), "3m"))
+	if err != nil || d < 0 {
+		return 0, fmt.Errorf("OMEGACD_POLL_INTERVAL must be a duration like 3m, or 0 to turn polling off, not %q", v)
+	}
+	return d, nil
 }

@@ -378,6 +378,8 @@ Polling (`OMEGACD_POLL_INTERVAL`, default 3m) always works; webhooks make Syncs 
 
 Set the same value in `OMEGACD_WEBHOOK_SECRET`. A webhook only triggers a refresh of the Applications using that repository; without a secret anyone who can reach the URL can trigger refreshes, so set one.
 
+**Polling with webhooks.** Webhooks are always on; polling is the safety net for a push OmegaCD missed (it was down, or the Git host could not reach it). With webhooks set up, a long interval like `OMEGACD_POLL_INTERVAL=1h` is a good fit; `0` turns polling off entirely — changes then arrive only through webhooks, **Refresh**, or a restart of OmegaCD, which checks everything once.
+
 ## CLI
 
 The same binary is also the client: `omegacd` (or `omegacd server`) runs the server, any other command talks to one. Create an API token under **Settings → API tokens**, then:
@@ -432,7 +434,7 @@ All server settings are environment variables:
 | `OMEGACD_AGE_KEY_FILE` | `/etc/omegacd/age.key` | age identity: seals stored credentials and decrypts SOPS files. Required |
 | `OMEGACD_SSH_KNOWN_HOSTS` | `/etc/omegacd/known_hosts` | Host keys for Git over SSH and `ssh://` Hosts |
 | `OMEGACD_LOCAL_HOST` | `true` | `false` where no Docker engine runs next to OmegaCD (Kubernetes): the built-in `local` Host is hidden and refused, Applications go to remote Hosts |
-| `OMEGACD_POLL_INTERVAL` | `3m` | How often Git is polled (Go duration) |
+| `OMEGACD_POLL_INTERVAL` | `3m` | How often Git is polled (Go duration); `0` turns polling off (webhooks only, see [Webhooks](#webhooks)) |
 | `OMEGACD_ADMIN_PASSWORD` | *(generated)* | Initial `admin` password, used only on first start. If unset, a random one is logged and must be changed on first login |
 | `OMEGACD_WEBHOOK_SECRET` | *(none)* | Shared secret for webhooks |
 | `OMEGACD_TRUSTED_PROXIES` | *(none)* | Comma-separated IPs/CIDRs of reverse proxies whose `X-Forwarded-For` is trusted |

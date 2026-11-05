@@ -1455,3 +1455,27 @@ func TestNoLocalHost(t *testing.T) {
 		t.Fatal("restored an app on the disabled local Host")
 	}
 }
+
+func TestRunWithPollingOff(t *testing.T) {
+	r := newRig(t)
+	r.c.cfg.PollInterval = 0 // webhooks and Refresh only; time.NewTicker(0) would panic
+	if _, err := r.c.CreateApp(t.Context(), app("web")); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() { defer close(done); r.c.Run(ctx) }()
+	time.Sleep(50 * time.Millisecond) // startup: one reconcile of everything
+	r.g.mu.Lock()
+	after := r.g.resolves
+	r.g.mu.Unlock()
+	time.Sleep(200 * time.Millisecond)
+	r.g.mu.Lock()
+	later := r.g.resolves
+	r.g.mu.Unlock()
+	cancel()
+	<-done
+	if after == 0 || later != after {
+		t.Fatalf("Git resolves: %d at startup, %d later (want no polling)", after, later)
+	}
+}
