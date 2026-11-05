@@ -117,7 +117,7 @@ func (c *CLI) printApp(v domain.AppView) {
 	}
 	lines := [][2]string{
 		{"Name", v.Name}, {"Kind", v.Kind}, {"Parent", v.Parent}, {"Repository", v.RepoURL}, {"Path", v.Path},
-		{"Target revision", v.TargetRevision}, {"Compose files", strings.Join(v.ComposeFiles, ", ")},
+		{"Target revision", v.TargetRevision}, {"Compose files", cmp.Or(strings.Join(v.ComposeFiles, ", "), "auto ("+strings.Join(domain.DefaultComposeFiles, ", ")+")")},
 		{"Profiles", strings.Join(v.Profiles, ", ")}, {"Host", v.Host}, {"Sync policy", strings.Join(policy, ", ")},
 		{"Sync status", sync}, {"Health", c.paint(statusColor(string(v.Health)), string(v.Health))},
 		{"Target SHA", shortSHA(v.TargetSHA)}, {"Deployed SHA", shortSHA(v.DeployedSHA)},

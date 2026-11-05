@@ -47,7 +47,7 @@ func TestAppOfAppsCreatesUpdatesAndKeepsChildren(t *testing.T) {
 	r.mustSync(t, "root")
 
 	web, err := r.st.GetApp(ctx, "web")
-	if err != nil || web.Parent != "root" || web.Kind != domain.KindCompose || !slices.Equal(web.ComposeFiles, []string{"compose.yaml"}) {
+	if err != nil || web.Parent != "root" || web.Kind != domain.KindCompose || web.ComposeFiles != nil {
 		t.Fatalf("web: %+v %v", web, err)
 	}
 	if v, _ := r.c.Refresh(ctx, "root"); v.SyncStatus != domain.Synced {
