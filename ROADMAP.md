@@ -6,20 +6,29 @@ OmegaCD is early. This is the plan, most important first — it changes as real 
 
 - [x] Applications from Git: Compose files, profiles, diff, Sync, Auto-Sync, Self-Heal, Prune
 - [x] Sync and Health Status, live via Docker events; history and Rollback
-- [x] SOPS + age secrets, decrypted only at Sync time
+- [x] SOPS + age secrets, decrypted only at Sync time; one Host Key per Host
 - [x] Remote Hosts over SSH or TLS
-- [x] App of Apps (Applications declared in Git)
+- [x] App of Apps (Applications declared in Git); Refresh cascades to its children
 - [x] Web UI, REST API, CLI (`omegacd app sync --wait` for CI), Prometheus metrics
-- [x] Restore working files after a reboot
-- [ ] Real-world test: a full arr stack as an App of Apps on a Hetzner VPS
-- [x] Real-world test: private Git repo with a token, and webhooks (local Forgejo); SSH repo and private registry images still open
-- [x] Repository access check in the Application form: shows public / private-with-credential / access denied while you type, with an inline "Add credential"
+- [x] Restore working files after a reboot; a persistent work dir (e.g. `/opt/services`) as an option
+- [x] Repository access check in the Application form: public / private-with-credential / access denied while you type, with an inline "Add credential"
 - [x] Diff tab with Live (compose files on the Host), Desired (in Git) and a Compose diff; syntax colors for ~240 config formats
 - [x] Relative bind mounts not in Git are refused (every Sync would delete their data); warning for secrets written in plain text in compose files
-- [x] Work dir holds only what containers read (no `*.sops.*` copies); a persistent work dir (e.g. `/opt/services`) as an option
+- [x] Work dir holds only what containers read (no `*.sops.*` copies)
+- [x] Webhooks (GitHub, GitLab, Gitea/Forgejo); polling as the safety net, `OMEGACD_POLL_INTERVAL=0` for webhooks only
+- [x] The reason an Application is Unknown shown on its tile (e.g. a Git token that stopped working)
 - [x] Install script for Docker Compose and Kubernetes (`deploy/install.sh`), `deploy/compose.yaml`, `deploy/kubernetes.yaml`, `omegacd keygen`
+- [x] Kubernetes: `OMEGACD_LOCAL_HOST=false` hides the `local` Host where no Docker engine runs
 - [x] `omegacd import`: move stacks started by hand into Git from your laptop over SSH — config into Git, data stays, secrets encrypted for the Host Key, `adopt: true` definitions
-- [x] Release candidates `v0.1.0-rc.1` … `rc.3`: binaries and multi-arch image published by CI
+- [x] Release candidates `v0.1.0-rc.1` … `rc.4`: binaries and multi-arch image published by CI
+
+Still to test before v0.1.0 (see [TESTING.md](TESTING.md)):
+
+- [ ] Fresh install on a clean VPS with the install script, following the README only
+- [ ] That VPS as a remote Host (SSH): deploy, files, health, logs, its own Host Key
+- [ ] `omegacd import` of the stacks already running on that VPS, and their takeover
+- [ ] A private Git repository over SSH (token and webhooks are tested)
+- [ ] Images from a private registry
 
 ## v0.2 — trustworthy for real sites
 
@@ -27,7 +36,6 @@ OmegaCD is early. This is the plan, most important first — it changes as real 
 - **Order between Child Applications** — `dependsOn: [caddy]` in a definition: the App of Apps syncs children in that order (e.g. the app that creates a shared network before those that join it), instead of a failed first attempt and a retry
 - **Notifications** — Slack, Discord, email, generic webhook on Sync failed / Degraded / recovered
 - **Restart unhealthy containers** — Self-Heal option `restartUnhealthy`: restart a container its own healthcheck reports unhealthy for a while (Docker's restart policies only react to exits), with backoff and a limit, each restart in History and notified
-- [x] `OMEGACD_LOCAL_HOST=false` hides the `local` Host where no Docker engine runs (Kubernetes)
 - **Kubernetes polish** — on startup, check remote Hosts' files on the Host itself (today a pod without its work dir volume would restore and recreate every Application)
 - "Sync and recreate" in the UI; refresh from Git when an Application page opens
 
