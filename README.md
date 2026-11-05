@@ -50,6 +50,8 @@ You have a few servers running `docker compose`, and deploying means SSH-ing in 
 | --- | --- |
 | ![Applications, light theme](assets/screenshots/applications-light.png) | <img src="assets/screenshots/mobile.png" alt="Applications on a phone" width="300"> |
 
+![Live container logs with ANSI colors and highlighted warnings and errors](assets/screenshots/logs.png)
+
 ## Install
 
 OmegaCD needs a Docker engine and an [age](https://github.com/FiloSottile/age) key. The key seals stored credentials and decrypts your SOPS secrets, so **back it up** — without it, stored credentials and encrypted secrets cannot be read.
@@ -250,6 +252,8 @@ Changes *inside* data folders and volumes never count as drift. Back up volumes 
 ## Git access
 
 Public repositories need no setup; the New Application form checks access as you type (public / private with a credential / denied, with an inline *Add credential*). For private ones, add a credential under **Settings → Repository credentials** (for reading Git repositories), matched by URL prefix: a username and password/token for HTTPS, or an SSH private key. Private images need **Settings → Registry credentials** (for pulling Docker images), keyed by registry host such as `ghcr.io` — not a URL.
+
+![New Application form reporting a public repository](assets/screenshots/new-app.png)
 
 SSH host keys are always verified against the `known_hosts` file (`OMEGACD_SSH_KNOWN_HOSTS`, default `/etc/omegacd/known_hosts`):
 
