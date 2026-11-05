@@ -1,18 +1,10 @@
-export type Lang = 'yaml' | 'env' | 'plain';
 export type Tok = { text: string; cls?: string }; // cls: a tk-* class from app.css
 
-export function langFor(name: string): Lang {
-	const base = name.split('/').pop()!.toLowerCase();
-	if (/\.ya?ml$/.test(base)) return 'yaml';
-	if (base === '.env' || base.endsWith('.env') || base.startsWith('.env.')) return 'env';
-	return 'plain';
-}
-
+// highlight colors one line of a rendered compose file.
 // shortcut: line by line, so YAML block scalars (|, >) and multi-line quotes are colored per line only;
-// good enough for compose and config files, swap for a real tokenizer if that ever matters.
-export function highlight(line: string, lang: Lang): Tok[] {
-	if (lang === 'plain' || line === '') return [{ text: line }];
-	return lang === 'yaml' ? yamlLine(line) : envLine(line);
+// good enough for compose files, swap for a real tokenizer if that ever matters.
+export function highlight(line: string): Tok[] {
+	return line === '' ? [{ text: line }] : yamlLine(line);
 }
 
 const yamlKey = /^(\s*)((?:- +)*)("[^"]*"|'[^']*'|[^\s#'"-][^:#]*?|-[^\s:#][^:#]*?)(:)(?=\s|$)/;
@@ -42,24 +34,6 @@ function yamlLine(line: string): Tok[] {
 	scalar(out, value);
 	push(out, trail);
 	if (c >= 0) out.push({ text: rest.slice(c), cls: 'tk-comment' });
-	return out;
-}
-
-function envLine(line: string): Tok[] {
-	const out: Tok[] = [];
-	const m = /^(\s*)(#.*)$/.exec(line);
-	if (m) {
-		push(out, m[1]);
-		out.push({ text: m[2], cls: 'tk-comment' });
-		return out;
-	}
-	const kv = /^(\s*)(export\s+)?([A-Za-z_][A-Za-z0-9_.-]*)(\s*=\s*)(.*?)(\s*)$/.exec(line);
-	if (!kv) return [{ text: line }];
-	push(out, kv[1]);
-	if (kv[2]) out.push({ text: kv[2], cls: 'tk-punct' });
-	out.push({ text: kv[3], cls: 'tk-key' }, { text: kv[4], cls: 'tk-punct' });
-	scalar(out, kv[5]);
-	push(out, kv[6]);
 	return out;
 }
 

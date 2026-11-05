@@ -5,7 +5,6 @@
 	import Icon, { type IconName } from '../Icon.svelte';
 	import Empty from '../Empty.svelte';
 	import Graph, { type GNode } from './Graph.svelte';
-	import { highlight, langFor } from '../syntax.ts';
 
 	let {
 		name,
@@ -79,7 +78,6 @@
 	let err = $state('');
 	let info = $derived(Object.entries(detail?.info ?? {}).filter(([, v]) => v).sort(([a], [b]) => a.localeCompare(b)));
 	let lines = $derived(detail?.content ? detail.content.replace(/\n$/, '').split('\n') : []);
-	let lang = $derived(detail?.masked ? 'env' : langFor(detail?.name ?? ''));
 
 	async function show(r: Resource) {
 		sel = r;
@@ -200,7 +198,7 @@
 			<p class="muted small">Directory: its contents are not shown.</p>
 		{/if}
 		{#if lines.length}
-			<pre class="code" aria-label="Content of {detail.name}">{#each lines as l, i (i)}<span class="ln" aria-hidden="true">{i + 1}</span>{#each highlight(l, lang) as k, j (j)}<span class={k.cls}>{k.text}</span>{/each}{'\n'}{/each}</pre>
+			<pre class="code" aria-label="Content of {detail.name}">{#each lines as l, i (i)}<span class="ln" aria-hidden="true">{i + 1}</span>{l}{'\n'}{/each}</pre>
 		{:else if detail.info?.type === 'file' && !detail.secret}
 			<p class="muted small">Empty file.</p>
 		{/if}

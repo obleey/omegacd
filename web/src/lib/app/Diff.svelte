@@ -61,7 +61,7 @@
 		{#if !composeChanged}
 			<p class="muted small">No differences: the target Revision runs the same compose project.</p>
 		{:else}
-			<pre class="diff" aria-label="Compose diff">{#each composeDiff as l, i (i)}<span class={opCls[l.op]}><span class="op">{l.op}</span> {#each highlight(l.text, 'yaml') as k, j (j)}<span class={k.cls}>{k.text}</span>{/each}</span>{'\n'}{/each}</pre>
+			<pre class="diff" aria-label="Compose diff">{#each composeDiff as l, i (i)}<span class={opCls[l.op]}><span class="op">{l.op}</span> {#each highlight(l.text) as k, j (j)}<span class={k.cls}>{k.text}</span>{/each}</span>{'\n'}{/each}</pre>
 		{/if}
 	{:else if view === 'live' || view === 'desired'}
 		<p class="muted small">
@@ -72,7 +72,7 @@
 		{#if view === 'live' && !diff.live}
 			<p class="muted small">Not deployed yet: there is no Live compose before the first Sync.</p>
 		{:else}
-			<pre class="diff plain" aria-label="{view} compose">{#each (view === 'live' ? diff.live : diff.desired).replace(/\n$/, '').split('\n') as l, i (i)}{#each highlight(l, 'yaml') as k, j (j)}<span class={k.cls}>{k.text}</span>{/each}{'\n'}{/each}</pre>
+			<pre class="diff plain" aria-label="{view} compose">{#each (view === 'live' ? diff.live : diff.desired).replace(/\n$/, '').split('\n') as l, i (i)}{#each highlight(l) as k, j (j)}<span class={k.cls}>{k.text}</span>{/each}{'\n'}{/each}</pre>
 		{/if}
 	{:else}
 	<h3>{apps ? 'Applications' : 'Services'}</h3>
