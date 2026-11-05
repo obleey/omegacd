@@ -6,7 +6,7 @@ RUN npm ci
 COPY web/ ./
 RUN npm run build
 
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS go
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS go
 ARG VERSION=""
 ARG TARGETOS TARGETARCH
 WORKDIR /src
@@ -18,7 +18,7 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
     -ldflags="-s -w -X github.com/obleey/omegacd/internal/version.Version=${VERSION}" \
     -o /omegacd ./cmd/omegacd
 
-FROM alpine:3.22
+FROM alpine:3.24
 ARG VERSION=""
 LABEL org.opencontainers.image.title="OmegaCD" \
       org.opencontainers.image.description="GitOps continuous delivery for Docker Compose" \

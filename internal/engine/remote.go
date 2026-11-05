@@ -18,7 +18,7 @@ import (
 )
 
 // helperImage runs the short-lived containers that write Application files on a remote Host.
-const helperImage = "busybox:1.36"
+const helperImage = "busybox:1.38"
 
 // syncScript mirrors /tmp/stage into /apps/$1. Unchanged files are left alone and changed regular files
 // are rewritten in place, so single-file bind mounts keep their inode; files not in the stage are deleted.

@@ -24,7 +24,7 @@ jobs:
       # The official image scans the full history with .gitleaks.toml; gitleaks-action fails
       # on the first push of a branch (it builds a commit range from the all-zero "before" SHA).
       - name: gitleaks
-        run: docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.28.0 git /repo --redact --no-banner -v
+        run: docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.30.1 git /repo --redact --no-banner -v
 
   web:
     name: Web UI
