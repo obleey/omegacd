@@ -43,7 +43,11 @@
 	let hosts = $state<string[]>([init?.host || 'local']);
 	onMount(() => {
 		get<HostView[]>('/settings/hosts')
-			.then((hs) => (hosts = hs.map((h) => h.name)))
+			.then((hs) => {
+				hosts = hs.map((h) => h.name);
+				// no "local" when OmegaCD runs without a Docker engine (OMEGACD_LOCAL_HOST=false): preselect the first Host
+				if (!init?.host && hosts.length && !hosts.includes(host)) host = hosts[0];
+			})
 			.catch(() => {}); // the select keeps the current Host
 	});
 	let error = $state('');

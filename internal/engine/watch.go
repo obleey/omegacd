@@ -26,7 +26,7 @@ func (e *Engine) Watch(ctx context.Context, changed func(host, project string)) 
 		}
 	}()
 	for {
-		want := map[string]bool{domain.LocalHost: true}
+		want := map[string]bool{domain.LocalHost: !e.cfg.NoLocalHost}
 		if e.cfg.ListHosts != nil {
 			hosts, err := e.cfg.ListHosts(ctx)
 			if err != nil {
@@ -47,8 +47,8 @@ func (e *Engine) Watch(ctx context.Context, changed func(host, project string)) 
 				delete(streams, name)
 			}
 		}
-		for name := range want {
-			if streams[name] == nil {
+		for name, ok := range want {
+			if ok && streams[name] == nil {
 				hctx, cancel := context.WithCancel(ctx)
 				streams[name] = cancel
 				go e.watchHost(hctx, name, changed)

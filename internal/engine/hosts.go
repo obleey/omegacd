@@ -28,6 +28,7 @@ type Config struct {
 	ListHosts      func(ctx context.Context) ([]domain.Host, error)            // store.ListHosts (excludes local)
 	KnownHostsFile string                                                      // OpenSSH known_hosts for ssh:// hosts; ssh refused if empty or missing
 	KeyDir         string                                                      // dir where SSH keys / TLS PEMs are written with 0600 for the ssh/tls clients
+	NoLocalHost    bool                                                        // no local Docker engine (e.g. in Kubernetes): only remote Hosts
 }
 
 // hostConn is a Docker CLI and Compose service bound to one Host.
@@ -57,6 +58,9 @@ func (e *Engine) conn(ctx context.Context, host string) (*hostConn, error) {
 		return hc, nil
 	}
 	if host == domain.LocalHost {
+		if e.cfg.NoLocalHost {
+			return nil, domain.ErrLocalHostDisabled
+		}
 		return nil, errors.New("local docker host not connected") // created in New, only gone after Close
 	}
 	if e.cfg.Hosts == nil {

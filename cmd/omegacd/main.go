@@ -5,12 +5,14 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -67,11 +69,16 @@ func run(log *slog.Logger) error {
 	}
 	defer st.Close()
 	knownHosts := cmp.Or(os.Getenv("OMEGACD_SSH_KNOWN_HOSTS"), "/etc/omegacd/known_hosts")
+	noLocal, err := localHostDisabled(os.Getenv("OMEGACD_LOCAL_HOST"))
+	if err != nil {
+		return err
+	}
 	eng, err := engine.New(engine.Config{
 		Hosts:          st.GetHost,
 		ListHosts:      st.ListHosts,
 		KnownHostsFile: knownHosts,
 		KeyDir:         filepath.Join(dataDir, "keys"),
+		NoLocalHost:    noLocal,
 	})
 	if err != nil {
 		return err
@@ -83,7 +90,7 @@ func run(log *slog.Logger) error {
 	selfID, _ := os.Hostname() // inside a container this is the container ID prefix
 	ctl := controller.New(controller.Config{
 		Store: st, Git: git, Secrets: secrets.Decryptor{}, MasterKey: id, Engine: eng,
-		WorkDir: workDir, PollInterval: poll,
+		WorkDir: workDir, PollInterval: poll, NoLocalHost: noLocal,
 		NormalizeURL: gitsrc.NormalizeURL,
 		ObserveSync:  api.ObserveSync,
 		SelfID:       selfID,
@@ -126,4 +133,15 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	return nil
+}
+
+// localHostDisabled reads OMEGACD_LOCAL_HOST: "false" where no Docker engine runs next to OmegaCD (Kubernetes).
+func localHostDisabled(v string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "", "true":
+		return false, nil
+	case "false":
+		return true, nil
+	}
+	return false, fmt.Errorf("OMEGACD_LOCAL_HOST must be true or false, not %q", v)
 }

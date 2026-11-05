@@ -1421,3 +1421,37 @@ func TestPlainSecrets(t *testing.T) {
 		t.Fatal("a warning must not repeat the secret")
 	}
 }
+
+func TestNoLocalHost(t *testing.T) {
+	ctx := t.Context()
+	r := newRig(t)
+	r.c.cfg.NoLocalHost = true
+	if _, err := r.c.SaveHost(ctx, domain.Host{Name: "prod", URL: "ssh://deploy@prod"}, true); err != nil {
+		t.Fatal(err)
+	}
+	hosts, err := r.c.ListHosts(ctx)
+	if err != nil || len(hosts) != 1 || hosts[0].Name != "prod" {
+		t.Fatalf("hosts: %+v, %v", hosts, err)
+	}
+	// local, explicitly or by default, is refused with the reason
+	for _, h := range []string{"", domain.LocalHost} {
+		a := app("web")
+		a.Host = h
+		if _, err := r.c.CreateApp(ctx, a); !errors.Is(err, domain.ErrInvalid) || !strings.Contains(err.Error(), "OMEGACD_LOCAL_HOST=false") {
+			t.Fatalf("host %q: %v", h, err)
+		}
+	}
+	a := app("web")
+	a.Host = "prod"
+	if _, err := r.c.CreateApp(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	// an app left on local from before is not restored (nothing to restore into)
+	r.st.apps["old"] = app("old")
+	r.st.ops = append(r.st.ops, domain.SyncOperation{App: "old", Phase: domain.OpSucceeded, Revision: "aaaaaaa"})
+	r.c.restoreWorkDirs(ctx)
+	r.waitIdle(t, "old") // restores run in the background
+	if r.e.syncCount() != 0 {
+		t.Fatal("restored an app on the disabled local Host")
+	}
+}

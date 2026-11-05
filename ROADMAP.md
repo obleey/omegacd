@@ -24,7 +24,8 @@ OmegaCD is early. This is the plan, most important first — it changes as real 
 
 - **Sync hooks** — jobs before/after a Sync: `artisan migrate`, `cache:clear`, `wp core update-db`, backups before upgrades
 - **Notifications** — Slack, Discord, email, generic webhook on Sync failed / Degraded / recovered
-- **Kubernetes polish** — `OMEGACD_LOCAL_HOST=false` to hide the `local` Host where no Docker engine runs; on startup, check remote Hosts' files on the Host itself (today a pod without its work dir volume would restore and recreate every Application)
+- [x] `OMEGACD_LOCAL_HOST=false` hides the `local` Host where no Docker engine runs (Kubernetes)
+- **Kubernetes polish** — on startup, check remote Hosts' files on the Host itself (today a pod without its work dir volume would restore and recreate every Application)
 - "Sync and recreate" in the UI; refresh from Git when an Application page opens
 
 ## v0.3 — many Applications, little repetition

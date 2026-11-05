@@ -175,3 +175,18 @@ func TestValidateBindSources(t *testing.T) {
 		}
 	}
 }
+
+func TestNoLocalHost(t *testing.T) {
+	e, err := New(Config{NoLocalHost: true}) // no Docker CLI set up at all
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, host := range []string{"", domain.LocalHost} {
+		if _, err := e.conn(context.Background(), host); !errors.Is(err, domain.ErrLocalHostDisabled) {
+			t.Fatalf("conn(%q) = %v", host, err)
+		}
+	}
+	if _, err := e.Status(context.Background(), domain.Application{Name: "web"}); !errors.Is(err, domain.ErrLocalHostDisabled) {
+		t.Fatalf("Status on local = %v", err)
+	}
+}

@@ -49,6 +49,9 @@ type Engine struct {
 // New connects to the local Docker host the way the docker CLI does (DOCKER_HOST, contexts).
 // Remote Hosts are connected on first use.
 func New(cfg Config) (*Engine, error) {
+	if cfg.NoLocalHost {
+		return &Engine{cfg: cfg, conns: map[string]*hostConn{}, desired: map[string][]string{}}, nil
+	}
 	dcli, err := command.NewDockerCli()
 	if err != nil {
 		return nil, fmt.Errorf("docker cli: %w", err)

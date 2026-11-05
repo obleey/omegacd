@@ -44,6 +44,7 @@ type Config struct {
 	Git          domain.Git
 	Secrets      domain.Secrets
 	MasterKey    *age.X25519Identity // seals stored secrets; also the Host Key of LocalHost
+	NoLocalHost  bool                // OMEGACD_LOCAL_HOST=false: no local Docker engine, only remote Hosts
 	Engine       domain.Engine
 	WorkDir      string
 	PollInterval time.Duration
@@ -127,8 +128,8 @@ func (c *Controller) restoreWorkDirs(ctx context.Context) {
 		return
 	}
 	for _, a := range apps {
-		if a.Kind == domain.KindApps {
-			continue
+		if a.Kind == domain.KindApps || c.cfg.NoLocalHost && cmp.Or(a.Host, domain.LocalHost) == domain.LocalHost {
+			continue // nothing to restore into: such an app shows its Host as disabled
 		}
 		// the compose files are the signal: after a reboot Docker may already have re-created
 		// missing bind-mount sources as empty directories, so the dir itself can be non-empty
@@ -1323,6 +1324,9 @@ func normalize(a *domain.Application) error {
 
 func (c *Controller) checkHost(ctx context.Context, name string) error {
 	if name == domain.LocalHost {
+		if c.cfg.NoLocalHost {
+			return domain.ErrLocalHostDisabled
+		}
 		return nil
 	}
 	_, err := c.cfg.Store.GetHost(ctx, name)
@@ -1525,7 +1529,9 @@ func (c *Controller) ListHosts(ctx context.Context) ([]domain.HostView, error) {
 	if err != nil {
 		return nil, err
 	}
-	hosts = append([]domain.Host{{Name: domain.LocalHost, WorkDir: c.cfg.WorkDir}}, hosts...)
+	if !c.cfg.NoLocalHost {
+		hosts = append([]domain.Host{{Name: domain.LocalHost, WorkDir: c.cfg.WorkDir}}, hosts...)
+	}
 	views := make([]domain.HostView, len(hosts))
 	var wg sync.WaitGroup
 	for i, h := range hosts {

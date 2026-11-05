@@ -5,6 +5,7 @@ package domain
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"time"
@@ -12,6 +13,9 @@ import (
 
 // LocalHost is the built-in Host: the Docker engine omegacd talks to via DOCKER_HOST / the socket.
 const LocalHost = "local"
+
+// ErrLocalHostDisabled: OMEGACD_LOCAL_HOST=false, there is no local Docker engine (e.g. in Kubernetes).
+var ErrLocalHostDisabled = fmt.Errorf("%w: the local Host is disabled (OMEGACD_LOCAL_HOST=false): choose a remote Host", ErrInvalid)
 
 // Application kinds.
 const (

@@ -185,7 +185,7 @@ For laptops and CI, download the `darwin_*` or `linux_*` archive from [Releases]
 
 ### Option 4: Kubernetes
 
-OmegaCD can run in a cluster as the control plane, managing Docker hosts as [remote Hosts](#remote-hosts) over SSH or TLS — Kubernetes nodes run containerd, not Docker, so the built-in `local` Host shows as unreachable there; give every Application a `host:`. [`deploy/kubernetes.yaml`](deploy/kubernetes.yaml) has a PersistentVolumeClaim, a single-replica Deployment and a Service:
+OmegaCD can run in a cluster as the control plane, managing Docker hosts as [remote Hosts](#remote-hosts) over SSH or TLS. Kubernetes nodes run containerd, not Docker, so the manifest sets `OMEGACD_LOCAL_HOST=false`: the built-in `local` Host is not shown, and Applications must name a `host:`. [`deploy/kubernetes.yaml`](deploy/kubernetes.yaml) has a PersistentVolumeClaim, a single-replica Deployment and a Service:
 
 ```sh
 kubectl create namespace omegacd
@@ -414,6 +414,7 @@ All server settings are environment variables:
 | `OMEGACD_WORKDIR` | `/run/omegacd` | Where Application files are written on Sync; same path on host and container |
 | `OMEGACD_AGE_KEY_FILE` | `/etc/omegacd/age.key` | age identity: seals stored credentials and decrypts SOPS files. Required |
 | `OMEGACD_SSH_KNOWN_HOSTS` | `/etc/omegacd/known_hosts` | Host keys for Git over SSH and `ssh://` Hosts |
+| `OMEGACD_LOCAL_HOST` | `true` | `false` where no Docker engine runs next to OmegaCD (Kubernetes): the built-in `local` Host is hidden and refused, Applications go to remote Hosts |
 | `OMEGACD_POLL_INTERVAL` | `3m` | How often Git is polled (Go duration) |
 | `OMEGACD_ADMIN_PASSWORD` | *(generated)* | Initial `admin` password, used only on first start. If unset, a random one is logged and must be changed on first login |
 | `OMEGACD_WEBHOOK_SECRET` | *(none)* | Shared secret for webhooks |
