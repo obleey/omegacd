@@ -14,12 +14,17 @@ OmegaCD is early. This is the plan, most important first — it changes as real 
 - [ ] Real-world test: a full arr stack as an App of Apps on a Hetzner VPS
 - [ ] Real-world test: private Git repos (token and SSH), webhooks from GitHub, private registry images
 - [x] Repository access check in the Application form: shows public / private-with-credential / access denied while you type, with an inline "Add credential"
+- [x] Diff tab with Live (compose files on the Host), Desired (in Git) and a Compose diff; syntax colors for ~240 config formats
+- [x] Relative bind mounts not in Git are refused (every Sync would delete their data); warning for secrets written in plain text in compose files
+- [x] Work dir holds only what containers read (no `*.sops.*` copies); a persistent work dir (e.g. `/opt/services`) as an option
+- [x] Install script for Docker Compose and Kubernetes (`deploy/install.sh`), `deploy/compose.yaml`, `deploy/kubernetes.yaml`, `omegacd keygen`
+- [x] Release candidates `v0.1.0-rc.1` / `rc.2`: binaries and multi-arch image published by CI
 
 ## v0.2 — trustworthy for real sites
 
 - **Sync hooks** — jobs before/after a Sync: `artisan migrate`, `cache:clear`, `wp core update-db`, backups before upgrades
 - **Notifications** — Slack, Discord, email, generic webhook on Sync failed / Degraded / recovered
-- **Warn about relative bind mounts that hold data** (`./data` lives in the work dir and is lost on reboot)
+- **Kubernetes polish** — `OMEGACD_LOCAL_HOST=false` to hide the `local` Host where no Docker engine runs; on startup, check remote Hosts' files on the Host itself (today a pod without its work dir volume would restore and recreate every Application)
 - "Sync and recreate" in the UI; refresh from Git when an Application page opens
 
 ## v0.3 — many Applications, little repetition
@@ -29,6 +34,7 @@ OmegaCD is early. This is the plan, most important first — it changes as real 
 - **Follow the latest Git tag** — `targetRevision: "v1.*"` or a semver range (`>=1.4 <2.0`): deploy the newest matching tag automatically, instead of editing the Application for each release
 - **Podman support** — run against Podman's Docker-compatible API socket (rootful and rootless): enable/check `podman-restart.service` so containers come back after a reboot, an SSH transport that doesn't need the Docker CLI on the server, rootless notes (ports < 1024, UID mapping on bind mounts), and the integration test suite running against Podman in CI; the engine (Docker or Podman, with version) detected per Host and shown as a badge on the Host and on every Application deployed there, so mixed fleets are obvious. Quick test against Podman 5.8 (Docker-compatible API): deploy, SOPS, bind-mounted files, diff, logs, events/drift and delete-with-volumes work; healthchecks need systemd on the Podman host (document it)
 - Nested App of Apps
+- Name prefix per App of Apps, so two of them can declare an Application with the same name (e.g. `edge-caddy`, `blog-caddy`)
 - Theme picker (all Catppuccin flavors)
 
 ## v0.4 — teams
@@ -53,7 +59,7 @@ OmegaCD is early. This is the plan, most important first — it changes as real 
 ## Housekeeping
 
 - Start watching a newly added Host's events immediately (today: within 30 s)
-
-- Dependabot/Renovate for Go, npm and GitHub Actions
+- [x] Renovate for Go, npm, GitHub Actions and container images
+- [x] Gzip for the web UI
 - Copy only changed files to remote Hosts
 - A documentation site
