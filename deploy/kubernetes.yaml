@@ -34,7 +34,7 @@ spec:
     spec:
       containers:
         - name: omegacd
-          image: ghcr.io/obleey/omegacd:0.1.0-rc.1
+          image: ghcr.io/obleey/omegacd:0.1.0-rc.2
           ports:
             - { name: http, containerPort: 8080 }
           env:
