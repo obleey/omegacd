@@ -1382,3 +1382,42 @@ func TestStartupDropsLeftoverSopsCopies(t *testing.T) {
 		t.Fatalf("list after a second start: %q", b)
 	}
 }
+
+func TestPlainSecrets(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte(`services:
+  db:
+    image: mariadb
+    environment:
+      MARIADB_ROOT_PASSWORD: hunter2        # warn
+      MARIADB_PASSWORD: ${DB_PASSWORD}      # from a SOPS .env: fine
+      MARIADB_PASSWORD_FILE: /run/secrets/x # a path: fine
+      MARIADB_DATABASE: wordpress           # not a secret name
+      REQUIRE_PASSWORD: "true"              # a flag
+  web:
+    image: app
+    environment:
+      - API_TOKEN=abc123                    # warn (list form)
+      - SESSION_SECRET=$${KEEP}             # $ escapes: treated as templated
+      - GF_SECURITY_ADMIN_PASSWORD          # no value: passed through from the env
+      - EMPTY_SECRET=
+`), 0o644)
+	os.WriteFile(filepath.Join(dir, "prod.yaml"), []byte("services:\n  web:\n    environment: {AWS_SECRET_ACCESS_KEY: wJalr}\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "broken.yaml"), []byte("services: [\n"), 0o644)
+
+	got := plainSecrets(domain.Application{ComposeFiles: []string{"compose.yaml", "prod.yaml", "broken.yaml", "missing.yaml"}}, dir)
+	var keys []string
+	for _, w := range got {
+		keys = append(keys, strings.SplitN(w, " is in plain text", 2)[0])
+	}
+	if want := []string{"db: MARIADB_ROOT_PASSWORD", "web: API_TOKEN", "web: AWS_SECRET_ACCESS_KEY"}; !slices.Equal(keys, want) {
+		t.Fatalf("warned about %q, want %q", keys, want)
+	}
+	if want := "db: MARIADB_ROOT_PASSWORD is in plain text in compose.yaml, readable by anyone with access to the repository; " +
+		"put it in a SOPS-encrypted .env and write MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}"; got[0] != want {
+		t.Fatalf("message:\n%s", got[0])
+	}
+	if strings.Contains(strings.Join(got, ""), "hunter2") {
+		t.Fatal("a warning must not repeat the secret")
+	}
+}

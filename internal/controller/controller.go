@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -21,6 +22,8 @@ import (
 	"filippo.io/age"
 
 	"github.com/obleey/omegacd/internal/appdef"
+	"gopkg.in/yaml.v3"
+
 	"github.com/obleey/omegacd/internal/domain"
 )
 
@@ -934,6 +937,7 @@ func (c *Controller) Diff(ctx context.Context, name string) (domain.DiffView, er
 	if dv.Desired, err = composeText(a, stage); err != nil {
 		return domain.DiffView{}, err
 	}
+	dv.Warnings = plainSecrets(a, stage)
 	// Live: the copy of the deployed Revision on the Host (kept here too for remote Hosts)
 	if live := c.appDir(name); dirExists(live) {
 		if dv.Live, err = composeText(a, live); err != nil {
@@ -1056,6 +1060,56 @@ func (c *Controller) resolveInAppDir(name, rel string) (string, error) {
 }
 
 // decrypted reports whether path was written by Secrets.DecryptDir from a sibling "x.sops.ext".
+var (
+	secretKey  = regexp.MustCompile(`(?i)PASSWORD|PASSWD|SECRET|TOKEN|API_?KEY|PRIVATE_?KEY|ACCESS_?KEY`)
+	notSecret  = regexp.MustCompile(`(?i)_(FILE|PATH)$`)
+	plainValue = regexp.MustCompile(`(?i)^(true|false|yes|no|on|off|0|1)?$`)
+)
+
+// plainSecrets warns about environment values in the compose files that look like secrets and are written out
+// in Git instead of coming from ${VAR} (a SOPS-encrypted .env) or an env_file. Files are read as written,
+// before interpolation; unreadable ones are skipped (Validate reports them).
+func plainSecrets(a domain.Application, dir string) []string {
+	var warnings []string
+	for _, f := range a.ComposeFiles {
+		b, err := os.ReadFile(filepath.Join(dir, f))
+		if err != nil {
+			continue
+		}
+		var doc struct {
+			Services map[string]struct {
+				Environment yaml.Node `yaml:"environment"`
+			} `yaml:"services"`
+		}
+		if yaml.Unmarshal(b, &doc) != nil {
+			continue
+		}
+		for _, svc := range slices.Sorted(maps.Keys(doc.Services)) {
+			env := doc.Services[svc].Environment
+			var pairs [][2]string
+			switch env.Kind {
+			case yaml.MappingNode:
+				for i := 0; i+1 < len(env.Content); i += 2 {
+					pairs = append(pairs, [2]string{env.Content[i].Value, env.Content[i+1].Value})
+				}
+			case yaml.SequenceNode:
+				for _, n := range env.Content {
+					k, v, _ := strings.Cut(n.Value, "=")
+					pairs = append(pairs, [2]string{k, v})
+				}
+			}
+			for _, kv := range pairs {
+				k, v := strings.TrimSpace(kv[0]), strings.TrimSpace(kv[1])
+				if secretKey.MatchString(k) && !notSecret.MatchString(k) && !plainValue.MatchString(v) && !strings.Contains(v, "$") {
+					warnings = append(warnings, fmt.Sprintf("%s: %s is in plain text in %s, readable by anyone with access to the repository; "+
+						"put it in a SOPS-encrypted .env and write %s: ${%s}", svc, k, f, k, k))
+				}
+			}
+		}
+	}
+	return warnings
+}
+
 // composeText is the app's compose files in dir as written, one after another when there are several.
 func composeText(a domain.Application, dir string) (string, error) {
 	var b strings.Builder

@@ -2,6 +2,8 @@ package api
 
 import (
 	"bufio"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -299,6 +301,9 @@ func newEnv(t *testing.T, mustChange bool) *env {
 		UI: fstest.MapFS{
 			"index.html":            {Data: []byte("INDEX")},
 			"_app/immutable/app.js": {Data: []byte("JS")},
+			"_app/immutable/big.js": {Data: []byte(strings.Repeat("export const greeting = 'hello';\n", 500))},
+			"favicon.svg":           {Data: []byte("<svg/>")},
+			"logo.png":              {Data: []byte("\x89PNG")},
 		},
 	})
 	srv := httptest.NewServer(h)
@@ -522,6 +527,74 @@ func TestSPAFallback(t *testing.T) {
 	}
 	e.expect("GET", "/healthz", "", 200)
 	e.expect("GET", "/metrics", "", 200)
+}
+
+func TestUIGzip(t *testing.T) {
+	e := newEnv(t, false)
+	get := func(method, path, accept string) (*http.Response, []byte) {
+		t.Helper()
+		req, _ := http.NewRequest(method, e.srv.URL+path, nil)
+		if accept != "" {
+			req.Header.Set("Accept-Encoding", accept) // set by hand, so the client does not decompress on its own
+		}
+		resp, err := http.DefaultTransport.RoundTrip(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp, b
+	}
+	want := strings.Repeat("export const greeting = 'hello';\n", 500)
+
+	resp, body := get("GET", "/_app/immutable/big.js", "br, gzip;q=0.8")
+	if resp.Header.Get("Content-Encoding") != "gzip" || !strings.Contains(resp.Header.Get("Vary"), "Accept-Encoding") ||
+		!strings.HasPrefix(resp.Header.Get("Content-Type"), "text/javascript") || !strings.Contains(resp.Header.Get("Cache-Control"), "immutable") {
+		t.Fatalf("headers: %v", resp.Header)
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, _ := io.ReadAll(zr)
+	if string(plain) != want || len(body) >= len(want)/10 || resp.Header.Get("Content-Length") != strconv.Itoa(len(body)) {
+		t.Fatalf("gzip body: %d bytes for %d, round trip ok=%v", len(body), len(want), string(plain) == want)
+	}
+	if _, again := get("GET", "/_app/immutable/big.js", "gzip"); !bytes.Equal(again, body) {
+		t.Fatal("second response differs (cache)")
+	}
+	// the SPA fallback is compressed too
+	if resp, _ := get("GET", "/apps/web", "gzip"); resp.Header.Get("Content-Encoding") != "gzip" || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/html") {
+		t.Fatalf("index: %v", resp.Header)
+	}
+	// HEAD: headers only
+	if resp, b := get("HEAD", "/_app/immutable/big.js", "gzip"); resp.Header.Get("Content-Encoding") != "gzip" || len(b) != 0 {
+		t.Fatalf("HEAD: %v, %d bytes", resp.Header, len(b))
+	}
+	// plain when not accepted or refused, and never for images or the API
+	for _, c := range []struct{ path, accept string }{
+		{"/_app/immutable/big.js", ""}, {"/_app/immutable/big.js", "gzip;q=0"}, {"/_app/immutable/big.js", "br"},
+		{"/logo.png", "gzip"}, {"/api/version", "gzip"},
+	} {
+		resp, b := get("GET", c.path, c.accept)
+		if resp.Header.Get("Content-Encoding") != "" {
+			t.Errorf("%s with %q: compressed", c.path, c.accept)
+		}
+		if c.path == "/_app/immutable/big.js" && string(b) != want {
+			t.Errorf("%s with %q: body differs", c.path, c.accept)
+		}
+	}
+}
+
+func TestAcceptsGzip(t *testing.T) {
+	for h, want := range map[string]bool{
+		"gzip": true, "gzip, deflate, br": true, "br;q=1.0, gzip;q=0.8": true, "*": true, "GZIP": true, "gzip;q=0.001": true,
+		"": false, "br": false, "gzip;q=0": false, "gzip; q=0.0": false, "identity": false, "x-gzip": false,
+	} {
+		if got := acceptsGzip(h); got != want {
+			t.Errorf("%q: %v, want %v", h, got, want)
+		}
+	}
 }
 
 func TestEnsureAdmin(t *testing.T) {

@@ -2,15 +2,19 @@
 package api
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/obleey/omegacd/internal/version"
 	"io/fs"
 	"log/slog"
+	"mime"
 	"net/http"
 	"net/netip"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -169,9 +173,48 @@ func decode(w http.ResponseWriter, r *http.Request, v any) error {
 	return nil
 }
 
+func gzipFile(ui fs.FS, name string, cache *sync.Map) ([]byte, error) {
+	if b, ok := cache.Load(name); ok {
+		return b.([]byte), nil
+	}
+	plain, err := fs.ReadFile(ui, name)
+	if err != nil {
+		return nil, err
+	}
+	var buf bytes.Buffer
+	zw, _ := gzip.NewWriterLevel(&buf, gzip.BestCompression)
+	zw.Write(plain)
+	if err := zw.Close(); err != nil {
+		return nil, err
+	}
+	cache.Store(name, buf.Bytes())
+	return buf.Bytes(), nil
+}
+
+// acceptsGzip reads an Accept-Encoding header: gzip (or *) listed and not refused with q=0.
+func acceptsGzip(header string) bool {
+	for part := range strings.SplitSeq(header, ",") {
+		coding, params, _ := strings.Cut(strings.TrimSpace(part), ";")
+		if c := strings.ToLower(strings.TrimSpace(coding)); c != "gzip" && c != "*" {
+			continue
+		}
+		if q, ok := strings.CutPrefix(strings.ReplaceAll(strings.ToLower(params), " ", ""), "q="); ok {
+			if f, err := strconv.ParseFloat(q, 64); err == nil && f == 0 {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
 const placeholder = `<!doctype html><title>omegacd</title><p>omegacd is running. The UI is not embedded in this build; use the <a href="/api/apps">API</a>.</p>`
 
+// gzipExt are the UI files worth compressing; images and fonts are compressed already.
+var gzipExt = map[string]bool{".js": true, ".css": true, ".html": true, ".json": true, ".svg": true}
+
 func uiHandler(ui fs.FS) http.Handler {
+	var gzipped sync.Map // file name -> its gzip bytes; the embedded UI never changes, so each is compressed once
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			writeStatus(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -190,6 +233,21 @@ func uiHandler(ui fs.FS) http.Handler {
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		} else {
 			w.Header().Set("Cache-Control", "no-cache")
+		}
+		ext := path.Ext(name)
+		if gzipExt[ext] {
+			w.Header().Add("Vary", "Accept-Encoding")
+			if acceptsGzip(r.Header.Get("Accept-Encoding")) {
+				if b, err := gzipFile(ui, name, &gzipped); err == nil {
+					w.Header().Set("Content-Type", mime.TypeByExtension(ext))
+					w.Header().Set("Content-Encoding", "gzip")
+					w.Header().Set("Content-Length", strconv.Itoa(len(b)))
+					if r.Method == http.MethodGet {
+						w.Write(b)
+					}
+					return
+				}
+			}
 		}
 		http.ServeFileFS(w, r, ui, name)
 	})

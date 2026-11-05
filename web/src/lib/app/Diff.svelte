@@ -80,6 +80,11 @@
 			<button aria-pressed={view === 'desired'} onclick={() => (view = 'desired')}>Desired</button>
 		</div>
 	{/if}
+	{#if diff.warnings?.length}
+		<div class="banner small warnings" role="note">
+			{#each diff.warnings as w (w)}<p>{w}</p>{/each}
+		</div>
+	{/if}
 	{#if view === 'compose'}
 		<p class="muted small">
 			Live: the compose files on the Host (<span class="mono">{short(diff.fromSHA) || '—'}</span>) → Desired: the compose files in Git
@@ -152,6 +157,8 @@
 <style>
 	.loading { display: grid; gap: 0.7rem; }
 	.views { margin-bottom: 0.8rem; }
+	.warnings { margin: 0 0 0.8rem; display: grid; gap: 0.3rem; }
+	.warnings p { margin: 0; }
 	.dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--yellow); margin-left: 0.4rem; vertical-align: middle; }
 	pre.plain { padding: 0.6rem 0.8rem; }
 	pre.plain span { display: inline; min-width: 0; padding: 0; }

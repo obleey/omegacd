@@ -66,6 +66,7 @@ export interface DiffView {
 	gitDiff: string;
 	live: string; // compose of the deployed files; "" before the first Sync
 	desired: string; // compose of the target Revision
+	warnings?: string[]; // problems in the Desired compose files that do not stop a Sync
 }
 
 export interface Container {

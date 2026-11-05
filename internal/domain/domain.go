@@ -266,6 +266,8 @@ type DiffView struct {
 	// Desired the same files at the target Revision; Live is empty before the first Sync.
 	Live    string `json:"live"`
 	Desired string `json:"desired"`
+	// Warnings are problems in the Desired compose files that do not stop a Sync (e.g. secrets in plain text).
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // Event is pushed to SSE subscribers.
