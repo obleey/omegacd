@@ -3,6 +3,7 @@
 	import { slide } from 'svelte/transition';
 	import { api, errMsg, get, type Application, type HostView, type RepoAccess, type RepoCredential } from './api.ts';
 	import Icon from './Icon.svelte';
+	import Dialog from './Dialog.svelte';
 	import { ms } from './status.ts';
 
 	let {
@@ -30,6 +31,12 @@
 	let autoSync = $state(init?.autoSync ?? false);
 	let selfHeal = $state(init?.selfHeal ?? false);
 	let prune = $state(init?.prune ?? false);
+	let pruneVolumes = $state(init?.pruneVolumes ?? false);
+	let askVolumes = $state(false);
+	// Prune volumes is a sub-option of Prune: turning Prune off turns it off too
+	$effect(() => {
+		if (!prune) pruneVolumes = false;
+	});
 	let adopt = $state(init?.adopt ?? false);
 	let kind = $state(init?.kind || 'compose');
 	let host = $state(init?.host || 'local');
@@ -151,6 +158,7 @@
 				autoSync,
 				selfHeal,
 				prune,
+				pruneVolumes: kind === 'compose' && prune && pruneVolumes,
 				adopt: kind === 'compose' && adopt
 			});
 		} catch (err) {
@@ -319,8 +327,25 @@ prune: false</pre>
 		</div>
 		<div class="check">
 			<input id="f-prune" type="checkbox" bind:checked={prune} />
-			<label for="f-prune">Prune <span class="hint">Remove containers and networks no longer in the Desired State. Volumes are never removed.</span></label>
+			<label for="f-prune">Prune <span class="hint">Remove containers and networks no longer in the Desired State. Volumes are kept unless “also volumes” is on.</span></label>
 		</div>
+		{#if prune && kind === 'compose'}
+			<div class="check nested" transition:slide={{ duration: ms(180) }}>
+				<input
+					id="f-prune-vol"
+					type="checkbox"
+					checked={pruneVolumes}
+					onchange={(e) => {
+						// turning it on needs a confirmation: keep it off until confirmed
+						if (e.currentTarget.checked) {
+							e.currentTarget.checked = false;
+							askVolumes = true;
+						} else pruneVolumes = false;
+					}}
+				/>
+				<label for="f-prune-vol" class="danger">…also volumes <span class="hint">Deletes volumes no longer declared — data is lost.</span></label>
+			</div>
+		{/if}
 		{#if !editing && kind === 'compose'}
 			<div class="check">
 				<input id="f-adopt" type="checkbox" bind:checked={adopt} />
@@ -328,6 +353,14 @@ prune: false</pre>
 			</div>
 		{/if}
 	</fieldset>
+
+	<Dialog bind:open={askVolumes} title="Prune volumes?">
+		<p>Volumes this Application no longer declares will be <strong>deleted with all their data</strong> on the next Sync (unless a container still uses them).</p>
+		{#snippet actions()}
+			<button type="button" onclick={() => (askVolumes = false)}>Cancel</button>
+			<button type="button" class="danger solid" onclick={() => ((pruneVolumes = true), (askVolumes = false))}>Prune volumes</button>
+		{/snippet}
+	</Dialog>
 
 	{#if blocked && askAccess === repoURL.trim()}
 		<p class="askroot" role="alert"><Icon name="alert" size={14} />OmegaCD can't read this repository yet — {editing ? 'save' : 'create'} anyway? Submit again to confirm.</p>
@@ -368,6 +401,8 @@ prune: false</pre>
 	.st :global(svg) { flex: none; }
 	.ok { color: var(--green); }
 	.bad { color: var(--red); }
+	.nested { margin-left: 1.6rem; }
+	label.danger { color: var(--red); }
 	.warn { color: var(--yellow); }
 	.addcred { margin-top: 0.5rem; padding: 0.7rem 0.9rem 0.8rem; border: 1px dashed color-mix(in srgb, var(--accent) 45%, var(--border)); border-radius: var(--radius); background: color-mix(in srgb, var(--accent) 5%, var(--card)); }
 	.addcred p { margin: 0 0 0.5rem; }

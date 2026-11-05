@@ -214,6 +214,8 @@ type fakeEngine struct {
 	files        []domain.Resource
 	hostsChanged []string
 	lastPrune    bool
+	lastPruneVol bool
+	removedVols  []bool // volumes flag per Remove call
 	lastForce    bool
 	onRemove     func(domain.Application) // runs after Remove, outside the lock: simulates Docker events mid-delete
 }
@@ -229,13 +231,15 @@ func (e *fakeEngine) Sync(_ context.Context, _ domain.Application, _ string, opt
 	defer e.mu.Unlock()
 	e.syncs++
 	e.lastPrune = opts.Prune
+	e.lastPruneVol = opts.PruneVolumes
 	e.lastForce = opts.ForceRecreate
 	return e.syncErr
 }
-func (e *fakeEngine) Remove(_ context.Context, a domain.Application) error {
+func (e *fakeEngine) Remove(_ context.Context, a domain.Application, volumes bool) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.removed = true
+	e.removedVols = append(e.removedVols, volumes)
 	e.removedApps = append(e.removedApps, a.Name)
 	if hook := e.onRemove; hook != nil {
 		e.mu.Unlock()
@@ -533,7 +537,7 @@ func TestDeleteCascade(t *testing.T) {
 	r.c.CreateApp(t.Context(), app("web"))
 	events, cancel := r.c.Subscribe()
 	defer cancel()
-	if err := r.c.DeleteApp(t.Context(), "web", true); err != nil {
+	if err := r.c.DeleteApp(t.Context(), "web", true, false); err != nil {
 		t.Fatal(err)
 	}
 	if !r.e.removed {
@@ -661,7 +665,7 @@ func TestHosts(t *testing.T) {
 	if err := r.c.DeleteHost(ctx, "prod"); !errors.Is(err, domain.ErrInvalid) || !strings.Contains(err.Error(), "web") {
 		t.Fatalf("delete in use: got %v", err)
 	}
-	if err := r.c.DeleteApp(ctx, "web", false); err != nil {
+	if err := r.c.DeleteApp(ctx, "web", false, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.c.DeleteHost(ctx, "prod"); err != nil {
@@ -791,7 +795,7 @@ func TestDeleteIsNotUndoneBySelfHeal(t *testing.T) {
 		r.e.mu.Unlock()
 		r.c.reconcileWith(ctx, a, false)
 	}
-	if err := r.c.DeleteApp(ctx, "web", true); err != nil {
+	if err := r.c.DeleteApp(ctx, "web", true, false); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(300 * time.Millisecond) // a resurrecting sync would run in the background; give it time
@@ -814,11 +818,15 @@ func TestStoppedUndeclaredServicesArePrunePendingNotDrift(t *testing.T) {
 	syncs := r.e.syncCount()
 
 	r.e.mu.Lock()
-	r.e.drift = []domain.ServiceDiff{{Service: "adminer", Change: "removed", Fields: []string{domain.FieldStopped}}}
+	r.e.drift = []domain.ServiceDiff{
+		{Service: "adminer", Change: "removed", Fields: []string{domain.FieldStopped}},
+		{Kind: "network", Service: "web_old", Change: "removed"},
+		{Kind: "volume", Service: "web_data", Change: "removed"},
+	}
 	r.e.mu.Unlock()
 	v, _ := r.c.Refresh(ctx, "web")
 	r.waitIdle(t, "web")
-	if v.SyncStatus != domain.Synced || !slices.Equal(v.PrunePending, []string{"adminer"}) {
+	if v.SyncStatus != domain.Synced || !slices.Equal(v.PrunePending, []string{"adminer", "network web_old", "volume web_data"}) {
 		t.Fatalf("status %s pending %v", v.SyncStatus, v.PrunePending)
 	}
 	if r.e.syncCount() != syncs {
@@ -960,5 +968,57 @@ func TestManualSyncAfterRollbackClearsFlag(t *testing.T) {
 	r.waitIdle(t, "web")
 	if a, _ := r.st.GetApp(ctx, "web"); a.RolledBack || a.AutoSync {
 		t.Fatalf("after manual Sync: rolledBack=%v autoSync=%v, want false/false", a.RolledBack, a.AutoSync)
+	}
+}
+
+func TestPruneVolumesIsASubOptionOfPrune(t *testing.T) {
+	r := newRig(t)
+	ctx := t.Context()
+	a := app("web")
+	a.PruneVolumes = true // without Prune: normalized away
+	if v, err := r.c.CreateApp(ctx, a); err != nil || v.PruneVolumes {
+		t.Fatalf("create: pruneVolumes=%v, %v", v.PruneVolumes, err)
+	}
+	if got, _ := r.st.GetApp(ctx, "web"); got.PruneVolumes {
+		t.Fatal("pruneVolumes without prune was saved")
+	}
+	a.Prune = true
+	if v, err := r.c.UpdateApp(ctx, a); err != nil || !v.PruneVolumes {
+		t.Fatalf("update with prune: pruneVolumes=%v, %v", v.PruneVolumes, err)
+	}
+	r.mustSync(t, "web")
+	if !r.e.lastPrune || !r.e.lastPruneVol {
+		t.Fatalf("engine got prune=%v pruneVolumes=%v", r.e.lastPrune, r.e.lastPruneVol)
+	}
+
+	// a one-off Sync without Prune never prunes volumes
+	off := false
+	if _, err := r.c.Sync(ctx, "web", domain.SyncRequest{Prune: &off}); err != nil {
+		t.Fatal(err)
+	}
+	r.waitIdle(t, "web")
+	if r.e.lastPrune || r.e.lastPruneVol {
+		t.Fatalf("one-off prune=false: engine got prune=%v pruneVolumes=%v", r.e.lastPrune, r.e.lastPruneVol)
+	}
+	// nor does a stored flag without Prune (written past normalize)
+	a.Prune = false
+	a.PruneVolumes = true
+	r.st.UpdateApp(ctx, a)
+	r.mustSync(t, "web")
+	if r.e.lastPruneVol {
+		t.Fatal("pruneVolumes reached the engine without Prune")
+	}
+}
+
+func TestDeleteWithVolumes(t *testing.T) {
+	for _, volumes := range []bool{false, true} {
+		r := newRig(t)
+		r.c.CreateApp(t.Context(), app("web"))
+		if err := r.c.DeleteApp(t.Context(), "web", true, volumes); err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(r.e.removedVols, []bool{volumes}) {
+			t.Fatalf("volumes=%v: Remove got %v", volumes, r.e.removedVols)
+		}
 	}
 }

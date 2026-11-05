@@ -159,7 +159,7 @@ func remoteLifecycle(t *testing.T, e *Engine, d dind, h domain.Host) {
 		t.Fatalf("HostStatus = %+v", st)
 	}
 	app := domain.Application{Name: fmt.Sprintf("omegacd-it-%d", mrand.IntN(1e9)), Host: h.Name}
-	t.Cleanup(func() { e.Remove(context.Background(), app) })
+	t.Cleanup(func() { e.Remove(context.Background(), app, true) })
 	remote := remoteAppDir(h, app.Name)
 	inDind := func(args ...string) (string, error) { return dockerCmd(append([]string{"exec", d.id}, args...)...) }
 
@@ -269,7 +269,7 @@ watch:
 		}
 	}
 
-	if err := e.Remove(ctx, app); err != nil {
+	if err := e.Remove(ctx, app, false); err != nil {
 		t.Fatal(err)
 	}
 	if exists, _, err := e.ProjectExists(ctx, h.Name, app.Name); err != nil || exists {

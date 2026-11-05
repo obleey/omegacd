@@ -97,8 +97,8 @@ func TestAppOfAppsPrunesChildren(t *testing.T) {
 	if _, err := r.st.GetApp(t.Context(), "api"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("pruned child still stored: %v", err)
 	}
-	if !slices.Equal(r.e.removedApps, []string{"api"}) {
-		t.Fatalf("removed %v", r.e.removedApps)
+	if !slices.Equal(r.e.removedApps, []string{"api"}) || !slices.Equal(r.e.removedVols, []bool{false}) {
+		t.Fatalf("removed %v, volumes %v", r.e.removedApps, r.e.removedVols)
 	}
 }
 
@@ -137,7 +137,7 @@ func TestChildIsOwnedByGit(t *testing.T) {
 	if _, err := r.c.UpdateApp(ctx, web); !errors.Is(err, domain.ErrInvalid) || !strings.Contains(err.Error(), "change it in Git") {
 		t.Fatalf("update child: %v", err)
 	}
-	if err := r.c.DeleteApp(ctx, "web", true); !errors.Is(err, domain.ErrInvalid) {
+	if err := r.c.DeleteApp(ctx, "web", true, false); !errors.Is(err, domain.ErrInvalid) {
 		t.Fatalf("delete child: %v", err)
 	}
 	ops, _ := r.st.ListOps(ctx, "web")
@@ -148,7 +148,7 @@ func TestChildIsOwnedByGit(t *testing.T) {
 
 	r.g.define("bbbbbbbb", "")
 	r.mustSync(t, "root")
-	if err := r.c.DeleteApp(ctx, "web", true); err != nil {
+	if err := r.c.DeleteApp(ctx, "web", true, false); err != nil {
 		t.Fatalf("delete NotInGit child: %v", err)
 	}
 
@@ -191,7 +191,7 @@ func TestDeleteAppOfApps(t *testing.T) {
 		r.c.CreateApp(ctx, parentApp("root"))
 		r.g.define("aaaaaaaa", "name: web\nrepoURL: x\n")
 		r.mustSync(t, "root")
-		if err := r.c.DeleteApp(ctx, "root", cascade); err != nil {
+		if err := r.c.DeleteApp(ctx, "root", cascade, false); err != nil {
 			t.Fatal(err)
 		}
 		web, err := r.st.GetApp(ctx, "web")
@@ -249,5 +249,19 @@ func TestManualParentSyncDeploysPendingChildren(t *testing.T) {
 	}
 	if again, _ := r.st.ListOps(ctx, "api"); len(again) != len(apiOps) {
 		t.Fatal("a Synced child was synced again")
+	}
+}
+
+func TestDeleteAppOfAppsWithVolumes(t *testing.T) {
+	r := newRig(t)
+	ctx := t.Context()
+	r.c.CreateApp(ctx, parentApp("root"))
+	r.g.define("aaaaaaaa", "name: web\nrepoURL: x\n---\nname: api\nrepoURL: x\n")
+	r.mustSync(t, "root")
+	if err := r.c.DeleteApp(ctx, "root", true, true); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.e.removedApps) != 2 || !slices.Equal(r.e.removedVols, []bool{true, true}) {
+		t.Fatalf("removed %v, volumes %v", r.e.removedApps, r.e.removedVols)
 	}
 }

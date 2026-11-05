@@ -17,7 +17,7 @@
 		type SyncOperation
 	} from '#lib/api.ts';
 	import { live, putApp } from '#lib/live.svelte.ts';
-	import { fade } from 'svelte/transition';
+	import { fade, slide } from 'svelte/transition';
 	import Badge from '#lib/Badge.svelte';
 	import Dialog from '#lib/Dialog.svelte';
 	import Icon, { type IconName } from '#lib/Icon.svelte';
@@ -86,6 +86,10 @@
 
 	let delOpen = $state(false);
 	let cascade = $state(true);
+	let delVolumes = $state(false);
+	let delConfirm = $state('');
+	// the app's volumes, listed before deleting them
+	let delVolList = $state<string[] | null>(null);
 	let rbOpen = $state(false);
 	let syncOpen = $state(false);
 	let syncPrune = $state(false);
@@ -139,10 +143,20 @@
 	}
 	const refresh = () => act('refresh', () => refreshApp(name));
 
+	function loadDelVolumes() {
+		delConfirm = '';
+		if (!delVolumes || isApps) return;
+		delVolList = null;
+		get<LiveState>(`${base}/resources`).then(
+			(s) => (delVolList = (s.resources ?? []).filter((r) => r.kind === 'volume').map((r) => r.name)),
+			(e) => (error = errMsg(e))
+		);
+	}
+
 	function del() {
 		delOpen = false;
 		act('delete', async () => {
-			await api('DELETE', `${base}?cascade=${cascade}`);
+			await api('DELETE', `${base}?cascade=${cascade}${cascade && delVolumes ? '&volumes=true' : ''}`);
 			delete live.apps[name];
 			goto('/');
 		});
@@ -205,7 +219,7 @@
 				<RefreshNote app={name} />
 				<button onclick={() => (editing = !editing)} aria-expanded={editing} disabled={!!app.parent} title={app.parent ? 'Settings of a Child Application are owned by Git' : undefined}><Icon name="edit" size={15} />Edit</button>
 				<a class="btn" href="/api/apps/{enc(app.name)}/export" download="{app.name}.yaml"><Icon name="download" size={15} />Export YAML</a>
-				<button class="danger" onclick={() => (delOpen = true)} disabled={!!busy || !canDelete}><Icon name="trash" size={15} />Delete</button>
+				<button class="danger" onclick={() => ((delVolumes = false), (delConfirm = ''), (delOpen = true))} disabled={!!busy || !canDelete}><Icon name="trash" size={15} />Delete</button>
 			</div>
 		</div>
 
@@ -249,7 +263,10 @@
 	{#if app.prunePending?.length}
 		<p class="note" role="status">
 			<Icon name="info" size={16} />
-			<span>Not declared, stopped: <strong class="mono">{app.prunePending.join(', ')}</strong> — Sync with Prune to delete them.</span>
+			<span
+				>Not declared{app.prunePending.some((p) => !p.includes(' ')) ? ', stopped' : ''}: <strong class="mono">{app.prunePending.join(', ')}</strong> — Sync with Prune to delete
+				them{app.prunePending.some((p) => p.startsWith('volume ')) ? ' (volumes only with Prune volumes)' : ''}; anything still in use is kept.</span
+			>
 		</p>
 	{/if}
 	{#if app.parent}
@@ -309,7 +326,7 @@
 			{:else if tab === 'resources'}
 				<Resources name={app.name} state={liveState} syncStatus={shownSync(app)} prunePending={app.prunePending} onlogs={showLogs} />
 			{:else if tab === 'diff'}
-				<Diff {diff} apps={isApps} {web} />
+				<Diff {diff} apps={isApps} {web} prune={app.prune} pruneVolumes={app.pruneVolumes} />
 			{:else if tab === 'history'}
 				{#if app.parent}
 					<p class="muted small">
@@ -342,7 +359,11 @@
 		<div class="check">
 			<input id="sync-prune" type="checkbox" bind:checked={syncPrune} />
 			<label for="sync-prune"
-				>Prune <span class="hint">Also delete containers of services that are no longer declared (volumes are kept).</span></label
+				>Prune <span class="hint"
+					>Also delete containers and networks that are no longer declared ({app.pruneVolumes
+						? 'and volumes: Prune volumes is on, their data is lost'
+						: 'volumes are kept'}).</span
+				></label
 			>
 		</div>
 		{#snippet actions()}
@@ -357,10 +378,29 @@
 			<input id="cascade" type="checkbox" bind:checked={cascade} />
 			<label for="cascade">Also remove containers and networks</label>
 		</div>
-		<p class="muted small">Volumes are always kept.</p>
+		<div class="check">
+			<input id="del-vol" type="checkbox" bind:checked={delVolumes} disabled={!cascade} onchange={loadDelVolumes} />
+			<label for="del-vol">Also delete its volumes{#if isApps}<span class="hint">The volumes of every Child Application.</span>{/if}</label>
+		</div>
+		{#if cascade && delVolumes}
+			<div class="delvol" transition:slide={{ duration: ms(180) }}>
+				<p class="error" role="alert"><Icon name="alert" size={16} />These volumes and all their data will be permanently deleted.</p>
+				{#if !isApps}
+					{#if delVolList === null}<p class="muted small">Loading volumes…</p>
+					{:else if delVolList.length}<ul class="mono small">{#each delVolList as v (v)}<li>{v}</li>{/each}</ul>
+					{:else}<p class="muted small">This Application has no volumes.</p>{/if}
+				{/if}
+				<div class="field">
+					<label for="del-confirm">Type <strong class="mono">{app.name}</strong> to confirm</label>
+					<input id="del-confirm" autocomplete="off" spellcheck="false" bind:value={delConfirm} />
+				</div>
+			</div>
+		{:else}
+			<p class="muted small">Volumes are kept.</p>
+		{/if}
 		{#snippet actions()}
 			<button onclick={() => (delOpen = false)}>Cancel</button>
-			<button class="danger solid" onclick={del}>Delete</button>
+			<button class="danger solid" onclick={del} disabled={cascade && delVolumes && delConfirm !== app?.name}>Delete</button>
 		{/snippet}
 	</Dialog>
 
@@ -398,6 +438,9 @@
 	.note strong { color: var(--text); }
 	.banner :global(.icon), .error :global(.icon), .note :global(.icon) { margin-top: 0.15rem; }
 	.mb { margin-bottom: 1rem; }
+	.delvol { display: grid; gap: 0.6rem; margin-top: 0.4rem; }
+	.delvol .error { margin: 0; display: flex; gap: 0.4rem; padding: 0.5rem 0.75rem; border-radius: var(--radius); }
+	.delvol ul { margin: 0; padding-left: 1.2rem; }
 	.tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border); margin-bottom: -1px; overflow-x: auto; }
 	.tab { background: none; border: 1px solid transparent; border-bottom: 0; border-radius: var(--radius) var(--radius) 0 0; color: var(--subtext0); box-shadow: none; padding: 0.5rem 0.9rem; position: relative; }
 	.tab:hover:not(:disabled) { background: color-mix(in srgb, var(--surface0) 50%, transparent); border-color: transparent; color: var(--text); }

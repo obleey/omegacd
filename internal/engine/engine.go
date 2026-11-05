@@ -27,6 +27,8 @@ import (
 	"github.com/docker/compose/v5/pkg/compose"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/api/types/volume"
 	"github.com/moby/moby/client"
 
 	"github.com/obleey/omegacd/internal/domain"
@@ -324,6 +326,16 @@ func (e *Engine) Diff(ctx context.Context, app domain.Application, dir, asDir st
 			diffs = append(diffs, d)
 		}
 	}
+	nets, vols, err := undeclared(ctx, hc.cli.Client(), p)
+	if err != nil {
+		return nil, err
+	}
+	for _, n := range nets {
+		diffs = append(diffs, domain.ServiceDiff{Kind: "network", Service: n.Name, Change: "removed"})
+	}
+	for _, v := range vols {
+		diffs = append(diffs, domain.ServiceDiff{Kind: "volume", Service: v.Name, Change: "removed"})
+	}
 	return diffs, nil
 }
 
@@ -416,10 +428,10 @@ func (e *Engine) Sync(ctx context.Context, app domain.Application, dir string, o
 	if err := settleUndeclared(ctx, hc.cli.Client(), p, opts.Prune); err != nil {
 		return err
 	}
-	if opts.Prune {
-		return pruneNetworks(ctx, hc.cli.Client(), p)
+	if !opts.Prune {
+		return nil
 	}
-	return nil
+	return pruneUndeclared(ctx, hc.cli.Client(), p, opts.PruneVolumes)
 }
 
 // settleUndeclared handles containers of services the project no longer declares (removed from
@@ -450,31 +462,94 @@ func settleUndeclared(ctx context.Context, c client.APIClient, p *types.Project,
 	return errors.Join(errs...)
 }
 
-// pruneNetworks removes project networks no longer declared; compose up only prunes containers.
-func pruneNetworks(ctx context.Context, c client.APIClient, p *types.Project) error {
+// undeclared lists the networks and volumes labelled with the project that it no longer declares.
+// Volumes of profile-disabled services still count as declared: switching a profile off keeps their data.
+func undeclared(ctx context.Context, c client.APIClient, p *types.Project) ([]network.Summary, []volume.Volume, error) {
 	nets, err := c.NetworkList(ctx, client.NetworkListOptions{Filters: projectFilter(p.Name)})
 	if err != nil {
-		return fmt.Errorf("list networks: %w", err)
+		return nil, nil, fmt.Errorf("list networks: %w", err)
+	}
+	vols, err := c.VolumeList(ctx, client.VolumeListOptions{Filters: projectFilter(p.Name)})
+	if err != nil {
+		return nil, nil, fmt.Errorf("list volumes: %w", err)
+	}
+	declared := map[string]bool{}
+	for k := range p.Volumes {
+		declared[k] = true
+	}
+	for _, s := range p.DisabledServices {
+		for _, v := range s.Volumes {
+			if v.Type == types.VolumeTypeVolume {
+				declared[v.Source] = true
+			}
+		}
+	}
+	// a resource without its compose key label was not created by compose for this project: never ours to delete
+	var rn []network.Summary
+	for _, n := range nets.Items {
+		if k := n.Labels[api.NetworkLabel]; k != "" {
+			if _, ok := p.Networks[k]; !ok {
+				rn = append(rn, n)
+			}
+		}
+	}
+	var rv []volume.Volume
+	for _, v := range vols.Items {
+		if k := v.Labels[api.VolumeLabel]; k != "" && !declared[k] {
+			rv = append(rv, v)
+		}
+	}
+	slices.SortFunc(rn, func(a, b network.Summary) int { return strings.Compare(a.Name, b.Name) })
+	slices.SortFunc(rv, func(a, b volume.Volume) int { return strings.Compare(a.Name, b.Name) })
+	return rn, rv, nil
+}
+
+// pruneUndeclared deletes the project's undeclared networks, and with volumes its undeclared volumes,
+// that no container of any project (stopped ones included) uses; those in use stay, prune pending.
+// Compose up only prunes containers. Bind mounts are not volumes, so no host path is ever touched.
+func pruneUndeclared(ctx context.Context, c client.APIClient, p *types.Project, volumes bool) error {
+	nets, vols, err := undeclared(ctx, c, p)
+	if err != nil {
+		return err
+	}
+	inUse := func(filter, value string) (bool, error) {
+		res, err := c.ContainerList(ctx, client.ContainerListOptions{All: true, Filters: make(client.Filters).Add(filter, value)})
+		return len(res.Items) > 0, err
 	}
 	var errs []error
-	for _, n := range nets.Items {
-		if _, ok := p.Networks[n.Labels[api.NetworkLabel]]; ok {
-			continue
+	for _, n := range nets {
+		used, err := inUse("network", n.ID)
+		if err == nil && !used {
+			_, err = c.NetworkRemove(ctx, n.ID, client.NetworkRemoveOptions{})
 		}
-		if _, err := c.NetworkRemove(ctx, n.ID, client.NetworkRemoveOptions{}); err != nil {
+		if err != nil {
 			errs = append(errs, fmt.Errorf("prune network %s: %w", n.Name, err))
+		}
+	}
+	if !volumes {
+		vols = nil
+	}
+	for _, v := range vols {
+		used, err := inUse("volume", v.Name)
+		if err == nil && !used {
+			// not forced: a container created meanwhile makes this fail instead of losing its data
+			_, err = c.VolumeRemove(ctx, v.Name, client.VolumeRemoveOptions{})
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("prune volume %s: %w", v.Name, err))
 		}
 	}
 	return errors.Join(errs...)
 }
 
-// Remove also deletes the app dir on a remote Host.
-func (e *Engine) Remove(ctx context.Context, app domain.Application) error {
+// Remove also deletes the app dir on a remote Host. With volumes, compose deletes the volumes labelled
+// with the project (it skips ones it did not create) and the containers' anonymous volumes.
+func (e *Engine) Remove(ctx context.Context, app domain.Application, volumes bool) error {
 	hc, err := e.conn(ctx, app.Host)
 	if err != nil {
 		return err
 	}
-	if err := hc.compose.Down(ctx, app.Name, api.DownOptions{RemoveOrphans: true}); err != nil {
+	if err := hc.compose.Down(ctx, app.Name, api.DownOptions{RemoveOrphans: true, Volumes: volumes}); err != nil {
 		return fmt.Errorf("compose down: %w", err)
 	}
 	if hc.host.Name != domain.LocalHost {

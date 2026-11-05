@@ -207,16 +207,17 @@ func TestSyncWait(t *testing.T) {
 
 func TestDiffExitCodes(t *testing.T) {
 	_, srv := newAPI(t, map[string]any{
-		"GET /api/apps/same/diff": domain.DiffView{FromSHA: "a", ToSHA: "a"},
+		"GET /api/apps/same/diff": domain.DiffView{FromSHA: "a", ToSHA: "a",
+			Services: []domain.ServiceDiff{{Kind: "network", Service: "same_old", Change: "removed"}}},
 		"GET /api/apps/drift/diff": domain.DiffView{FromSHA: "a", ToSHA: "b",
-			Services: []domain.ServiceDiff{{Service: "web", Change: "changed", Fields: []string{"image"}}},
+			Services: []domain.ServiceDiff{{Service: "web", Change: "changed", Fields: []string{"image"}}, {Kind: "volume", Service: "drift_old", Change: "removed"}},
 			GitDiff:  "--- a/compose.yaml\n+++ b/compose.yaml\n@@ -1 +1 @@\n-image: nginx:1\n+image: nginx:2\n"},
 	})
 	if r := run(t, srv, nil, "", "app", "diff", "same"); r.code != 0 || !strings.Contains(r.stdout, "no differences") {
 		t.Fatalf("same: %+v", r)
 	}
 	r := run(t, srv, nil, "", "app", "diff", "drift")
-	if r.code != 1 || !strings.Contains(r.stdout, "~ web: image") || !strings.Contains(r.stdout, "+image: nginx:2") || strings.Contains(r.stdout, "\x1b[") {
+	if r.code != 1 || !strings.Contains(r.stdout, "~ web: image") || !strings.Contains(r.stdout, "- volume drift_old") || !strings.Contains(r.stdout, "+image: nginx:2") || strings.Contains(r.stdout, "\x1b[") {
 		t.Fatalf("drift: %+v", r)
 	}
 	if r := run(t, srv, nil, "", "app", "diff", "missing"); r.code != 2 {
@@ -283,6 +284,14 @@ func TestDeleteConfirmation(t *testing.T) {
 	if r.code != 0 || !f.called("DELETE /api/apps/web?cascade=false") {
 		t.Fatalf("non-tty --yes: %+v %v", r, f.calls)
 	}
+	// --volumes: the prompt names the volumes, the request asks for them
+	r = run(t, srv, map[string]string{"STDIN_TTY": "1"}, "y\n", "app", "delete", "web", "--volumes")
+	if r.code != 0 || !strings.Contains(r.stderr, "volumes") || !f.called("DELETE /api/apps/web?cascade=true&volumes=true") {
+		t.Fatalf("--volumes: %+v %v", r, f.calls)
+	}
+	if r := run(t, srv, nil, "", "app", "delete", "web", "--cascade=false", "--volumes", "--yes"); r.code == 0 {
+		t.Fatalf("--volumes without --cascade: %+v", r)
+	}
 }
 
 func TestCreateFromFile(t *testing.T) {
@@ -295,6 +304,13 @@ func TestCreateFromFile(t *testing.T) {
 	}
 	if r := run(t, srv, nil, "", "app", "create", "c"); r.code != 1 || !strings.Contains(r.stderr, "--repo is required") {
 		t.Fatalf("missing repo: %+v", r)
+	}
+	if r := run(t, srv, nil, "", "app", "create", "c", "--repo", "x", "--prune-volumes"); r.code != 1 || !strings.Contains(r.stderr, "--prune-volumes requires --prune") {
+		t.Fatalf("--prune-volumes alone: %+v", r)
+	}
+	f.bodies = nil
+	if r := run(t, srv, nil, "", "app", "create", "c", "--repo", "x", "--prune", "--prune-volumes"); r.code != 0 || len(f.bodies) != 1 || !strings.Contains(f.bodies[0], `"pruneVolumes":true`) {
+		t.Fatalf("--prune --prune-volumes: %+v %v", r, f.bodies)
 	}
 }
 

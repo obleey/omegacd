@@ -5,7 +5,7 @@
 | Layer | What | Command |
 |---|---|---|
 | Unit | controller (status, Auto-Sync, Self-Heal, retries, Rollback, App of Apps, restore, deletes), store, API, CLI, Git, secrets, crypto | `go test -race ./...` |
-| Integration | real Docker: Sync, drift, Prune vs stop of undeclared services, content hash for configs/secrets/bind files, absolute bind mounts, force recreate, events; remote Hosts over SSH and TLS against `docker:dind` | `go test -tags integration ./...` |
+| Integration | real Docker: Sync, drift, Prune vs stop of undeclared services, network/volume pruning (in use, external, bind mounts), delete with volumes, content hash for configs/secrets/bind files, absolute bind mounts, force recreate, events; remote Hosts over SSH and TLS against `docker:dind` | `go test -tags integration ./...` |
 | UI | type check, build, log/ANSI parser | `cd web && npm run check && npm test && npm run build` |
 | Security | secret scan of the full Git history | gitleaks (CI) |
 

@@ -58,7 +58,7 @@ func TestParse(t *testing.T) {
 
 func TestMarshalRoundTrip(t *testing.T) {
 	a := domain.Application{Name: "web", Kind: domain.KindCompose, RepoURL: "x", Path: "apps/web", TargetRevision: "v1",
-		ComposeFiles: []string{"compose.yaml"}, Profiles: []string{"prod"}, Host: "local", AutoSync: true, Prune: true, Adopt: true}
+		ComposeFiles: []string{"compose.yaml"}, Profiles: []string{"prod"}, Host: "local", AutoSync: true, Prune: true, PruneVolumes: true, Adopt: true}
 	b, err := Marshal(a)
 	if err != nil {
 		t.Fatal(err)
@@ -69,7 +69,7 @@ func TestMarshalRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "web.yaml"), b, 0o600)
 	got, err := Parse(dir)
-	if err != nil || len(got) != 1 || got[0].Name != a.Name || got[0].TargetRevision != a.TargetRevision || got[0].Profiles[0] != "prod" || got[0].Adopt {
+	if err != nil || len(got) != 1 || got[0].Name != a.Name || got[0].TargetRevision != a.TargetRevision || got[0].Profiles[0] != "prod" || got[0].Adopt || !got[0].PruneVolumes {
 		t.Fatalf("got %+v %v", got, err)
 	}
 }

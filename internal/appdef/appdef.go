@@ -30,12 +30,13 @@ type def struct {
 	AutoSync       bool     `yaml:"autoSync"`
 	SelfHeal       bool     `yaml:"selfHeal"`
 	Prune          bool     `yaml:"prune"`
+	PruneVolumes   bool     `yaml:"pruneVolumes,omitempty"`
 	Adopt          bool     `yaml:"adopt,omitempty"`
 }
 
 // Marshal writes a's settings as a definition; Adopt and runtime state are left out.
 func Marshal(a domain.Application) ([]byte, error) {
-	d := def{a.Name, a.Kind, a.RepoURL, a.Path, a.TargetRevision, a.ComposeFiles, a.Profiles, a.Host, a.AutoSync, a.SelfHeal, a.Prune, false}
+	d := def{a.Name, a.Kind, a.RepoURL, a.Path, a.TargetRevision, a.ComposeFiles, a.Profiles, a.Host, a.AutoSync, a.SelfHeal, a.Prune, a.PruneVolumes, false}
 	if d.Kind == domain.KindCompose {
 		d.Kind = ""
 	}
@@ -106,7 +107,7 @@ func Decode(source string, b []byte) ([]domain.Application, error) {
 		apps = append(apps, domain.Application{
 			Name: d.Name, Kind: d.Kind, RepoURL: d.RepoURL, Path: d.Path, TargetRevision: d.TargetRevision,
 			ComposeFiles: d.ComposeFiles, Profiles: d.Profiles, Host: d.Host,
-			AutoSync: d.AutoSync, SelfHeal: d.SelfHeal, Prune: d.Prune, Adopt: d.Adopt,
+			AutoSync: d.AutoSync, SelfHeal: d.SelfHeal, Prune: d.Prune, PruneVolumes: d.PruneVolumes, Adopt: d.Adopt,
 		})
 	}
 	return apps, nil

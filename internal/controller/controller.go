@@ -246,13 +246,18 @@ func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fe
 		case derr != nil:
 			v.SyncMessage = derr.Error()
 		default:
-			// undeclared services already stopped are not drift: re-syncing would change nothing without Prune
+			// undeclared services already stopped, networks and volumes are not drift:
+			// re-syncing would change nothing without Prune (or, for in-use ones, at all)
 			diffs = slices.DeleteFunc(diffs, func(d domain.ServiceDiff) bool {
-				if d.Change == "removed" && slices.Contains(d.Fields, domain.FieldStopped) {
+				switch {
+				case d.Kind != "":
+					v.PrunePending = append(v.PrunePending, d.Kind+" "+d.Service)
+				case d.Change == "removed" && slices.Contains(d.Fields, domain.FieldStopped):
 					v.PrunePending = append(v.PrunePending, d.Service)
-					return true
+				default:
+					return false
 				}
-				return false
+				return true
 			})
 			if len(diffs) > 0 {
 				drift = true
@@ -555,6 +560,7 @@ func (c *Controller) apply(ctx context.Context, a domain.Application, op domain.
 	}
 	return c.cfg.Engine.Sync(ctx, a, dir, domain.SyncOptions{
 		Prune:         a.Prune,
+		PruneVolumes:  a.Prune && a.PruneVolumes,
 		ForceRecreate: op.Trigger == triggerRestore,
 		Registries:    regs,
 		Progress: func(p domain.ProgressEvent) {
@@ -717,7 +723,7 @@ func (c *Controller) saveUpdate(ctx context.Context, a domain.Application) error
 	return nil
 }
 
-func (c *Controller) DeleteApp(ctx context.Context, name string, cascade bool) error {
+func (c *Controller) DeleteApp(ctx context.Context, name string, cascade, volumes bool) error {
 	a, err := c.cfg.Store.GetApp(ctx, name)
 	if err != nil {
 		return err
@@ -725,7 +731,7 @@ func (c *Controller) DeleteApp(ctx context.Context, name string, cascade bool) e
 	if a.Parent != "" && !a.NotInGit {
 		return fmt.Errorf("%w: managed by App of Apps %q; remove it from Git", domain.ErrInvalid, a.Parent)
 	}
-	if err := c.deleteApp(ctx, a, cascade); err != nil {
+	if err := c.deleteApp(ctx, a, cascade, volumes); err != nil {
 		return err
 	}
 	if a.Parent != "" {
@@ -735,7 +741,8 @@ func (c *Controller) DeleteApp(ctx context.Context, name string, cascade bool) e
 }
 
 // deleteApp deletes a; for an App of Apps, cascade deletes its children too and otherwise orphans them.
-func (c *Controller) deleteApp(ctx context.Context, a domain.Application, cascade bool) error {
+// volumes (with cascade) also deletes the project's volumes, the children's included.
+func (c *Controller) deleteApp(ctx context.Context, a domain.Application, cascade, volumes bool) error {
 	c.mu.Lock()
 	s := c.state(a.Name)
 	if s.syncing || s.deleting {
@@ -744,7 +751,7 @@ func (c *Controller) deleteApp(ctx context.Context, a domain.Application, cascad
 	}
 	s.deleting = true
 	c.mu.Unlock()
-	if err := c.deleteAppLocked(ctx, a, cascade); err != nil {
+	if err := c.deleteAppLocked(ctx, a, cascade, volumes); err != nil {
 		c.mu.Lock()
 		s.deleting = false
 		c.mu.Unlock()
@@ -753,7 +760,7 @@ func (c *Controller) deleteApp(ctx context.Context, a domain.Application, cascad
 	return nil
 }
 
-func (c *Controller) deleteAppLocked(ctx context.Context, a domain.Application, cascade bool) error {
+func (c *Controller) deleteAppLocked(ctx context.Context, a domain.Application, cascade, volumes bool) error {
 	if a.Kind == domain.KindApps {
 		children, err := c.children(ctx, a.Name)
 		if err != nil {
@@ -761,7 +768,7 @@ func (c *Controller) deleteAppLocked(ctx context.Context, a domain.Application, 
 		}
 		for _, ch := range children {
 			if cascade {
-				err = c.deleteApp(ctx, ch, true)
+				err = c.deleteApp(ctx, ch, true, volumes)
 			} else {
 				ch.Parent, ch.NotInGit = "", false
 				if err = c.cfg.Store.UpdateApp(ctx, ch); err == nil {
@@ -775,7 +782,7 @@ func (c *Controller) deleteAppLocked(ctx context.Context, a domain.Application, 
 	}
 	if cascade {
 		if a.Kind == domain.KindCompose {
-			if err := c.cfg.Engine.Remove(ctx, a); err != nil {
+			if err := c.cfg.Engine.Remove(ctx, a, volumes); err != nil {
 				return err
 			}
 		}
@@ -1102,6 +1109,8 @@ func normalize(a *domain.Application) error {
 		a.TargetRevision = "main"
 	}
 	a.Host = cmp.Or(strings.TrimSpace(a.Host), domain.LocalHost)
+	// Prune volumes is a sub-option of Prune, and an App of Apps has no volumes of its own
+	a.PruneVolumes = a.PruneVolumes && a.Prune && a.Kind == domain.KindCompose
 	if a.Kind == domain.KindApps {
 		// an App of Apps deploys nothing itself
 		a.ComposeFiles, a.Profiles, a.Host = nil, nil, domain.LocalHost
@@ -1229,7 +1238,7 @@ func (c *Controller) syncChildren(ctx context.Context, parent domain.Application
 			continue
 		}
 		if parent.Prune {
-			err = c.deleteApp(ctx, a, true)
+			err = c.deleteApp(ctx, a, true, false) // pruning a child never deletes its data
 		} else if !a.NotInGit {
 			a.NotInGit = true
 			if err = c.cfg.Store.UpdateApp(ctx, a); err == nil {
@@ -1300,6 +1309,7 @@ func changedFields(old, a domain.Application) []string {
 		{"autoSync", old.AutoSync != a.AutoSync},
 		{"selfHeal", old.SelfHeal != a.SelfHeal},
 		{"prune", old.Prune != a.Prune},
+		{"pruneVolumes", old.PruneVolumes != a.PruneVolumes},
 	} {
 		if c.changed {
 			f = append(f, c.name)

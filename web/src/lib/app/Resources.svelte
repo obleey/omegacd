@@ -36,6 +36,8 @@
 		const names = [...new Set([...(live?.services ?? []), ...cs.map((c) => c.service)])].sort();
 		return names.map((s) => ({ name: s, containers: cs.filter((c) => c.service === s) }));
 	});
+	// undeclared networks/volumes are listed as "network <name>" / "volume <name>"
+	const pendingRes = (r: Resource) => prunePending.includes(`${r.kind} ${r.name}`);
 	let nodes = $derived.by((): GNode[] => {
 		if (!live) return [];
 		const out: GNode[] = [
@@ -58,9 +60,11 @@
 		}
 		for (const r of live.resources ?? []) {
 			const svcs = (r.services ?? []).filter((x) => services.some((s) => s.name === x));
+			const pending = pendingRes(r);
 			out.push({
 				id: `r:${r.kind}:${r.name}`, parent: svcs[0] ? `s:${svcs[0]}` : 'app', also: svcs.slice(1).map((x) => `s:${x}`),
-				icon: kindIcon[r.kind], kind: kindLabel[r.kind], name: r.name, sub: r.target, tag: r.secret ? 'secret' : undefined,
+				icon: kindIcon[r.kind], kind: kindLabel[r.kind], name: r.name, sub: pending ? 'Not declared' : r.target,
+				tag: pending ? 'prune pending' : r.secret ? 'secret' : undefined, dim: pending,
 				onclick: () => show(r), action: `Show details of ${r.name}`
 			});
 		}
@@ -160,6 +164,7 @@
 							<td>
 								<button class="link mono" onclick={() => show(r)} title="Show details of {r.name}">{r.name}</button>
 								{#if r.secret}<span class="secret"><Icon name="lock" size={11} /> secret</span>{/if}
+								{#if pendingRes(r)}<span class="tag warn">prune pending</span>{/if}
 							</td>
 							<td class="mono small">{r.services?.join(', ') || '—'}</td>
 							<td class="mono small">{r.target || '—'}</td>

@@ -62,7 +62,7 @@ func TestApps(t *testing.T) {
 	a := domain.Application{
 		Name: "web", RepoURL: "https://example.com/r.git", Path: "apps/web", TargetRevision: "main",
 		ComposeFiles: []string{"compose.yaml", "override.yaml"}, Profiles: []string{"prod"},
-		Host: domain.LocalHost, AutoSync: true, Prune: true, RolledBack: true,
+		Host: domain.LocalHost, AutoSync: true, Prune: true, PruneVolumes: true, RolledBack: true,
 		Kind: domain.KindCompose, Parent: "root", NotInGit: true,
 		CreatedAt: time.Unix(1700000000, 0).UTC(),
 	}

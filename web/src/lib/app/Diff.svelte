@@ -4,7 +4,16 @@
 	import { short, type DiffView } from '../api.ts';
 
 	// apps: an App of Apps, whose diff entries are Child Applications rather than services
-	let { diff, apps = false, web }: { diff: DiffView | null; apps?: boolean; web?: GitWeb | null } = $props();
+	// prune / pruneVolumes: the app's Sync Policy, to say what the next Sync does with undeclared networks and volumes
+	let {
+		diff,
+		apps = false,
+		web,
+		prune = false,
+		pruneVolumes = false
+	}: { diff: DiffView | null; apps?: boolean; web?: GitWeb | null; prune?: boolean; pruneVolumes?: boolean } = $props();
+	let services = $derived(diff?.services?.filter((s) => !s.kind) ?? []);
+	let undeclared = $derived(diff?.services?.filter((s) => s.kind) ?? []);
 
 	const cls = (l: string) =>
 		l.startsWith('+++') || l.startsWith('---') || l.startsWith('diff ') || l.startsWith('index ')
@@ -26,9 +35,9 @@
 	</div>
 {:else}
 	<h3>{apps ? 'Applications' : 'Services'}</h3>
-	{#if diff.services?.length}
+	{#if services.length}
 		<ul class="svc">
-			{#each diff.services as s (s.service)}
+			{#each services as s (s.service)}
 				<li>
 					<span class="chg {s.change}">{changeLabel[s.change] ?? s.change}</span>
 					<span class="mono">{s.service}</span>
@@ -39,6 +48,21 @@
 	{:else}
 		<p class="muted small">
 			{apps ? 'Child Applications match the Application definitions in Git.' : 'Live State matches the last deployed Desired State.'}
+		</p>
+	{/if}
+
+	{#if undeclared.length}
+		<h3>Would be pruned</h3>
+		<ul class="svc">
+			{#each undeclared as s (s.kind + s.service)}
+				<li><span class="chg removed">{s.kind}</span><span class="mono">{s.service}</span></li>
+			{/each}
+		</ul>
+		<p class="muted small">
+			No longer declared; never counted as drift, and kept while a container still uses them.
+			{#if !prune}Prune is off: they are kept.
+			{:else if pruneVolumes}Prune and Prune volumes are on: the next Sync deletes them, volumes with their data.
+			{:else}Prune is on: the next Sync deletes the networks; volumes are kept (Prune volumes is off).{/if}
 		</p>
 	{/if}
 

@@ -40,6 +40,7 @@ type Application struct {
 	AutoSync       bool      `json:"autoSync"`
 	SelfHeal       bool      `json:"selfHeal"`
 	Prune          bool      `json:"prune"`
+	PruneVolumes   bool      `json:"pruneVolumes"`     // with Prune, also delete undeclared project volumes; false whenever Prune is
 	Adopt          bool      `json:"adopt"`            // only honoured on create
 	RolledBack     bool      `json:"rolledBack"`       // Auto-Sync was turned off by a Rollback; cleared when Auto-Sync is re-enabled
 	Kind           string    `json:"kind"`             // KindCompose (default) or KindApps (an App of Apps)
@@ -164,7 +165,11 @@ type SyncRequest struct {
 	Prune *bool `json:"prune,omitempty"`
 }
 
+// A ServiceDiff with a Kind is an undeclared project "network" or "volume" (Service is its Docker name,
+// Change "removed"): Prune (with Prune volumes, for volumes) would delete it unless a container still uses it.
+// It is never drift.
 type ServiceDiff struct {
+	Kind    string   `json:"kind,omitempty"` // "" for a service, "network", "volume"
 	Service string   `json:"service"`
 	Change  string   `json:"change"`           // "added", "removed", "changed"
 	Fields  []string `json:"fields,omitempty"` // e.g. "image", "environment", "ports"
@@ -216,7 +221,7 @@ type AppView struct {
 	DeployedSHA   string         `json:"deployedSHA,omitempty"`
 	LastOperation *SyncOperation `json:"lastOperation,omitempty"`
 	ReconciledAt  time.Time      `json:"reconciledAt,omitzero"`
-	PrunePending  []string       `json:"prunePending,omitempty"` // undeclared services stopped by a Sync without Prune
+	PrunePending  []string       `json:"prunePending,omitempty"` // stopped undeclared services, and undeclared "network <name>" / "volume <name>"
 }
 
 type DiffView struct {
@@ -316,9 +321,11 @@ type Secrets interface {
 }
 
 type SyncOptions struct {
-	Prune      bool
-	Registries []RegistryCredential
-	Progress   func(ProgressEvent) // may be nil
+	Prune bool
+	// PruneVolumes (only with Prune) also deletes project volumes the project no longer declares and no container uses.
+	PruneVolumes bool
+	Registries   []RegistryCredential
+	Progress     func(ProgressEvent) // may be nil
 	// ForceRecreate recreates every container even if its config is unchanged
 	// (after a restore, bind mounts must be re-attached to the restored files).
 	ForceRecreate bool
@@ -332,10 +339,12 @@ type Engine interface {
 	// Diff compares the Desired State in dir against the Live State. When asDir is set, dir is a
 	// staging copy and paths are evaluated as if the files lived in asDir (the app's working dir).
 	Diff(ctx context.Context, app Application, dir, asDir string) ([]ServiceDiff, error)
-	// Sync pulls images and brings the project up; with Prune it removes orphaned containers/networks.
+	// Sync pulls images and brings the project up; with Prune it removes orphaned containers/networks
+	// (and with PruneVolumes undeclared volumes), skipping networks and volumes a container still uses.
 	Sync(ctx context.Context, app Application, dir string, opts SyncOptions) error
-	// Remove deletes the project's containers and networks. Never volumes.
-	Remove(ctx context.Context, app Application) error
+	// Remove deletes the project's containers and networks, and with volumes its named and anonymous
+	// volumes (like `docker compose down -v`; never external volumes or host paths).
+	Remove(ctx context.Context, app Application, volumes bool) error
 	// Status returns the Live State, including Health per container and overall.
 	Status(ctx context.Context, app Application) (LiveState, error)
 	// ProjectExists reports whether a Compose project with this name has containers on host, and whether omegacd manages it.
@@ -363,7 +372,8 @@ type Controller interface {
 	GetApp(ctx context.Context, name string) (AppView, error)
 	CreateApp(ctx context.Context, a Application) (AppView, error)
 	UpdateApp(ctx context.Context, a Application) (AppView, error)
-	DeleteApp(ctx context.Context, name string, cascade bool) error
+	// DeleteApp deletes an Application; cascade also removes what it runs, volumes (with cascade) its volumes too.
+	DeleteApp(ctx context.Context, name string, cascade, volumes bool) error
 
 	// Sync starts a Sync Operation to the app's target revision in the background and returns its ID.
 	Sync(ctx context.Context, name string, req SyncRequest) (int64, error)

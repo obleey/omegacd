@@ -17,6 +17,7 @@ export interface Application {
 	autoSync: boolean;
 	selfHeal: boolean;
 	prune: boolean;
+	pruneVolumes: boolean; // only with prune; the server turns it off without prune
 	adopt: boolean;
 	kind: 'compose' | 'apps'; // 'apps' = an App of Apps
 	parent?: string; // the App of Apps that owns this Child Application
@@ -45,11 +46,14 @@ export interface AppView extends Application {
 	lastOperation?: SyncOperation;
 	rolledBack: boolean;
 	reconciledAt?: string;
-	/** services no longer declared whose containers were stopped because Prune is off */
+	/** services no longer declared whose containers were stopped because Prune is off,
+	 * and undeclared networks/volumes as "network <name>" / "volume <name>" (Docker names) */
 	prunePending?: string[];
 }
 
 export interface ServiceDiff {
+	/** set for an undeclared network or volume (service is then its Docker name); never drift */
+	kind?: 'network' | 'volume';
 	service: string;
 	change: 'added' | 'removed' | 'changed';
 	fields?: string[];

@@ -198,7 +198,7 @@ func TestLifecycle(t *testing.T) {
 		t.Errorf("ProjectExists(managed) = %v, %v, %v", exists, managed, err)
 	}
 
-	if err := e.Remove(ctx, app); err != nil {
+	if err := e.Remove(ctx, app, false); err != nil {
 		t.Fatal(err)
 	}
 	if exists, _, err := e.ProjectExists(ctx, "", app.Name); err != nil || exists {
@@ -627,5 +627,179 @@ services:
 	}
 	if _, err := os.Stat(filepath.Join(data, "more.bin")); err != nil {
 		t.Fatal("data lost after re-Sync")
+	}
+}
+
+// exists reports whether a Docker volume or network exists.
+func exists(t *testing.T, kind, name string) bool {
+	t.Helper()
+	_, err := dockerCmd(kind, "inspect", name)
+	return err == nil
+}
+
+func undeclaredDiffs(t *testing.T, e *Engine, app domain.Application, dir string) []string {
+	t.Helper()
+	diffs, err := e.Diff(context.Background(), app, dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, d := range diffs {
+		if d.Kind != "" {
+			if d.Change != "removed" {
+				t.Errorf("undeclared %s %s: change %q", d.Kind, d.Service, d.Change)
+			}
+			out = append(out, d.Kind+" "+d.Service)
+		} else {
+			t.Errorf("unexpected service diff %+v", d)
+		}
+	}
+	return out
+}
+
+func TestPruneSkipsNetworkInUse(t *testing.T) {
+	ctx := context.Background()
+	e := newTestEngine(t)
+	app, other := testApp(t, e), testApp(t, e)
+	dir, odir := t.TempDir(), t.TempDir()
+	write(t, dir, "compose.yaml", "services:\n  web:\n    image: busybox\n    command: [\"sleep\", \"3600\"]\n    networks: [front]\nnetworks:\n  front: {}\n")
+	if err := e.Sync(ctx, app, dir, domain.SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	old := app.Name + "_front"
+	// a container of another project joins the app's network
+	write(t, odir, "compose.yaml", fmt.Sprintf("services:\n  peer:\n    image: busybox\n    command: [\"sleep\", \"3600\"]\n    networks: [shared]\nnetworks:\n  shared:\n    external: true\n    name: %s\n", old))
+	if err := e.Sync(ctx, other, odir, domain.SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	write(t, dir, "compose.yaml", "services:\n  web:\n    image: busybox\n    command: [\"sleep\", \"3600\"]\n    networks: [edge]\nnetworks:\n  edge: {}\n")
+	if err := e.Sync(ctx, app, dir, domain.SyncOptions{Prune: true}); err != nil {
+		t.Fatalf("Sync with a network in use: %v", err)
+	}
+	if !exists(t, "network", old) {
+		t.Fatal("network in use by another project was deleted")
+	}
+	if got := undeclaredDiffs(t, e, app, dir); !slices.Equal(got, []string{"network " + old}) {
+		t.Fatalf("undeclared = %v", got)
+	}
+
+	if err := e.Remove(ctx, other, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Sync(ctx, app, dir, domain.SyncOptions{Prune: true}); err != nil {
+		t.Fatal(err)
+	}
+	if exists(t, "network", old) {
+		t.Fatal("unused undeclared network survived Prune")
+	}
+	if got := undeclaredDiffs(t, e, app, dir); len(got) != 0 {
+		t.Fatalf("undeclared after prune = %v", got)
+	}
+}
+
+func TestPruneVolumes(t *testing.T) {
+	ctx := context.Background()
+	e := newTestEngine(t)
+	app := testApp(t, e)
+	dir, data := t.TempDir(), t.TempDir()
+	write(t, data, "keep.txt", "host data")
+	ext := app.Name + "-ext"
+	if out, err := dockerCmd("volume", "create", ext); err != nil {
+		t.Fatal(out)
+	}
+	// runs before testApp's cleanup: take the project down first, or the volume is still in use
+	t.Cleanup(func() { e.Remove(context.Background(), app, true); dockerCmd("volume", "rm", "-f", ext) })
+	compose := func(withData bool) {
+		mounts, decl := "", ""
+		if withData {
+			mounts, decl = ", \"data:/data\"", "  data: {}\n"
+		}
+		write(t, dir, "compose.yaml", fmt.Sprintf(`
+services:
+  web:
+    image: busybox
+    command: ["sleep", "3600"]
+    volumes: ["ext:/ext", "%s:/host"%s]
+volumes:
+  ext:
+    external: true
+    name: %s
+%s`, data, mounts, ext, decl))
+	}
+	compose(true)
+	if err := e.Sync(ctx, app, dir, domain.SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	vol := app.Name + "_data"
+	if !exists(t, "volume", vol) {
+		t.Fatal("data volume not created")
+	}
+
+	compose(false)
+	// Prune alone, or PruneVolumes without Prune, keeps it: prune pending
+	for _, opts := range []domain.SyncOptions{{Prune: true}, {PruneVolumes: true}} {
+		if err := e.Sync(ctx, app, dir, opts); err != nil {
+			t.Fatal(err)
+		}
+		if !exists(t, "volume", vol) {
+			t.Fatalf("%+v deleted the volume", opts)
+		}
+	}
+	if got := undeclaredDiffs(t, e, app, dir); !slices.Equal(got, []string{"volume " + vol}) {
+		t.Fatalf("undeclared = %v", got)
+	}
+
+	// in use by any container, even a stopped one of no project: kept
+	user, err := dockerCmd("create", "-v", vol+":/x", "busybox")
+	if err != nil {
+		t.Fatal(user)
+	}
+	t.Cleanup(func() { dockerCmd("rm", "-f", user) })
+	if err := e.Sync(ctx, app, dir, domain.SyncOptions{Prune: true, PruneVolumes: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !exists(t, "volume", vol) {
+		t.Fatal("volume in use was deleted")
+	}
+	dockerCmd("rm", "-f", user)
+
+	if err := e.Sync(ctx, app, dir, domain.SyncOptions{Prune: true, PruneVolumes: true}); err != nil {
+		t.Fatal(err)
+	}
+	if exists(t, "volume", vol) {
+		t.Fatal("undeclared volume survived PruneVolumes")
+	}
+	if !exists(t, "volume", ext) {
+		t.Fatal("external volume deleted")
+	}
+	if b, err := os.ReadFile(filepath.Join(data, "keep.txt")); err != nil || string(b) != "host data" {
+		t.Fatalf("bind-mounted host dir touched: %q, %v", b, err)
+	}
+	if got := undeclaredDiffs(t, e, app, dir); len(got) != 0 {
+		t.Fatalf("undeclared after prune = %v", got)
+	}
+}
+
+func TestRemoveVolumes(t *testing.T) {
+	ctx := context.Background()
+	e := newTestEngine(t)
+	dir, data := t.TempDir(), t.TempDir()
+	write(t, data, "keep.txt", "host data")
+	write(t, dir, "compose.yaml", fmt.Sprintf("services:\n  web:\n    image: busybox\n    command: [\"sleep\", \"3600\"]\n    volumes: [\"data:/data\", \"%s:/host\"]\nvolumes:\n  data: {}\n", data))
+	for _, volumes := range []bool{false, true} {
+		app := testApp(t, e)
+		if err := e.Sync(ctx, app, dir, domain.SyncOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.Remove(ctx, app, volumes); err != nil {
+			t.Fatal(err)
+		}
+		if got := exists(t, "volume", app.Name+"_data"); got == volumes {
+			t.Errorf("Remove(volumes=%v): volume exists = %v", volumes, got)
+		}
+		if _, err := os.Stat(filepath.Join(data, "keep.txt")); err != nil {
+			t.Fatalf("Remove(volumes=%v) touched the bind-mounted host dir: %v", volumes, err)
+		}
 	}
 }

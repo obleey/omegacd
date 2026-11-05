@@ -106,7 +106,7 @@ func (c *CLI) printApp(v domain.AppView) {
 	for _, p := range []struct {
 		on   bool
 		name string
-	}{{v.AutoSync, "auto-sync"}, {v.SelfHeal, "self-heal"}, {v.Prune, "prune"}} {
+	}{{v.AutoSync, "auto-sync"}, {v.SelfHeal, "self-heal"}, {v.Prune, "prune"}, {v.PruneVolumes, "prune-volumes"}} {
 		if p.on {
 			policy = append(policy, p.name)
 		}
@@ -153,6 +153,7 @@ func (c *CLI) appCreate(ctx context.Context, args []string) error {
 	fs.BoolVar(&a.AutoSync, "auto-sync", false, "Sync automatically when the Repository changes")
 	fs.BoolVar(&a.SelfHeal, "self-heal", false, "Sync automatically when the Live State drifts")
 	fs.BoolVar(&a.Prune, "prune", false, "remove containers and networks no longer declared")
+	fs.BoolVar(&a.PruneVolumes, "prune-volumes", false, "with --prune, also delete volumes no longer declared (their data is lost)")
 	fs.BoolVar(&a.Adopt, "adopt", false, "take over an existing unmanaged Compose project")
 	pos, err := parse(fs, args, 0, 1)
 	if err != nil {
@@ -179,6 +180,9 @@ func (c *CLI) appCreate(ctx context.Context, args []string) error {
 	case file == "" && len(pos) == 1:
 		if a.RepoURL == "" {
 			return errors.New("--repo is required")
+		}
+		if a.PruneVolumes && !a.Prune {
+			return errors.New("--prune-volumes requires --prune")
 		}
 		a.Name, a.ComposeFiles, a.Profiles = pos[0], files, profiles
 		apps = []domain.Application{a}
@@ -209,9 +213,10 @@ func (c *CLI) appCreate(ctx context.Context, args []string) error {
 
 func (c *CLI) appDelete(ctx context.Context, args []string) error {
 	var o opts
-	cascade, yes := true, false
+	cascade, volumes, yes := true, false, false
 	fs := c.flags("app delete", &o)
 	fs.BoolVar(&cascade, "cascade", true, "also remove the Application's containers and networks (volumes are kept)")
+	fs.BoolVar(&volumes, "volumes", false, "with --cascade, also delete the Application's volumes and all their data")
 	fs.BoolVar(&yes, "yes", false, "do not ask for confirmation")
 	fs.BoolVar(&yes, "y", false, "shorthand for --yes")
 	pos, err := parse(fs, args, 1, 1)
@@ -223,13 +228,19 @@ func (c *CLI) appDelete(ctx context.Context, args []string) error {
 		return err
 	}
 	name := pos[0]
+	if volumes && !cascade {
+		return errors.New("--volumes requires --cascade")
+	}
 	// a script must say --yes explicitly: deleting by accident in CI would tear down running services
 	if !yes && !c.StdinTTY {
 		return &exitError{1, "refusing to delete without confirmation: pass --yes when not running in a terminal"}
 	}
 	if !yes {
 		what := "Application " + name
-		if cascade {
+		switch {
+		case volumes:
+			what += " and its containers, networks and volumes (all volume data is permanently lost)"
+		case cascade:
 			what += " and its containers and networks"
 		}
 		fmt.Fprintf(c.Stderr, "Delete %s? [y/N] ", what)
@@ -238,7 +249,11 @@ func (c *CLI) appDelete(ctx context.Context, args []string) error {
 			return &exitError{1, "aborted"}
 		}
 	}
-	if err := cl.do(ctx, "DELETE", appPath(name)+"?cascade="+strconv.FormatBool(cascade), nil, nil); err != nil {
+	q := "?cascade=" + strconv.FormatBool(cascade)
+	if volumes {
+		q += "&volumes=true"
+	}
+	if err := cl.do(ctx, "DELETE", appPath(name)+q, nil, nil); err != nil {
 		return err
 	}
 	fmt.Fprintf(c.Stdout, "application %s deleted\n", name)
@@ -264,7 +279,7 @@ func (c *CLI) appSync(ctx context.Context, args []string) error {
 	var w waitOpts
 	fs := c.flags("app sync", &o)
 	waitFlags(fs, &w)
-	prune := fs.Bool("prune", false, "also delete containers of services no longer declared, for this Sync only (volumes are kept)")
+	prune := fs.Bool("prune", false, "also delete containers of services no longer declared, for this Sync only (volumes are kept unless the Application prunes volumes)")
 	pos, err := parse(fs, args, 1, 1)
 	if err != nil {
 		return err
@@ -466,7 +481,8 @@ func (c *CLI) appDiff(ctx context.Context, args []string) error {
 	if err := cl.do(ctx, "GET", appPath(pos[0], "diff"), nil, &d); err != nil {
 		return &exitError{2, err.Error()} // like diff(1): 2 means trouble
 	}
-	differs := len(d.Services) > 0 || strings.TrimSpace(d.GitDiff) != ""
+	// undeclared networks and volumes (Kind set) are shown but, like in Sync Status, are not a difference
+	differs := slices.ContainsFunc(d.Services, func(s domain.ServiceDiff) bool { return s.Kind == "" }) || strings.TrimSpace(d.GitDiff) != ""
 	if o.output == "json" {
 		if err := c.printJSON(d); err != nil {
 			return err
@@ -480,7 +496,7 @@ func (c *CLI) appDiff(ctx context.Context, args []string) error {
 			case "removed":
 				mark, code = "-", red
 			}
-			line := mark + " " + s.Service
+			line := mark + " " + strings.TrimLeft(s.Kind+" "+s.Service, " ")
 			if len(s.Fields) > 0 {
 				line += ": " + strings.Join(s.Fields, ", ")
 			}

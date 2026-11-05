@@ -199,7 +199,8 @@ The version is always the Git release tag: pushing tag `v0.1.0` builds and stamp
 
 - **Auto-Sync** — Sync whenever the repository moves to a new Revision.
 - **Self-Heal** — also Sync when the Live State drifts without a new commit (a container was stopped, removed or changed by hand). Requires Auto-Sync.
-- **Prune** — what happens to services no longer declared (removed from the compose files, or their profile switched off): with Prune **off**, a Sync *stops* their containers; with Prune **on**, it *deletes* their containers and unused networks. **Volumes are never deleted.** Prune is also available as a one-off Sync option.
+- **Prune** — what happens to services no longer declared (removed from the compose files, or their profile switched off): with Prune **off**, a Sync *stops* their containers; with Prune **on**, it *deletes* their containers and the project networks no longer declared (a network still used by any container is kept and shown as prune pending). Volumes are kept. Prune is also available as a one-off Sync option.
+- **Prune volumes** — a sub-option of Prune (off by default, and turned off with Prune): a Sync also *deletes* the project's named volumes no longer declared, **with their data**, unless a container (of any project, even a stopped one) still uses them. External volumes, volumes OmegaCD's Compose project did not create, volumes of profile-disabled services and host paths are never touched. The Diff tab lists undeclared networks and volumes under *Would be pruned*; they never make an Application OutOfSync.
 
 **Change detection.** Compose recreates a container when its service definition changes. OmegaCD additionally hashes the *content* of file-based `configs:` and `secrets:` and of bind-mounted regular files inside the Application's path into a `dev.omegacd.content-hash` label — so editing `nginx.conf` in Git recreates the container that mounts it, and shows up as OutOfSync until synced.
 
@@ -219,6 +220,7 @@ host: edge-01                  # default: local
 autoSync: true
 selfHeal: true
 prune: true
+pruneVolumes: false            # with prune: also delete volumes no longer declared (data is lost)
 ---
 name: cache
 repoURL: https://github.com/acme/deploy.git
@@ -238,7 +240,7 @@ OmegaCD writes each Application's files from Git into its work dir on every Sync
 
 | In your compose file | Where the data is | Kept across reboots, Syncs and deletes? |
 |---|---|---|
-| `- media:/data` (named volume) | Docker's volume storage | ✅ OmegaCD never deletes volumes, not even with Prune |
+| `- media:/data` (named volume) | Docker's volume storage | ✅ kept, even with Prune — deleted only by **Prune volumes** once no longer declared, or by deleting the Application with **Also delete its volumes** (`app delete --volumes`) |
 | `- /opt/media/torrents:/data` (absolute path) | that folder **on the Host running the container** | ✅ OmegaCD never touches it; a missing folder is created by Docker (as root, so `chown` it for non-root images) |
 | `- ./nginx.conf:/etc/nginx/nginx.conf:ro` | a file from Git | ✅ restored from Git; changing it recreates the container |
 | `- ./data:/data` | the work dir (`/run/omegacd/apps/<app>/data`) | ❌ **lost on reboot** — use a named volume or an absolute path |
@@ -327,7 +329,7 @@ In CI, pass the server and token as environment variables:
 | --- | --- |
 | `login --server URL --token TOKEN`, `logout`, `version` | |
 | `app list`, `app get NAME` | `-o json` for the raw API object |
-| `app create NAME --repo URL [--path P] [--revision R] [--file F]... [--profile P]... [--host H] [--kind apps] [--auto-sync] [--self-heal] [--prune] [--adopt]` | or `app create -f app.yaml` |
+| `app create NAME --repo URL [--path P] [--revision R] [--file F]... [--profile P]... [--host H] [--kind apps] [--auto-sync] [--self-heal] [--prune [--prune-volumes]] [--adopt]` | or `app create -f app.yaml` |
 | `app sync NAME [--prune] [--wait] [--no-health] [--timeout 10m]` | |
 | `app refresh NAME` | re-read Git and the Live State now |
 | `app diff NAME` | exit 0: no differences, 1: differences, 2: error |
@@ -335,7 +337,7 @@ In CI, pass the server and token as environment variables:
 | `app wait NAME [--sync] [--health] [--timeout 10m]` | |
 | `app logs NAME [CONTAINER_OR_SERVICE] [-f] [--tail N]` | |
 | `app export NAME` | Application definition YAML |
-| `app delete NAME [--cascade=false] [--yes]` | asks first on a terminal; `--cascade=false` keeps the containers |
+| `app delete NAME [--cascade=false \| --volumes] [--yes]` | asks first on a terminal; `--cascade=false` keeps the containers; `--volumes` also deletes the volumes and their data |
 | `host list`, `host test NAME` | |
 
 Every command takes `--server`, `--token` and `-o table|json`; `OMEGACD_SERVER` and `OMEGACD_TOKEN` override the saved login. Colors are used only on a terminal and honour `NO_COLOR`.

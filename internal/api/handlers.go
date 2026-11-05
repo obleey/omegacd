@@ -54,7 +54,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) deleteApp(w http.ResponseWriter, r *http.Request) {
-	err := s.Controller.DeleteApp(r.Context(), r.PathValue("name"), r.URL.Query().Get("cascade") == "true")
+	err := s.Controller.DeleteApp(r.Context(), r.PathValue("name"), r.URL.Query().Get("cascade") == "true", r.URL.Query().Get("volumes") == "true")
 	respond(w, http.StatusNoContent, nil, err)
 }
 

@@ -115,12 +115,13 @@ func (s *fakeStore) VerifyToken(_ context.Context, plain string) (domain.APIToke
 
 type fakeController struct {
 	domain.Controller
-	mu       sync.Mutex
-	apps     map[string]domain.AppView
-	events   chan domain.Event
-	changed  chan string
-	hosts    map[string]domain.Host
-	lastSync domain.SyncRequest
+	mu         sync.Mutex
+	apps       map[string]domain.AppView
+	events     chan domain.Event
+	changed    chan string
+	hosts      map[string]domain.Host
+	lastSync   domain.SyncRequest
+	lastDelete [2]bool // cascade, volumes
 }
 
 func (c *fakeController) ListHosts(context.Context) ([]domain.HostView, error) {
@@ -189,10 +190,13 @@ func (c *fakeController) CreateApp(_ context.Context, a domain.Application) (dom
 	return v, nil
 }
 
-func (c *fakeController) DeleteApp(ctx context.Context, name string, cascade bool) error {
+func (c *fakeController) DeleteApp(ctx context.Context, name string, cascade, volumes bool) error {
 	if _, err := c.GetApp(ctx, name); err != nil {
 		return err
 	}
+	c.mu.Lock()
+	c.lastDelete = [2]bool{cascade, volumes}
+	c.mu.Unlock()
 	delete(c.apps, name)
 	return nil
 }
@@ -394,7 +398,10 @@ func TestAppsCRUD(t *testing.T) {
 		t.Fatal(b)
 	}
 	e.expect("POST", "/api/apps/nope/sync", "", 404)
-	e.expect("DELETE", "/api/apps/web?cascade=true", "", 204)
+	e.expect("DELETE", "/api/apps/web?cascade=true&volumes=true", "", 204)
+	if e.ctrl.lastDelete != [2]bool{true, true} {
+		t.Fatalf("cascade, volumes = %v", e.ctrl.lastDelete)
+	}
 	e.expect("DELETE", "/api/apps/web", "", 404)
 	e.expect("GET", "/api/nothing", "", 404)
 }
