@@ -1,0 +1,7 @@
+# A second Application for the App of Apps example: a tiny server that echoes each request back.
+services:
+  whoami:
+    image: traefik/whoami:v1.11.0
+    ports:
+      - "8082:80"
+    restart: unless-stopped

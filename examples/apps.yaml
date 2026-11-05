@@ -1,5 +1,6 @@
-# The declarative way: an App of Apps pointed at this folder (path: examples) creates the Applications below.
-# In your own repository, keep one file like this per server or environment.
+# An App of Apps: point an Application of kind "App of Apps" at this folder (path: examples) and it creates,
+# updates and (with Prune) deletes the Applications defined here. In your own repository, keep one folder of
+# definitions like this per server or environment.
 name: hello
 repoURL: https://github.com/obleey/omegacd.git
 path: examples/hello
@@ -7,3 +8,9 @@ targetRevision: main
 autoSync: true   # deploy every new commit
 selfHeal: true   # restart or recreate containers changed by hand
 prune: false     # services removed from compose.yaml are stopped, not deleted
+---
+name: whoami
+repoURL: https://github.com/obleey/omegacd.git
+path: examples/whoami
+targetRevision: main
+autoSync: false  # waits for a Sync: click Sync on the App of Apps to deploy it

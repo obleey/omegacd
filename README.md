@@ -227,7 +227,25 @@ omegacd app wait hello --sync --health
 
 **Make it yours:** copy `examples/hello` into your own repository, point the Application at it, change `index.html` and push — OmegaCD sees the new commit (on the next poll, or within seconds [with a webhook](#webhooks)) and recreates the container with the new page. Add a `.sops.env` next to it for [secrets](#secrets).
 
-**Declaratively:** [`examples/apps.yaml`](examples/apps.yaml) defines the same Application; an [App of Apps](#defining-applications) with path `examples` creates it. In your own repository, one such folder of definitions per server describes everything that runs there.
+### Your first App of Apps
+
+Instead of creating each Application by hand, declare them in Git. [`examples/apps.yaml`](examples/apps.yaml) defines two: `hello` (Auto-Sync on) and [`whoami`](examples/whoami) (Auto-Sync off — it waits for a Sync):
+
+```yaml
+# examples/apps.yaml
+name: hello
+repoURL: https://github.com/obleey/omegacd.git
+path: examples/hello
+autoSync: true
+selfHeal: true
+---
+name: whoami
+repoURL: https://github.com/obleey/omegacd.git
+path: examples/whoami
+autoSync: false
+```
+
+**New Application** → name `examples`, kind **App of Apps**, repository `https://github.com/obleey/omegacd`, path `examples`, **Create**, then **Sync** it (or `omegacd app create examples --repo https://github.com/obleey/omegacd --path examples --kind apps && omegacd app sync examples --wait`). The Sync creates both Child Applications and deploys them — http://localhost:8081 and http://localhost:8082. From then on a new commit deploys `hello` by itself, while `whoami` shows *OutOfSync* until you Sync it (or the App of Apps). In your own repository, one folder of definitions like this per server describes everything that runs there; see [Defining Applications](#defining-applications) for every field.
 
 ## Concepts
 
