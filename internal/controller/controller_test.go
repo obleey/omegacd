@@ -354,6 +354,21 @@ func newRig(t *testing.T) rig {
 	}
 	r := rig{st: newStore(), g: &fakeGit{sha: "aaaaaaaa"}, e: &fakeEngine{live: domain.LiveState{Health: domain.Healthy}}, sec: &fakeSecrets{}, master: master}
 	r.c = New(Config{Store: r.st, Git: r.g, Secrets: r.sec, MasterKey: master, Engine: r.e, WorkDir: t.TempDir(), PollInterval: time.Hour})
+	// Registered after TempDir, so it runs first: background Syncs (auto, self-heal, App of Apps
+	// children) must finish writing the work dir before it is removed.
+	t.Cleanup(func() {
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+			r.c.mu.Lock()
+			busy := false
+			for _, s := range r.c.apps {
+				busy = busy || s.syncing
+			}
+			r.c.mu.Unlock()
+			if !busy {
+				return
+			}
+		}
+	})
 	return r
 }
 
