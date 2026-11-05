@@ -139,7 +139,7 @@ func (c *Controller) restoreWorkDirs(ctx context.Context) {
 		}
 		// the compose files are the signal: after a reboot Docker may already have re-created
 		// missing bind-mount sources as empty directories, so the dir itself can be non-empty
-		if composeFilesPresent(c.appDir(a.Name), a.ComposeFiles) {
+		if composeFilesPresent(c.appDir(a.Name), a.ComposeFilesIn(c.appDir(a.Name))) {
 			c.dropSopsCopies(a.Name)
 			continue
 		}
@@ -582,7 +582,7 @@ func (c *Controller) apply(ctx context.Context, a domain.Application, op domain.
 	if err := c.decrypt(a, dir, keys); err != nil {
 		return err
 	}
-	for _, f := range a.ComposeFiles {
+	for _, f := range a.ComposeFilesIn(dir) {
 		if _, err := os.Stat(filepath.Join(dir, f)); errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("%w: compose file %q not found in path %q of the repository at %s; check the Application's Path and Compose files",
 				domain.ErrInvalid, f, cmp.Or(a.Path, "/"), short(op.Revision))
@@ -1089,7 +1089,7 @@ func (c *Controller) resolveInAppDir(name, rel string) (string, error) {
 // before interpolation; unreadable ones are skipped (Validate reports them).
 func plainSecrets(a domain.Application, dir string) []string {
 	var warnings []string
-	for _, f := range a.ComposeFiles {
+	for _, f := range a.ComposeFilesIn(dir) {
 		b, err := os.ReadFile(filepath.Join(dir, f))
 		if err != nil {
 			continue
@@ -1131,12 +1131,13 @@ func plainSecrets(a domain.Application, dir string) []string {
 // composeText is the app's compose files in dir as written, one after another when there are several.
 func composeText(a domain.Application, dir string) (string, error) {
 	var b strings.Builder
-	for _, f := range a.ComposeFiles {
+	files := a.ComposeFilesIn(dir)
+	for _, f := range files {
 		content, err := os.ReadFile(filepath.Join(dir, f))
 		if err != nil {
 			return "", err
 		}
-		if len(a.ComposeFiles) > 1 {
+		if len(files) > 1 {
 			fmt.Fprintf(&b, "# ---- %s ----\n", f)
 		}
 		b.Write(content)
@@ -1329,8 +1330,6 @@ func normalize(a *domain.Application) error {
 	if a.Kind == domain.KindApps {
 		// an App of Apps deploys nothing itself: no Host; its Child Applications each name their own
 		a.ComposeFiles, a.Profiles, a.Host = nil, nil, ""
-	} else if len(a.ComposeFiles) == 0 {
-		a.ComposeFiles = []string{"compose.yaml"}
 	}
 	for _, f := range a.ComposeFiles {
 		if filepath.IsAbs(f) || strings.Contains(f, "..") {

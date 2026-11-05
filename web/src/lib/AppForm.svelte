@@ -26,7 +26,7 @@
 	let repoURL = $state(init?.repoURL ?? '');
 	let path = $state(init?.path ?? '');
 	let targetRevision = $state(init?.targetRevision || 'main');
-	let composeFiles = $state((init?.composeFiles ?? ['compose.yaml']).join('\n'));
+	let composeFiles = $state((init?.composeFiles ?? []).join('\n'));
 	let profiles = $state((init?.profiles ?? []).join('\n'));
 	let autoSync = $state(init?.autoSync ?? false);
 	let selfHeal = $state(init?.selfHeal ?? false);
@@ -156,7 +156,7 @@
 				path: path.trim(),
 				targetRevision: targetRevision.trim() || 'main',
 				// An App of Apps has no compose files; its children pick their own Host.
-				composeFiles: kind === 'apps' ? [] : list(composeFiles).length ? list(composeFiles) : ['compose.yaml'],
+				composeFiles: kind === 'apps' ? [] : list(composeFiles),
 				profiles: kind === 'apps' ? [] : list(profiles),
 				host,
 				autoSync,

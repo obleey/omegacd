@@ -281,7 +281,7 @@ name: web
 repoURL: https://github.com/acme/deploy.git
 path: apps/web                 # directory with the compose files
 targetRevision: main           # branch, tag or commit
-composeFiles: [compose.yaml]   # default: compose.yaml
+composeFiles: [compose.yaml]   # default: the first of compose.yaml, compose.yml, docker-compose.yaml, docker-compose.yml
 profiles: [prod]               # optional Compose profiles
 host: edge-01                  # required: the Host to deploy to (local for OmegaCD's own Docker engine)
 autoSync: true

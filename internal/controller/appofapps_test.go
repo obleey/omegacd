@@ -35,6 +35,16 @@ func (r rig) mustSync(t *testing.T, name string) {
 	}
 }
 
+// childrenSynced waits for the Syncs an App of Apps' Sync started for its children: they run in the background,
+// and may not have started yet when the parent's operation finished.
+func (r rig) childrenSynced(t *testing.T, names ...string) {
+	t.Helper()
+	for _, n := range names {
+		r.waitOp(t, n, triggerParent)
+		r.waitIdle(t, n)
+	}
+}
+
 func TestAppOfAppsCreatesUpdatesAndKeepsChildren(t *testing.T) {
 	r := newRig(t)
 	ctx := t.Context()
@@ -47,7 +57,7 @@ func TestAppOfAppsCreatesUpdatesAndKeepsChildren(t *testing.T) {
 	r.mustSync(t, "root")
 
 	web, err := r.st.GetApp(ctx, "web")
-	if err != nil || web.Parent != "root" || web.Kind != domain.KindCompose || !slices.Equal(web.ComposeFiles, []string{"compose.yaml"}) {
+	if err != nil || web.Parent != "root" || web.Kind != domain.KindCompose || web.ComposeFiles != nil {
 		t.Fatalf("web: %+v %v", web, err)
 	}
 	if v, _ := r.c.Refresh(ctx, "root"); v.SyncStatus != domain.Synced {
@@ -92,8 +102,7 @@ func TestAppOfAppsPrunesChildren(t *testing.T) {
 	r.c.CreateApp(t.Context(), p)
 	r.g.define("aaaaaaaa", "name: web\nrepoURL: x\nhost: local\n---\nname: api\nrepoURL: x\nhost: local\n")
 	r.mustSync(t, "root")
-	r.waitIdle(t, "web") // the children's Syncs run in the background
-	r.waitIdle(t, "api")
+	r.childrenSynced(t, "web", "api")
 	r.g.define("bbbbbbbb", "name: web\nrepoURL: x\nhost: local\n")
 	r.mustSync(t, "root")
 	if _, err := r.st.GetApp(t.Context(), "api"); !errors.Is(err, domain.ErrNotFound) {
@@ -194,7 +203,7 @@ func TestDeleteAppOfApps(t *testing.T) {
 		r.c.CreateApp(ctx, parentApp("root"))
 		r.g.define("aaaaaaaa", "name: web\nrepoURL: x\nhost: local\n")
 		r.mustSync(t, "root")
-		r.waitIdle(t, "web") // the children's Syncs run in the background; deleting during one is refused
+		r.childrenSynced(t, "web") // deleting during a child's Sync is refused
 		if err := r.c.DeleteApp(ctx, "root", cascade, false); err != nil {
 			t.Fatal(err)
 		}
@@ -262,8 +271,7 @@ func TestDeleteAppOfAppsWithVolumes(t *testing.T) {
 	r.c.CreateApp(ctx, parentApp("root"))
 	r.g.define("aaaaaaaa", "name: web\nrepoURL: x\nhost: local\n---\nname: api\nrepoURL: x\nhost: local\n")
 	r.mustSync(t, "root")
-	r.waitIdle(t, "web") // the children's Syncs run in the background; deleting during one is refused
-	r.waitIdle(t, "api")
+	r.childrenSynced(t, "web", "api") // deleting during a child's Sync is refused
 	if err := r.c.DeleteApp(ctx, "root", true, true); err != nil {
 		t.Fatal(err)
 	}
@@ -280,6 +288,7 @@ func TestRefreshAppOfAppsRefreshesChildren(t *testing.T) {
 	}
 	r.g.define("aaaaaaaa", "name: web\nrepoURL: https://example.com/r.git\nhost: local\n---\nname: api\nrepoURL: https://example.com/other.git\nhost: local\n")
 	r.mustSync(t, "root")
+	r.childrenSynced(t, "web", "api")
 	r.mustSync(t, "web")
 	r.mustSync(t, "api")
 

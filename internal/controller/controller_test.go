@@ -411,7 +411,7 @@ func TestCreateDefaultsAndStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v.TargetRevision != "main" || !slices.Equal(v.ComposeFiles, []string{"compose.yaml"}) || v.Host != domain.LocalHost {
+	if v.TargetRevision != "main" || v.ComposeFiles != nil || v.Host != domain.LocalHost {
 		t.Fatalf("defaults not applied: %+v", v.Application)
 	}
 	if v.SyncStatus != domain.OutOfSync || v.SyncMessage != "never synced" {
@@ -1419,6 +1419,17 @@ func TestPlainSecrets(t *testing.T) {
 	}
 	if strings.Contains(strings.Join(got, ""), "hunter2") {
 		t.Fatal("a warning must not repeat the secret")
+	}
+}
+
+func TestComposeTextFindsDefaultFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "compose.yml"), []byte("services: {web: {image: nginx}}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := composeText(domain.Application{}, dir)
+	if err != nil || !strings.Contains(got, "nginx") {
+		t.Fatalf("composeText without named files: %q %v", got, err)
 	}
 }
 
