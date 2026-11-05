@@ -40,7 +40,7 @@ func TestAppOfAppsCreatesUpdatesAndKeepsChildren(t *testing.T) {
 	ctx := t.Context()
 	p := parentApp("root")
 	p.ComposeFiles, p.Host = []string{"x.yaml"}, "elsewhere"
-	if v, err := r.c.CreateApp(ctx, p); err != nil || v.ComposeFiles != nil || v.Host != domain.LocalHost {
+	if v, err := r.c.CreateApp(ctx, p); err != nil || v.ComposeFiles != nil || v.Host != "" {
 		t.Fatalf("create parent: %+v %v", v.Application, err)
 	}
 	r.g.define("aaaaaaaa", "name: web\nrepoURL: x\n---\nname: api\nrepoURL: x\nprofiles: [prod]\n")
@@ -302,8 +302,10 @@ func TestAppOfAppsWithoutLocalHost(t *testing.T) {
 	ctx := t.Context()
 	r := newRig(t)
 	r.c.cfg.NoLocalHost = true
-	if _, err := r.c.SaveHost(ctx, domain.Host{Name: "prod", URL: "ssh://deploy@prod"}, true); err != nil {
-		t.Fatal(err)
+	for _, h := range []string{"prod", "edge"} {
+		if _, err := r.c.SaveHost(ctx, domain.Host{Name: h, URL: "ssh://deploy@" + h}, true); err != nil {
+			t.Fatal(err)
+		}
 	}
 	// with or without a host given: an App of Apps deploys nothing and needs no Docker engine
 	for name, h := range map[string]string{"root": "", "other": "prod"} {
@@ -313,11 +315,31 @@ func TestAppOfAppsWithoutLocalHost(t *testing.T) {
 			t.Fatalf("create App of Apps with host %q: %v", h, err)
 		}
 	}
-	r.g.define("aaaaaaaa", "name: web\nrepoURL: x\nhost: prod\n")
+	// its children may each deploy to a different Host
+	r.g.define("aaaaaaaa", "name: web\nrepoURL: x\nhost: prod\n---\nname: cdn\nrepoURL: x\nhost: edge\n---\nname: api\nrepoURL: x\nhost: prod\n")
 	r.mustSync(t, "root")
 	web, err := r.st.GetApp(ctx, "web")
 	if err != nil || web.Parent != "root" || web.Host != "prod" {
 		t.Fatalf("child: %+v %v", web, err)
+	}
+	if v, err := r.c.GetApp(ctx, "root"); err != nil || v.Host != "" || !slices.Equal(v.Hosts, []string{"edge", "prod"}) {
+		t.Fatalf("parent shows host %q, hosts %v: %v", v.Host, v.Hosts, err)
+	}
+	// it runs on no Host: not listed among a Host's Applications
+	hosts, _ := r.c.ListHosts(ctx)
+	for _, h := range hosts {
+		if slices.Contains(h.Apps, "root") || slices.Contains(h.Apps, "other") {
+			t.Fatalf("Host %s lists an App of Apps: %v", h.Name, h.Apps)
+		}
+	}
+	// an App of Apps stored with "local" before it had no Host still updates, and shows no Host
+	old := parentApp("legacy")
+	old.Host = domain.LocalHost
+	r.st.apps["legacy"] = old
+	upd := parentApp("legacy")
+	upd.AutoSync = true
+	if v, err := r.c.UpdateApp(ctx, upd); err != nil || v.Host != "" {
+		t.Fatalf("update legacy App of Apps: %+v %v", v.Application, err)
 	}
 	// a Compose Application still may not use the disabled local Host
 	if _, err := r.c.CreateApp(ctx, app("api")); !errors.Is(err, domain.ErrLocalHostDisabled) {

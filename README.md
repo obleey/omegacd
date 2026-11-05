@@ -252,7 +252,7 @@ autoSync: false
 | Term | Meaning |
 | --- | --- |
 | **Application** | A Compose project whose desired state lives at a path in a Git repository and is deployed to one Host. |
-| **App of Apps** | An Application whose path holds Application definitions instead of compose files. Syncing it creates and updates its Child Applications, and with Prune deletes those no longer declared. |
+| **App of Apps** | An Application whose path holds Application definitions instead of compose files. Syncing it creates and updates its Child Applications, and with Prune deletes those no longer declared. It deploys nothing itself and has no Host: each Child Application names its own, so one App of Apps can span several Hosts. |
 | **Child Application** | An Application declared in an App of Apps. Its settings — and Rollback — are owned by Git, not the UI. A manual Sync of the parent also syncs children that are OutOfSync or whose last Sync failed; a Refresh of the parent refreshes all children. |
 | **Host** | A Docker engine Applications are deployed to. `local` (the mounted Docker socket) is built in. |
 | **Sync** | Making the running containers match the compose files at the target Revision (commit). Each attempt is a Sync Operation, recorded as Running, Succeeded or Failed. |
