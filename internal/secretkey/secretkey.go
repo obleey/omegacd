@@ -7,7 +7,7 @@ import (
 )
 
 var (
-	secretName = regexp.MustCompile(`(?i)PASSWORD|PASSWD|SECRET|TOKEN|API_?KEY|PRIVATE_?KEY|ACCESS_?KEY`)
+	secretName = regexp.MustCompile(`(?i)PASSWORD|PASSWD|SECRET|TOKEN|API_?KEY|PRIVATE_?KEY|ACCESS_?KEY|ENCRYPTION_?KEY`)
 	pathName   = regexp.MustCompile(`(?i)_(FILE|PATH)$`)
 	flagValue  = regexp.MustCompile(`(?i)^(true|false|yes|no|on|off|0|1)?$`)
 )

@@ -14,6 +14,7 @@ func TestPlain(t *testing.T) {
 		{"REQUIRE_PASSWORD", "true"}:            false, // a flag
 		{"SESSION_SECRET", ""}:                  false,
 		{"DB_NAME", "wordpress"}:                false, // not a secret name
+		{"dataStoreEncryptionKey", "c2VjcmV0"}:  true,
 	} {
 		if got := Plain(kv[0], kv[1]); got != want {
 			t.Errorf("%s=%s: %v, want %v", kv[0], kv[1], got, want)

@@ -14,6 +14,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -285,13 +286,16 @@ func importStack(ctx context.Context, h Host, o Options, s Stack) (report, error
 	if err != nil {
 		return r, err
 	}
+	secretConfig := map[string]bool{} // bind-mounted files that hold a key or credential: encrypted, never in Git as is
 	for _, rel := range toRead {
 		m := refs[rel]
 		if !m.env && !m.secret && !m.config {
 			r.recreate = true // a bind mount now points at OmegaCD's copy of the file
 			r.config = append(r.config, rel)
-			if secretFile(rel) {
-				r.warnings = append(r.warnings, fmt.Sprintf("%s goes to Git as is and its name suggests a secret: check it before committing (or encrypt it as *.sops.* by hand)", rel))
+			for f, b := range read {
+				if (f == rel || strings.HasPrefix(f, rel+"/")) && (secretFile(f) || secretContent(b)) {
+					secretConfig[f] = true
+				}
 			}
 		} else if m.config {
 			r.recreate = true // its content hash is new
@@ -327,7 +331,7 @@ func importStack(ctx context.Context, h Host, o Options, s Stack) (report, error
 	}
 	maps.Copy(out, compose)
 
-	// 5. encrypt env files with secrets, Compose secret files, and .env when it holds any
+	// 5. encrypt env files with secrets, Compose secret files, bind-mounted files holding secrets, and .env when it holds any
 	var recipients []string
 	encrypt := func(rel string) error {
 		enc := sopsName(rel)
@@ -354,7 +358,7 @@ func importStack(ctx context.Context, h Host, o Options, s Stack) (report, error
 	}
 	for _, rel := range slices.Sorted(maps.Keys(out)) {
 		m := refs[rel]
-		needs := rel == ".env" && hasSecrets(string(out[rel])) || m != nil && (m.secret || m.env && hasSecrets(string(out[rel])))
+		needs := secretConfig[rel] || rel == ".env" && hasSecrets(string(out[rel])) || m != nil && (m.secret || m.env && hasSecrets(string(out[rel])))
 		if needs {
 			if err := encrypt(rel); err != nil {
 				return r, err
@@ -598,6 +602,24 @@ func sopsName(rel string) string {
 		return ""
 	}
 	return dir + base[:i] + ".sops" + base[i:]
+}
+
+// secretLine is a `key: value`, `"key": "value",` or KEY=value line, for secretContent.
+var secretLine = regexp.MustCompile(`^\s*["']?([A-Za-z0-9_.-]+)["']?\s*[:=]\s*(.*?)\s*,?\s*$`)
+
+// secretContent guesses from a file's content that it holds a key or credential: a private key, an age
+// identity, or a setting with a secret-like name and a literal value (password: hunter2, "token": "abc").
+func secretContent(b []byte) bool {
+	s := string(b)
+	if strings.Contains(s, "PRIVATE KEY-----") || strings.Contains(s, "AGE-SECRET-KEY-") {
+		return true
+	}
+	for line := range strings.Lines(s) {
+		if m := secretLine.FindStringSubmatch(line); m != nil && secretkey.Plain(m[1], strings.Trim(m[2], `"'`)) {
+			return true
+		}
+	}
+	return false
 }
 
 // secretFile guesses from a file name that it holds a key or credential.
