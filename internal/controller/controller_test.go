@@ -1345,3 +1345,40 @@ func TestDecryptedFilesAreRecordedAndMasked(t *testing.T) {
 		t.Fatalf("list left behind: %v", err)
 	}
 }
+
+func TestStartupDropsLeftoverSopsCopies(t *testing.T) {
+	r := newRig(t)
+	a := app("web")
+	a.ComposeFiles = []string{"compose.yaml"}
+	r.st.apps["web"] = a
+	dir := r.c.appDir("web")
+	os.MkdirAll(filepath.Join(dir, "sub"), 0o750)
+	for name, content := range map[string]string{
+		"compose.yaml": "services: {}\n",
+		"db.sops.env":  "ENC[...]", "db.env": "PW=x\n", // an old-style pair
+		"sub/app.sops.yaml": "ENC[...]", "sub/app.yaml": "k: v\n",
+		"lonely.sops.env": "ENC[...]", // never decrypted: kept
+	} {
+		os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600)
+	}
+	os.WriteFile(r.c.decryptedList("web"), []byte("earlier.env\n"), 0o600)
+
+	r.c.restoreWorkDirs(t.Context())
+
+	for name, want := range map[string]bool{"db.sops.env": false, "sub/app.sops.yaml": false, "db.env": true, "sub/app.yaml": true, "lonely.sops.env": true, "compose.yaml": true} {
+		if _, err := os.Stat(filepath.Join(dir, name)); (err == nil) != want {
+			t.Errorf("%s: exists=%v, want %v", name, err == nil, want)
+		}
+	}
+	if b, _ := os.ReadFile(r.c.decryptedList("web")); string(b) != "db.env\nearlier.env\nsub/app.yaml\n" {
+		t.Fatalf("list: %q", b)
+	}
+	if r.e.syncCount() != 0 {
+		t.Fatal("tidying must not sync")
+	}
+	// a second start finds nothing to do
+	r.c.restoreWorkDirs(t.Context())
+	if b, _ := os.ReadFile(r.c.decryptedList("web")); string(b) != "db.env\nearlier.env\nsub/app.yaml\n" {
+		t.Fatalf("list after a second start: %q", b)
+	}
+}

@@ -130,6 +130,7 @@ func (c *Controller) restoreWorkDirs(ctx context.Context) {
 		// the compose files are the signal: after a reboot Docker may already have re-created
 		// missing bind-mount sources as empty directories, so the dir itself can be non-empty
 		if composeFilesPresent(c.appDir(a.Name), a.ComposeFiles) {
+			c.dropSopsCopies(a.Name)
 			continue
 		}
 		last, err := c.cfg.Store.LastSucceededOp(ctx, a.Name)
@@ -1077,6 +1078,41 @@ func composeText(a domain.Application, dir string) (string, error) {
 func dirExists(path string) bool {
 	fi, err := os.Stat(path)
 	return err == nil && fi.IsDir()
+}
+
+// dropSopsCopies tidies a work dir written before *.sops.* copies were deleted after decrypting: each copy whose
+// decrypted file is there goes, and that file joins the decrypted list. The list is written first, so a decrypted
+// file is never unlisted; a copy without its decrypted file stays.
+func (c *Controller) dropSopsCopies(name string) {
+	dir := c.appDir(name)
+	var copies, plain []string
+	_ = filepath.WalkDir(dir, func(p string, e fs.DirEntry, err error) error {
+		if err != nil || !e.Type().IsRegular() || !strings.Contains(e.Name(), ".sops.") {
+			return nil
+		}
+		out := filepath.Join(filepath.Dir(p), strings.Replace(e.Name(), ".sops.", ".", 1))
+		if _, err := os.Stat(out); err == nil {
+			copies, plain = append(copies, p), append(plain, out)
+		}
+		return nil
+	})
+	if len(copies) == 0 {
+		return
+	}
+	for rel := range c.readDecrypted(name) {
+		plain = append(plain, filepath.Join(dir, filepath.FromSlash(rel)))
+	}
+	slices.Sort(plain)
+	if err := c.writeDecrypted(name, dir, slices.Compact(plain)); err != nil {
+		c.cfg.Log.Error("record decrypted files", "app", name, "err", err)
+		return
+	}
+	for _, p := range copies {
+		if err := os.Remove(p); err != nil {
+			c.cfg.Log.Error("remove encrypted copy", "app", name, "file", p, "err", err)
+		}
+	}
+	c.cfg.Log.Info("removed encrypted copies from the work dir", "app", name, "files", len(copies))
 }
 
 // decryptedList records which files in the app dir were decrypted from SOPS (their *.sops.* copies are
