@@ -259,7 +259,7 @@ func TestImportKeepsContainersWithoutFileMounts(t *testing.T) {
 		t.Fatalf("report:\n%s", report)
 	}
 	apps, _ := appdef.Parse(filepath.Join(repo, "platform"))
-	if len(apps) != 1 || !slices.Equal(apps[0].ComposeFiles, []string{"docker-compose.yml"}) || apps[0].Host != "" {
+	if len(apps) != 1 || !slices.Equal(apps[0].ComposeFiles, []string{"docker-compose.yml"}) || apps[0].Host != "local" {
 		t.Fatalf("definition: %+v", apps)
 	}
 	b, _ := os.ReadFile(filepath.Join(repo, "apps/cache/docker-compose.yml"))

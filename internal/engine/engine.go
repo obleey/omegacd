@@ -113,10 +113,7 @@ func (e *Engine) load(ctx context.Context, app domain.Application, dir string) (
 }
 
 func loadProject(ctx context.Context, app domain.Application, dir string, resolvePaths bool) (*types.Project, error) {
-	files := app.ComposeFiles
-	if len(files) == 0 {
-		files = []string{"compose.yaml"}
-	}
+	files := app.ComposeFilesIn(dir)
 	paths := make([]string, len(files))
 	for i, f := range files {
 		paths[i] = filepath.Join(dir, f)

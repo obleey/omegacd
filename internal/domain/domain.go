@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -45,7 +47,7 @@ type Application struct {
 	RepoURL        string    `json:"repoURL"`
 	Path           string    `json:"path"`           // directory inside the repo, "" or "." for root
 	TargetRevision string    `json:"targetRevision"` // branch, tag or commit SHA; default "main"
-	ComposeFiles   []string  `json:"composeFiles"`   // relative to Path; default ["compose.yaml"]
+	ComposeFiles   []string  `json:"composeFiles"`   // relative to Path; empty: the first of DefaultComposeFiles found
 	Profiles       []string  `json:"profiles"`
 	Host           string    `json:"host"` // a Host name; default LocalHost
 	AutoSync       bool      `json:"autoSync"`
@@ -120,6 +122,24 @@ type RepoAccess struct {
 	CredentialPrefix string `json:"credentialPrefix,omitempty"`
 	DefaultBranch    string `json:"defaultBranch,omitempty"`
 	Message          string `json:"message,omitempty"`
+}
+
+// DefaultComposeFiles are looked for, in this order, when an Application names no compose files — the same
+// names docker compose looks for.
+var DefaultComposeFiles = []string{"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"}
+
+// ComposeFilesIn is the Application's compose files in dir: the ones it names, else the first of
+// DefaultComposeFiles that exists there (compose.yaml when none does, so errors name a file).
+func (a Application) ComposeFilesIn(dir string) []string {
+	if len(a.ComposeFiles) > 0 {
+		return a.ComposeFiles
+	}
+	for _, f := range DefaultComposeFiles {
+		if fi, err := os.Stat(filepath.Join(dir, f)); err == nil && fi.Mode().IsRegular() {
+			return []string{f}
+		}
+	}
+	return DefaultComposeFiles[:1]
 }
 
 // Host is a Docker engine Applications deploy to. LocalHost is built in and not stored.
@@ -259,6 +279,7 @@ type AppView struct {
 	LastOperation *SyncOperation `json:"lastOperation,omitempty"`
 	ReconciledAt  time.Time      `json:"reconciledAt,omitzero"`
 	PrunePending  []string       `json:"prunePending,omitempty"` // stopped undeclared services, and undeclared "network <name>" / "volume <name>"
+	Hosts         []string       `json:"hosts,omitempty"`        // App of Apps: the Hosts its Child Applications deploy to, sorted
 }
 
 type DiffView struct {

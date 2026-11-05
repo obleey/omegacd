@@ -42,6 +42,8 @@
 		{#if a.kind === 'apps'}
 			<dt><Icon name="apps" size={13} />Children</dt>
 			<dd>{kids ?? 0} Child Application{kids === 1 ? '' : 's'}</dd>
+			<dt><Icon name="server" size={13} />Hosts</dt>
+			<dd class="mono">{a.hosts?.join(', ') || '—'}</dd>
 		{:else}
 			<dt><Icon name="server" size={13} />Host</dt>
 			<dd class="mono">{a.host || 'local'}</dd>

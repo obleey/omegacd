@@ -51,7 +51,7 @@ func (c *CLI) appList(ctx context.Context, args []string) error {
 		if a.DeployedSHA != "" {
 			rev += " (" + shortSHA(a.DeployedSHA) + ")"
 		}
-		rows = append(rows, []string{indent + a.Name, a.Kind, a.Host, string(a.SyncStatus), string(a.Health), rev, lastOp})
+		rows = append(rows, []string{indent + a.Name, a.Kind, hostsOf(a, ","), string(a.SyncStatus), string(a.Health), rev, lastOp})
 		for _, ch := range apps {
 			if ch.Parent == a.Name {
 				add(ch, indent+"  ")
@@ -117,8 +117,8 @@ func (c *CLI) printApp(v domain.AppView) {
 	}
 	lines := [][2]string{
 		{"Name", v.Name}, {"Kind", v.Kind}, {"Parent", v.Parent}, {"Repository", v.RepoURL}, {"Path", v.Path},
-		{"Target revision", v.TargetRevision}, {"Compose files", strings.Join(v.ComposeFiles, ", ")},
-		{"Profiles", strings.Join(v.Profiles, ", ")}, {"Host", v.Host}, {"Sync policy", strings.Join(policy, ", ")},
+		{"Target revision", v.TargetRevision}, {"Compose files", cmp.Or(strings.Join(v.ComposeFiles, ", "), "auto ("+strings.Join(domain.DefaultComposeFiles, ", ")+")")},
+		{"Profiles", strings.Join(v.Profiles, ", ")}, {hostsLabel(v), hostsOf(v, ", ")}, {"Sync policy", strings.Join(policy, ", ")},
 		{"Sync status", sync}, {"Health", c.paint(statusColor(string(v.Health)), string(v.Health))},
 		{"Target SHA", shortSHA(v.TargetSHA)}, {"Deployed SHA", shortSHA(v.DeployedSHA)},
 	}
@@ -808,4 +808,20 @@ func (c *CLI) hostKeyRemove(ctx context.Context, args []string) error {
 		return err
 	}
 	return cl.do(ctx, "DELETE", hostKeysPath(pos[0])+"/"+url.PathEscape(pos[1]), nil, nil)
+}
+
+// hostsLabel names hostsOf for app get.
+func hostsLabel(v domain.AppView) string {
+	if v.Kind == domain.KindApps {
+		return "Hosts"
+	}
+	return "Host"
+}
+
+// hostsOf is where an Application deploys: its Host, or for an App of Apps its children's Hosts ("-" without any).
+func hostsOf(v domain.AppView, sep string) string {
+	if v.Kind == domain.KindApps {
+		return cmp.Or(strings.Join(v.Hosts, sep), "-")
+	}
+	return v.Host
 }

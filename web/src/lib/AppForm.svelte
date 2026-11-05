@@ -26,7 +26,7 @@
 	let repoURL = $state(init?.repoURL ?? '');
 	let path = $state(init?.path ?? '');
 	let targetRevision = $state(init?.targetRevision || 'main');
-	let composeFiles = $state((init?.composeFiles ?? ['compose.yaml']).join('\n'));
+	let composeFiles = $state((init?.composeFiles ?? []).join('\n'));
 	let profiles = $state((init?.profiles ?? []).join('\n'));
 	let autoSync = $state(init?.autoSync ?? false);
 	let selfHeal = $state(init?.selfHeal ?? false);
@@ -156,7 +156,7 @@
 				path: path.trim(),
 				targetRevision: targetRevision.trim() || 'main',
 				// An App of Apps has no compose files; its children pick their own Host.
-				composeFiles: kind === 'apps' ? [] : list(composeFiles).length ? list(composeFiles) : ['compose.yaml'],
+				composeFiles: kind === 'apps' ? [] : list(composeFiles),
 				profiles: kind === 'apps' ? [] : list(profiles),
 				host,
 				autoSync,
@@ -197,7 +197,7 @@
 				<div class="hint help" transition:slide={{ duration: ms(220) }}>
 					<p>
 						Each YAML file in Path defines one Child Application. Syncing creates and updates them; with Prune it also
-						deletes the ones no longer declared. Each Child Application picks its own Host. For example:
+						deletes the ones no longer declared. Each Child Application names its own Host — <code>host:</code> is required. For example:
 					</p>
 					<pre>name: web
 repoURL: https://github.com/org/repo.git
