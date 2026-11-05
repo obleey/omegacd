@@ -2,6 +2,9 @@ package controller
 
 import (
 	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -214,6 +217,12 @@ func TestDeleteAppOfApps(t *testing.T) {
 		case !cascade && (err != nil || web.Parent != "" || r.e.removed):
 			t.Fatalf("orphan: %+v %v removed=%v", web, err, r.e.removed)
 		}
+		// the App of Apps' folder goes with its children; an orphan's files move out of it with it
+		_, rootErr := os.Stat(filepath.Join(r.c.cfg.WorkDir, "root"))
+		_, webErr := os.Stat(filepath.Join(r.c.cfg.WorkDir, "web", "compose.yaml"))
+		if cascade && !errors.Is(rootErr, fs.ErrNotExist) || !cascade && webErr != nil {
+			t.Fatalf("cascade=%v: root folder %v, web's files %v", cascade, rootErr, webErr)
+		}
 	}
 }
 
@@ -388,5 +397,43 @@ func TestAppOfAppsDiffShowsChildHosts(t *testing.T) {
 	}
 	if hosts["web"] != "prod" || hosts["api"] != "local" {
 		t.Fatalf("pending children and their Hosts: %+v", d.Services)
+	}
+}
+
+// The status of an App of Apps with a new Revision says what a Sync would do to its children, not just that the
+// commit is new: that commit may not have touched the definitions at all.
+func TestAppOfAppsPendingMessage(t *testing.T) {
+	r := newRig(t)
+	ctx := t.Context()
+	r.c.CreateApp(ctx, parentApp("root"))
+	defs := "name: web\nrepoURL: x\nhost: local\n---\nname: api\nrepoURL: x\nhost: local\n"
+	r.g.define("aaaaaaaa", defs)
+	r.mustSync(t, "root")
+	r.childrenSynced(t, "web", "api")
+
+	r.g.define("bbbbbbbb", "name: web\nrepoURL: x\nhost: local\ntargetRevision: v2\n---\nname: alloy\nrepoURL: x\nhost: local\n")
+	want := "1 Child Application to create (alloy), 1 to update (web), 1 not in Git (api)"
+	if v, _ := r.c.Refresh(ctx, "root"); v.SyncStatus != domain.OutOfSync || v.SyncMessage != want {
+		t.Fatalf("got %s %q, want %q", v.SyncStatus, v.SyncMessage, want)
+	}
+	exports := func() int { r.g.mu.Lock(); defer r.g.mu.Unlock(); return r.g.exports }
+	before := exports()
+	if v, _ := r.c.Refresh(ctx, "root"); v.SyncMessage != want || exports() != before {
+		t.Fatalf("second reconcile: %q, %d exports; want the same message, computed once per tree", v.SyncMessage, exports()-before)
+	}
+
+	r.g.define("cccccccc", defs) // a commit that doesn't change the children
+	if v, _ := r.c.Refresh(ctx, "root"); v.SyncStatus != domain.OutOfSync || v.SyncMessage != "new revision ccccccc" {
+		t.Fatalf("got %s %q", v.SyncStatus, v.SyncMessage)
+	}
+}
+
+func TestDescribeChildren(t *testing.T) {
+	got := describeChildren([]domain.ServiceDiff{{Service: "web", Change: "changed"}, {Service: "api", Change: "changed"}})
+	if got != "2 Child Applications to update (web, api)" {
+		t.Fatalf("got %q", got)
+	}
+	if got := describeChildren(nil); got != "" {
+		t.Fatalf("nothing pending: %q", got)
 	}
 }

@@ -64,6 +64,8 @@ type appState struct {
 	retries    int
 	nextRetry  time.Time
 	failedTree string // tree that exhausted its retries; auto-sync waits for a new one
+	// an App of Apps' pendingChildren message, computed once per target tree
+	pendingTree, pending string
 }
 
 type Controller struct {
@@ -134,13 +136,22 @@ func (c *Controller) restoreWorkDirs(ctx context.Context) {
 		return
 	}
 	for _, a := range apps {
-		if a.Kind == domain.KindApps || c.cfg.NoLocalHost && cmp.Or(a.Host, domain.LocalHost) == domain.LocalHost {
+		if a.Kind == domain.KindApps {
+			// its definitions were kept in the old layout's apps/<name>; now they are only staged.
+			// Its own folder holds its children's: kept.
+			if err := c.removeFiles(a, c.appDir(a)); err != nil {
+				c.cfg.Log.Warn("remove old definitions", "app", a.Name, "err", err)
+			}
+			continue
+		}
+		if c.cfg.NoLocalHost && cmp.Or(a.Host, domain.LocalHost) == domain.LocalHost {
 			continue // nothing to restore into: such an app shows its Host as disabled
 		}
 		// the compose files are the signal: after a reboot Docker may already have re-created
-		// missing bind-mount sources as empty directories, so the dir itself can be non-empty
-		if composeFilesPresent(c.appDir(a.Name), a.ComposeFilesIn(c.appDir(a.Name))) {
-			c.dropSopsCopies(a.Name)
+		// missing bind-mount sources as empty directories, so the dir itself can be non-empty.
+		// After the upgrade from <work dir>/apps/<name> they are missing too: the restore moves the app.
+		if dir := c.appDir(a); composeFilesPresent(dir, a.ComposeFilesIn(dir)) {
+			c.dropSopsCopies(a)
 			continue
 		}
 		last, err := c.cfg.Store.LastSucceededOp(ctx, a.Name)
@@ -194,10 +205,6 @@ func (c *Controller) state(name string) *appState {
 	return s
 }
 
-func (c *Controller) appDir(name string) string {
-	return filepath.Join(c.cfg.WorkDir, "apps", name)
-}
-
 // reconcile recomputes the status of one Application, publishes it, and triggers automatic Syncs.
 func (c *Controller) reconcile(ctx context.Context, a domain.Application) domain.AppView {
 	return c.reconcileWith(ctx, a, true)
@@ -243,6 +250,12 @@ func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fe
 		v.SyncStatus, v.SyncMessage = domain.OutOfSync, "never synced"
 	case targetTree != last.TreeHash:
 		v.SyncStatus, v.SyncMessage = domain.OutOfSync, "new revision "+short(sha)
+		if a.Kind == domain.KindApps {
+			// the commit may not touch the definitions at all: say what a Sync would change, if anything
+			if pending := c.pendingChildren(ctx, a, sha, targetTree); pending != "" {
+				v.SyncMessage = pending
+			}
+		}
 	case a.Kind == domain.KindApps:
 		var gone []string
 		for _, ch := range children {
@@ -256,7 +269,7 @@ func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fe
 			v.SyncStatus, v.SyncMessage = domain.OutOfSync, "not in Git: "+strings.Join(gone, ", ")
 		}
 	default:
-		diffs, derr := c.cfg.Engine.Diff(ctx, a, c.appDir(a.Name), "")
+		diffs, derr := c.cfg.Engine.Diff(ctx, a, c.appDir(a), "")
 		switch {
 		case derr != nil:
 			v.SyncMessage = derr.Error()
@@ -562,22 +575,25 @@ func (c *Controller) apply(ctx context.Context, a domain.Application, op domain.
 			return err
 		}
 	}
-	var keys []domain.HostKey
-	if a.Kind != domain.KindApps {
-		var err error
-		if keys, err = c.syncKeys(ctx, a); err != nil {
-			return err
+	if a.Kind == domain.KindApps {
+		// an App of Apps has no files: its definitions are only read
+		dir, done, err := c.stage(ctx, a, op.Revision)
+		if err != nil {
+			return fmt.Errorf("export: %w", err)
 		}
+		defer done()
+		return c.syncChildren(ctx, a, dir)
 	}
-	dir := c.appDir(a.Name)
-	if err := os.MkdirAll(dir, 0o750); err != nil {
+	keys, err := c.syncKeys(ctx, a)
+	if err != nil {
 		return err
 	}
+	if err := c.claim(a); err != nil {
+		return err
+	}
+	dir := c.appDir(a)
 	if err := c.cfg.Git.Export(ctx, a.RepoURL, op.Revision, a.Path, dir); err != nil {
 		return fmt.Errorf("export: %w", err)
-	}
-	if a.Kind == domain.KindApps {
-		return c.syncChildren(ctx, a, dir)
 	}
 	if err := c.decrypt(a, dir, keys); err != nil {
 		return err
@@ -595,7 +611,7 @@ func (c *Controller) apply(ctx context.Context, a domain.Application, op domain.
 	if err != nil {
 		return err
 	}
-	return c.cfg.Engine.Sync(ctx, a, dir, domain.SyncOptions{
+	err = c.cfg.Engine.Sync(ctx, a, dir, domain.SyncOptions{
 		Prune:         a.Prune,
 		PruneVolumes:  a.Prune && a.PruneVolumes,
 		ForceRecreate: op.Trigger == triggerRestore,
@@ -605,6 +621,13 @@ func (c *Controller) apply(ctx context.Context, a domain.Application, op domain.
 			c.emit(domain.Event{Type: "progress", App: a.Name, Data: p})
 		},
 	})
+	if err == nil {
+		// the containers use dir now: an older folder of the app (old layout, former App of Apps) can go
+		if rerr := c.removeFiles(a, dir); rerr != nil {
+			c.cfg.Log.Warn("remove old application files", "app", a.Name, "err", rerr)
+		}
+	}
+	return err
 }
 
 func (c *Controller) refuseSelf(ctx context.Context, a domain.Application) error {
@@ -808,7 +831,12 @@ func (c *Controller) deleteAppLocked(ctx context.Context, a domain.Application, 
 			if cascade {
 				err = c.deleteApp(ctx, ch, true, volumes)
 			} else {
+				old := c.appDir(ch)
 				ch.Parent, ch.NotInGit = "", false
+				// its files leave the App of Apps' folder with it; the next Sync recreates its containers there
+				if rerr := os.Rename(old, c.appDir(ch)); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
+					c.cfg.Log.Warn("move application files", "app", ch.Name, "err", rerr)
+				}
 				if err = c.cfg.Store.UpdateApp(ctx, ch); err == nil {
 					c.reconcileWith(ctx, ch, false)
 				}
@@ -824,7 +852,7 @@ func (c *Controller) deleteAppLocked(ctx context.Context, a domain.Application, 
 				return err
 			}
 		}
-		if err := os.RemoveAll(c.appDir(a.Name)); err != nil {
+		if err := c.removeFiles(a, ""); err != nil {
 			return err
 		}
 		if err := os.Remove(c.decryptedList(a.Name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -938,14 +966,11 @@ func (c *Controller) Diff(ctx context.Context, name string) (domain.DiffView, er
 			return domain.DiffView{}, err
 		}
 	}
-	stage := filepath.Join(c.cfg.WorkDir, "staging", name)
-	defer os.RemoveAll(stage)
-	if err := os.MkdirAll(stage, 0o750); err != nil {
+	stage, done, err := c.stage(ctx, a, to)
+	if err != nil {
 		return domain.DiffView{}, err
 	}
-	if err := c.cfg.Git.Export(ctx, a.RepoURL, to, a.Path, stage); err != nil {
-		return domain.DiffView{}, err
-	}
+	defer done()
 	if a.Kind == domain.KindApps {
 		dv.Services, err = c.childDiff(ctx, a.Name, stage)
 		return dv, err
@@ -956,7 +981,7 @@ func (c *Controller) Diff(ctx context.Context, name string) (domain.DiffView, er
 	if err := c.cfg.Engine.Validate(ctx, a, stage); err != nil {
 		return domain.DiffView{}, err
 	}
-	if dv.Services, err = c.cfg.Engine.Diff(ctx, a, stage, c.appDir(name)); err != nil {
+	if dv.Services, err = c.cfg.Engine.Diff(ctx, a, stage, c.appDir(a)); err != nil {
 		return domain.DiffView{}, err
 	}
 	if dv.Desired, err = composeText(a, stage); err != nil {
@@ -964,7 +989,7 @@ func (c *Controller) Diff(ctx context.Context, name string) (domain.DiffView, er
 	}
 	dv.Warnings = plainSecrets(a, stage)
 	// Live: the copy of the deployed Revision on the Host (kept here too for remote Hosts)
-	if live := c.appDir(name); dirExists(live) {
+	if live := c.appDir(a); dirExists(live) {
 		if dv.Live, err = composeText(a, live); err != nil {
 			c.cfg.Log.Warn("read live compose files", "app", name, "err", err)
 		}
@@ -985,7 +1010,7 @@ func (c *Controller) Resources(ctx context.Context, name string) (domain.LiveSta
 	if err != nil {
 		return domain.LiveState{}, err
 	}
-	dir := c.appDir(name)
+	dir := c.appDir(a)
 	if _, err := os.Stat(dir); err != nil {
 		return live, nil // never synced
 	}
@@ -1014,16 +1039,16 @@ func (c *Controller) ResourceDetail(ctx context.Context, name, kind, resName str
 		return domain.ResourceDetail{}, fmt.Errorf("%s %q: %w", kind, resName, domain.ErrNotFound)
 	}
 	d := domain.ResourceDetail{Resource: live.Resources[i], Info: map[string]string{}}
+	a, err := c.cfg.Store.GetApp(ctx, name)
+	if err != nil {
+		return domain.ResourceDetail{}, err
+	}
 	if kind == "volume" || kind == "network" {
-		a, err := c.cfg.Store.GetApp(ctx, name)
-		if err != nil {
-			return domain.ResourceDetail{}, err
-		}
 		d.Info, err = c.cfg.Engine.Inspect(ctx, a, kind, resName)
 		return d, err
 	}
 
-	path, err := c.resolveInAppDir(name, resName)
+	path, err := c.resolveInAppDir(a, resName)
 	if err != nil {
 		return domain.ResourceDetail{}, err
 	}
@@ -1062,8 +1087,8 @@ func (c *Controller) ResourceDetail(ctx context.Context, name, kind, resName str
 }
 
 // resolveInAppDir joins rel to the app's working dir and refuses anything resolving outside it, symlinks included.
-func (c *Controller) resolveInAppDir(name, rel string) (string, error) {
-	dir, err := filepath.EvalSymlinks(c.appDir(name))
+func (c *Controller) resolveInAppDir(a domain.Application, rel string) (string, error) {
+	dir, err := filepath.EvalSymlinks(c.appDir(a))
 	if err != nil {
 		return "", err
 	}
@@ -1156,8 +1181,8 @@ func dirExists(path string) bool {
 // dropSopsCopies tidies a work dir written before *.sops.* copies were deleted after decrypting: each copy whose
 // decrypted file is there goes, and that file joins the decrypted list. The list is written first, so a decrypted
 // file is never unlisted; a copy without its decrypted file stays.
-func (c *Controller) dropSopsCopies(name string) {
-	dir := c.appDir(name)
+func (c *Controller) dropSopsCopies(a domain.Application) {
+	name, dir := a.Name, c.appDir(a)
 	var copies, plain []string
 	_ = filepath.WalkDir(dir, func(p string, e fs.DirEntry, err error) error {
 		if err != nil || !e.Type().IsRegular() || !strings.Contains(e.Name(), ".sops.") {
@@ -1189,10 +1214,10 @@ func (c *Controller) dropSopsCopies(name string) {
 }
 
 // decryptedList records which files in the app dir were decrypted from SOPS (their *.sops.* copies are
-// deleted after decrypting). It sits next to the app dir, not in it, so Export's pruning and the copy to a
-// remote Host never touch it.
+// deleted after decrypting). It sits outside the app dir, so Export's pruning and the copy to a remote
+// Host never touch it.
 func (c *Controller) decryptedList(name string) string {
-	return filepath.Join(c.cfg.WorkDir, "apps", "."+name+".decrypted")
+	return filepath.Join(c.cfg.WorkDir, ".decrypted", name)
 }
 
 func (c *Controller) writeDecrypted(name, dir string, written []string) error {
@@ -1205,6 +1230,9 @@ func (c *Controller) writeDecrypted(name, dir string, written []string) error {
 		b.WriteString(filepath.ToSlash(rel) + "\n")
 	}
 	list := c.decryptedList(name)
+	if err := os.MkdirAll(filepath.Dir(list), 0o700); err != nil {
+		return err
+	}
 	if err := os.WriteFile(list+".tmp", []byte(b.String()), 0o600); err != nil {
 		return err
 	}
@@ -1513,6 +1541,55 @@ func (c *Controller) childDiff(ctx context.Context, parent, dir string) ([]domai
 	return diffs, nil
 }
 
+// pendingChildren says what a Sync of the App of Apps a would do to its children at sha, e.g. "1 Child Application
+// to create (alloy), 2 to update (web, api)", or "" for nothing (or definitions it can't read: the Sync says why).
+// Reconcile runs often, so it is computed once per tree, from the commit target() already fetched.
+func (c *Controller) pendingChildren(ctx context.Context, a domain.Application, sha, tree string) string {
+	c.mu.Lock()
+	s := c.state(a.Name)
+	if s.pendingTree == tree {
+		defer c.mu.Unlock()
+		return s.pending
+	}
+	c.mu.Unlock()
+	var msg string
+	if dir, done, err := c.stage(ctx, a, sha); err == nil {
+		diffs, _ := c.childDiff(ctx, a.Name, dir)
+		done()
+		msg = describeChildren(diffs)
+	}
+	c.mu.Lock()
+	s.pendingTree, s.pending = tree, msg
+	c.mu.Unlock()
+	return msg
+}
+
+// describeChildren sums up a childDiff: "1 Child Application to create (alloy), 2 to update (web, api), 1 not in Git (old)".
+func describeChildren(diffs []domain.ServiceDiff) string {
+	var parts []string
+	for _, k := range [][2]string{{"added", "to create"}, {"changed", "to update"}, {"removed", "not in Git"}} {
+		var names []string
+		for _, d := range diffs {
+			if d.Change == k[0] {
+				names = append(names, d.Service)
+			}
+		}
+		if len(names) == 0 {
+			continue
+		}
+		n := fmt.Sprint(len(names))
+		switch {
+		case len(parts) > 0:
+		case len(names) == 1:
+			n += " Child Application"
+		default:
+			n += " Child Applications"
+		}
+		parts = append(parts, fmt.Sprintf("%s %s (%s)", n, k[1], strings.Join(names, ", ")))
+	}
+	return strings.Join(parts, ", ")
+}
+
 // changedFields names the definition settings that differ between two normalized Applications.
 func changedFields(old, a domain.Application) []string {
 	var f []string
@@ -1693,7 +1770,7 @@ func (c *Controller) decrypt(a domain.Application, dir string, keys []domain.Hos
 		ids[i], recipients[i] = k.PrivateKey, k.Recipient
 	}
 	written, err := c.cfg.Secrets.DecryptDir(dir, ids)
-	if dir == c.appDir(a.Name) {
+	if dir == c.appDir(a) {
 		// recorded even after an error: whatever was decrypted is in the app dir now and must stay masked
 		if werr := c.writeDecrypted(a.Name, dir, written); werr != nil {
 			return fmt.Errorf("record decrypted files: %w", werr)

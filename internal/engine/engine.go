@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -259,7 +260,7 @@ func rebase(p *types.Project, from, to string) {
 
 // placeFor rebases p, loaded from dir, to where its files are on the app's Host: asDir (if set) locally,
 // the remote app dir on any other Host. Content hashes were computed from the local files already.
-func placeFor(p *types.Project, hc *hostConn, app, dir, asDir string) {
+func placeFor(p *types.Project, hc *hostConn, app domain.Application, dir, asDir string) {
 	switch {
 	case hc.host.Name != domain.LocalHost:
 		rebase(p, dir, remoteAppDir(hc.host, app))
@@ -316,7 +317,7 @@ func (e *Engine) Diff(ctx context.Context, app domain.Application, dir, asDir st
 	if asDir == "" {
 		e.remember(app, p)
 	}
-	placeFor(p, hc, app.Name, dir, asDir)
+	placeFor(p, hc, app, dir, asDir)
 	ctrs, err := containers(ctx, hc.cli.Client(), app.Name)
 	if err != nil {
 		return nil, err
@@ -445,9 +446,10 @@ func (e *Engine) Sync(ctx context.Context, app domain.Application, dir string, o
 		return err
 	}
 	e.remember(app, p)
+	var stale bool
 	if hc.host.Name != domain.LocalHost {
-		placeFor(p, hc, app.Name, dir, "")
-		if err := e.pushFiles(ctx, hc, app.Name, dir); err != nil {
+		placeFor(p, hc, app, dir, "")
+		if stale, err = e.pushFiles(ctx, hc, app, dir); err != nil {
 			return fmt.Errorf("copy files to host %s: %w", hc.host.Name, err)
 		}
 	}
@@ -468,6 +470,12 @@ func (e *Engine) Sync(ctx context.Context, app domain.Application, dir string, o
 	}})
 	if err != nil {
 		return fmt.Errorf("compose up: %w", err)
+	}
+	if stale {
+		// only now: until Up recreated the containers, they used the old folder
+		if err := e.removeFiles(ctx, hc, app, app.Dir()); err != nil {
+			slog.Warn("remove old application files", "app", app.Name, "host", hc.host.Name, "err", err)
+		}
 	}
 	if err := settleUndeclared(ctx, hc.cli.Client(), p, opts.Prune); err != nil {
 		return err
@@ -597,7 +605,7 @@ func (e *Engine) Remove(ctx context.Context, app domain.Application, volumes boo
 		return fmt.Errorf("compose down: %w", err)
 	}
 	if hc.host.Name != domain.LocalHost {
-		if err := e.removeFiles(ctx, hc, app.Name); err != nil {
+		if err := e.removeFiles(ctx, hc, app, ""); err != nil {
 			return fmt.Errorf("remove files on host %s: %w", hc.host.Name, err)
 		}
 	}

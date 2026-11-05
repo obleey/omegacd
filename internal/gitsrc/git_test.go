@@ -143,6 +143,7 @@ func TestExport(t *testing.T) {
 	os.MkdirAll(filepath.Join(dest, "olddir"), 0o755)
 	os.WriteFile(filepath.Join(dest, "olddir", "f"), []byte("x"), 0o644)
 	os.WriteFile(filepath.Join(dest, "db.env"), []byte("decrypted"), 0o600) // secrets output
+	os.WriteFile(filepath.Join(dest, domain.MarkerFile), []byte("web"), 0o644)
 	if err := g.Export(ctx, f.dir, c1, "app", dest); err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +164,7 @@ func TestExport(t *testing.T) {
 		t.Error("decrypted secret output was deleted")
 	}
 
-	c3 := f.commit(map[string]string{"app/compose.yaml": "services: {web: {}}\n"})
+	c3 := f.commit(map[string]string{"app/compose.yaml": "services: {web: {}}\n", "app/" + domain.MarkerFile: "other"})
 	if err := g.Export(ctx, f.dir, c3, "app", dest); err != nil {
 		t.Fatal(err)
 	}
@@ -173,6 +174,9 @@ func TestExport(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(compose); string(b) != "services: {web: {}}\n" {
 		t.Errorf("content %q", b)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dest, domain.MarkerFile)); string(b) != "web" {
+		t.Errorf("marker = %q; Export must keep OmegaCD's marker and never take one from Git", b)
 	}
 	if err := g.Export(ctx, f.dir, c3, "missing", t.TempDir()); !errors.Is(err, domain.ErrNotFound) {
 		t.Errorf("missing path: %v", err)

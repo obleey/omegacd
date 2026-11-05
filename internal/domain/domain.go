@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -141,6 +142,17 @@ func (a Application) ComposeFilesIn(dir string) []string {
 	}
 	return DefaultComposeFiles[:1]
 }
+
+// Dir is where the Application's files live in a work dir, as a slash path: <name>, or <parent>/<name> for a
+// Child Application. Names are unique, so no two Applications share a folder; an App of Apps has no files.
+func (a Application) Dir() string { return path.Join(a.Parent, a.Name) }
+
+// MarkerFile marks a folder OmegaCD created in a work dir and holds the name of the Application it belongs to.
+// A Sync never writes into a folder with content that lacks this Application's marker.
+const MarkerFile = ".omegacd"
+
+// LegacyDir held every Application's files before Dir (<work dir>/apps/<name>); a Sync removes the old folder.
+const LegacyDir = "apps"
 
 // Host is a Docker engine Applications deploy to. LocalHost is built in and not stored.
 type Host struct {
