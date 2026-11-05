@@ -1,0 +1,26 @@
+# OmegaCD on one Docker host. See the README's Install section.
+#   age-keygen -o age.key && chmod 600 age.key && touch known_hosts
+#   docker compose up -d && docker compose logs omegacd | grep "initial admin password"
+# Every setting below has a default; override with environment variables or a .env file next to this one.
+name: omegacd
+
+services:
+  omegacd:
+    image: ${OMEGACD_IMAGE:-ghcr.io/obleey/omegacd:latest} # or pin a release, e.g. ghcr.io/obleey/omegacd:0.1.0
+    ports:
+      - "${OMEGACD_PORT:-8080}:8080"
+    environment:
+      OMEGACD_WORKDIR: ${OMEGACD_WORKDIR:-/run/omegacd}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${OMEGACD_DATA:-omegacd-data}:/data # a named volume, or a folder
+      - ${OMEGACD_AGE_KEY:-./age.key}:/etc/omegacd/age.key:ro
+      - ${OMEGACD_KNOWN_HOSTS:-./known_hosts}:/etc/omegacd/known_hosts:ro
+      # Path parity: the work dir must be the same path on the host and in the container, because the
+      # Docker engine resolves the apps' bind mounts on the host. /run is RAM; a disk path like
+      # /opt/services keeps the files across reboots (see README → After a reboot).
+      - ${OMEGACD_WORKDIR:-/run/omegacd}:${OMEGACD_WORKDIR:-/run/omegacd}
+    restart: unless-stopped
+
+volumes:
+  omegacd-data:

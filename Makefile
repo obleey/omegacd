@@ -1,4 +1,4 @@
-.PHONY: build web test test-integration docker run stop clean
+.PHONY: build web test test-integration docker run stop up down clean
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/obleey/omegacd/internal/version.Version=$(VERSION)
@@ -29,6 +29,17 @@ stop:
 	@pid=$$(lsof -nP -t -iTCP:$${OMEGACD_PORT:-8080} -sTCP:LISTEN); \
 	if [ -z "$$pid" ]; then echo "nothing listening on $${OMEGACD_PORT:-8080}"; exit 0; fi; \
 	echo "stopping $$(ps -o comm= -p $$pid) (pid $$pid)"; kill $$pid
+
+# Runs OmegaCD as a container (deploy/compose.yaml) from this checkout, with the same data and work dir as
+# `make run`; stop `make run` first, both use port 8080.
+up: docker
+	touch data/known_hosts
+	OMEGACD_IMAGE=omegacd:$(VERSION) OMEGACD_DATA=$(CURDIR)/data OMEGACD_WORKDIR=$(OMEGACD_WORKDIR) \
+	OMEGACD_AGE_KEY=$(CURDIR)/data/age.key OMEGACD_KNOWN_HOSTS=$(CURDIR)/data/known_hosts \
+	docker compose -f deploy/compose.yaml up -d
+
+down:
+	docker compose -f deploy/compose.yaml down
 
 clean:
 	rm -rf bin web/build

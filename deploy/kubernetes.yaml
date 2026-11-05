@@ -1,0 +1,90 @@
+# OmegaCD on Kubernetes: the control plane only. Applications run on Docker hosts that OmegaCD reaches as
+# remote Hosts (ssh:// or tcp:// with TLS); the built-in "local" Host has no Docker engine here and shows as
+# unreachable, so give every Application a host. See the README's Kubernetes section.
+#
+#   kubectl create namespace omegacd
+#   kubectl -n omegacd create secret generic omegacd-keys --from-file=age.key --from-file=known_hosts
+#   kubectl -n omegacd apply -f kubernetes.yaml
+#   kubectl -n omegacd logs deploy/omegacd | grep "initial admin password"
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: omegacd
+  labels: { app.kubernetes.io/name: omegacd }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: omegacd
+  labels: { app.kubernetes.io/name: omegacd }
+spec:
+  replicas: 1 # one controller per database (SQLite): never scale up
+  strategy:
+    type: Recreate # the old pod must stop before the new one opens the database
+  selector:
+    matchLabels: { app.kubernetes.io/name: omegacd }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: omegacd }
+    spec:
+      containers:
+        - name: omegacd
+          image: ghcr.io/obleey/omegacd:0.1.0-rc.1
+          ports:
+            - { name: http, containerPort: 8080 }
+          env:
+            # The work dir on the volume, not in the pod: on an empty work dir OmegaCD assumes a reboot and
+            # restores every Application, recreating its containers.
+            - { name: OMEGACD_WORKDIR, value: /data/work }
+            # - { name: OMEGACD_TRUSTED_PROXIES, value: "10.0.0.0/8" }   # your ingress controller
+            # - name: OMEGACD_WEBHOOK_SECRET
+            #   valueFrom: { secretKeyRef: { name: omegacd-keys, key: webhook-secret } }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+            - { name: keys, mountPath: /etc/omegacd, readOnly: true }
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 512Mi }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: omegacd }
+        - name: keys
+          secret:
+            secretName: omegacd-keys
+            defaultMode: 0400
+            items: # only these two; other keys of the Secret (e.g. webhook-secret) are passed as env
+              - { key: age.key, path: age.key }
+              - { key: known_hosts, path: known_hosts }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: omegacd
+  labels: { app.kubernetes.io/name: omegacd }
+spec:
+  selector: { app.kubernetes.io/name: omegacd }
+  ports:
+    - { name: http, port: 8080, targetPort: http }
+# ---
+# apiVersion: networking.k8s.io/v1
+# kind: Ingress
+# metadata:
+#   name: omegacd
+# spec:
+#   rules:
+#     - host: omegacd.example.com
+#       http:
+#         paths:
+#           - path: /
+#             pathType: Prefix
+#             backend: { service: { name: omegacd, port: { name: http } } }

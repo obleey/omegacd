@@ -65,24 +65,10 @@ OmegaCD needs a Docker engine and an [age](https://github.com/FiloSottile/age) k
 
 ### Option 1: Docker Compose (recommended)
 
-```yaml
-# compose.yaml
-services:
-  omegacd:
-    image: ghcr.io/obleey/omegacd:latest   # or pin a release, e.g. ghcr.io/obleey/omegacd:0.1.0
-    ports:
-      - "8080:8080"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - omegacd-data:/data
-      - ./age.key:/etc/omegacd/age.key:ro
-      - ./known_hosts:/etc/omegacd/known_hosts:ro
-      # Path parity: must be the same path on the host and in the container (see below).
-      - /run/omegacd:/run/omegacd
-    restart: unless-stopped
+Download [`deploy/compose.yaml`](deploy/compose.yaml). It mounts the Docker socket, a data volume, the age key, `known_hosts` and the work dir (at the same path inside and outside, see below). Every setting has a default you can override with environment variables or a `.env` file next to it: `OMEGACD_IMAGE` (pin a release, e.g. `ghcr.io/obleey/omegacd:0.1.0`), `OMEGACD_PORT`, `OMEGACD_WORKDIR`, `OMEGACD_DATA` (a folder instead of the volume), `OMEGACD_AGE_KEY`, `OMEGACD_KNOWN_HOSTS`.
 
-volumes:
-  omegacd-data:
+```sh
+curl -fsSLO https://raw.githubusercontent.com/obleey/omegacd/main/deploy/compose.yaml
 ```
 
 ```sh
@@ -188,6 +174,19 @@ Further settings (webhook secret, trusted proxies, …) go into `/etc/omegacd/om
 ### Option 3: CLI only
 
 For laptops and CI, download the `darwin_*` or `linux_*` archive from [Releases](https://github.com/obleey/omegacd/releases) and put `omegacd` on your `PATH`. It is the same binary as the server — see [CLI](#cli).
+
+### Option 4: Kubernetes
+
+OmegaCD can run in a cluster as the control plane, managing Docker hosts as [remote Hosts](#remote-hosts) over SSH or TLS — Kubernetes nodes run containerd, not Docker, so the built-in `local` Host shows as unreachable there; give every Application a `host:`. [`deploy/kubernetes.yaml`](deploy/kubernetes.yaml) has a PersistentVolumeClaim, a single-replica Deployment and a Service:
+
+```sh
+kubectl create namespace omegacd
+kubectl -n omegacd create secret generic omegacd-keys --from-file=age.key --from-file=known_hosts
+kubectl -n omegacd apply -f https://raw.githubusercontent.com/obleey/omegacd/main/deploy/kubernetes.yaml
+kubectl -n omegacd logs deploy/omegacd | grep "initial admin password"
+```
+
+Keep `replicas: 1` (one controller per SQLite database) and the work dir on the volume (`OMEGACD_WORKDIR=/data/work`): with an empty work dir OmegaCD assumes a reboot and recreates every Application's containers. Add the commented Ingress for your host name, and set `OMEGACD_TRUSTED_PROXIES` to the ingress controller.
 
 ### Versions
 
@@ -445,8 +444,9 @@ make build              # web UI, then bin/omegacd (VERSION from git describe)
 make test               # unit tests
 make test-integration   # integration tests against the local Docker engine (incl. docker:dind for remote Hosts)
 make stop               # stop a locally running omegacd (only the process listening on :8080)
-make run                # build and run with data in ./data
+make run                # build and run with data in ./data (OMEGACD_WORKDIR=/some/dir to move the work dir)
 make docker             # build the container image
+make up / make down     # run that image with deploy/compose.yaml, same data and work dir as make run
 ```
 
 | Path | |
