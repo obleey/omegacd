@@ -22,7 +22,8 @@ https://github.com/obleey/omegacd.
 
 ## Rules
 
-- **Commits:** author `Miha Oblišar <miha.oblishar@gmail.com>`; never the work address.
+- **Commits:** author `Miha Oblišar <miha.oblishar@gmail.com>`; never the work address. No "Generated with Claude
+  Code" or "Co-Authored-By: Claude" lines in commit messages or PR descriptions.
 - **Never commit keys, tokens or passwords** (age keys, `.env`, credentials). gitleaks runs in CI on the full history.
 - **Tools come from nix**, never Homebrew: add packages to `~/nix-config/common/packages.nix`, then the user runs
   `sudo darwin-rebuild switch --flake ~/nix-config#<host>`.
@@ -42,6 +43,7 @@ https://github.com/obleey/omegacd.
 
 ```sh
 make build              # web UI, then bin/omegacd
+make proto              # protobuf → internal/proto (commit the result; rules in proto/README.md)
 make test               # unit tests (go test ./...); cd web && npm run check && npm test for the UI
 make test-integration   # against the local Docker engine (docker:dind for remote Hosts; ~6 min)
 make e2e                # end-to-end: throwaway OmegaCDs driven through the CLI (needs age-keygen, sops)

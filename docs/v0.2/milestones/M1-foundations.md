@@ -12,7 +12,7 @@ v0.1 fixes go to `release-0.1`; `main` is v0.2 from now on (Q54). Tag `v0.1.0` f
 **Done when:** the branch exists on GitHub and README/CONTRIBUTING say where 0.1 fixes go.
 
 ### M1-02 · Protobuf message schema
-**Status:** todo
+**Status:** in progress (feat/m1-02-proto)
 **Depends on:** —
 
 Define every Agent ↔ Control Plane message in `proto/omegacd/agent/v1/*.proto` (Q20, Q27): an envelope with
