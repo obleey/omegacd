@@ -15,7 +15,7 @@ State dir defaults: `$XDG_DATA_HOME/omegacd-agent` (user) or `/var/lib/omegacd-a
 covers the defaults for user vs system service.
 
 ### M2-02 · Agent local database
-**Status:** todo
+**Status:** in progress (feat/m2-02-agent-db)
 **Depends on:** M2-01
 
 SQLite in the state dir (Q48): Applications on this Host (name, deployed Revision, file list, settings it needs

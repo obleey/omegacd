@@ -245,8 +245,17 @@ func runAgent(log *slog.Logger) error {
 		return fmt.Errorf("work dir: %w (set OMEGACD_AGENT_WORKDIR to a folder the Agent's user owns, "+
 			"or give it this one, e.g. RuntimeDirectory=omegacd in its systemd unit)", err)
 	}
+	db, err := agent.OpenDB(filepath.Join(cfg.StateDir, "agent.db"))
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	apps, err := db.ListApps(context.Background())
+	if err != nil {
+		return err
+	}
 	log.Info("omegacd agent", "state", cfg.StateDir, "workdir", cfg.WorkDir, "controlPlane", cfg.ControlPlane,
-		"cacheRevisions", cfg.CacheRevisions)
+		"cacheRevisions", cfg.CacheRevisions, "apps", len(apps))
 	return nil
 }
 
