@@ -21,8 +21,8 @@ import (
 	"github.com/obleey/omegacd/internal/controller"
 	"github.com/obleey/omegacd/internal/crypto"
 	"github.com/obleey/omegacd/internal/engine"
-	"github.com/obleey/omegacd/internal/gitsrc"
 	"github.com/obleey/omegacd/internal/secrets"
+	"github.com/obleey/omegacd/internal/source"
 	"github.com/obleey/omegacd/internal/store"
 	"github.com/obleey/omegacd/web"
 )
@@ -84,14 +84,17 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	defer eng.Close()
-	git := gitsrc.New(filepath.Join(dataDir, "repos"), st.ListRepoCredentials)
-	git.KnownHostsFile = knownHosts
+	src, err := source.NewServer(dataDir, st.ListRepoCredentials)
+	if err != nil {
+		return err
+	}
+	src.KnownHostsFile = knownHosts
 
 	selfID, _ := os.Hostname() // inside a container this is the container ID prefix
 	ctl := controller.New(controller.Config{
-		Store: st, Git: git, Secrets: secrets.Decryptor{}, MasterKey: id, Engine: eng,
+		Store: st, Source: src, Secrets: secrets.Decryptor{}, MasterKey: id, Engine: eng,
 		WorkDir: workDir, PollInterval: poll, NoLocalHost: noLocal,
-		NormalizeURL: gitsrc.NormalizeURL,
+		NormalizeURL: source.NormalizeURL,
 		ObserveSync:  api.ObserveSync,
 		SelfID:       selfID,
 		Log:          log,
@@ -114,7 +117,7 @@ func run(log *slog.Logger) error {
 			Controller:     ctl,
 			Store:          st,
 			WebhookSecret:  os.Getenv("OMEGACD_WEBHOOK_SECRET"),
-			WebhookParse:   gitsrc.ParseWebhook,
+			WebhookParse:   source.ParseWebhook,
 			TrustedProxies: proxies,
 			UI:             ui,
 		}),

@@ -16,6 +16,8 @@ import (
 
 	"filippo.io/age"
 
+	"github.com/obleey/omegacd/internal/appdef"
+	"github.com/obleey/omegacd/internal/blob"
 	"github.com/obleey/omegacd/internal/domain"
 )
 
@@ -180,57 +182,68 @@ func (s *fakeStore) ListRegistryCredentials(context.Context) ([]domain.RegistryC
 	return nil, nil
 }
 
-type fakeGit struct {
+type fakeSource struct {
 	mu       sync.Mutex
 	sha      string
-	tree     string
 	err      error
 	resolves int
-	exports  int
-	files    map[string]string // exported instead of a compose.yaml when set
+	renders  int               // of App of Apps definitions
+	files    map[string]string // an App of Apps' files when set; every other app gets a compose.yaml
+	blobs    map[string][]byte
 }
 
-func (g *fakeGit) Invalidate(string) {}
-func (g *fakeGit) Resolve(context.Context, string, string) (string, error) {
+func (g *fakeSource) Invalidate(string) {}
+func (g *fakeSource) Resolve(context.Context, string, string) (string, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.resolves++
 	return g.sha, g.err
 }
-func (g *fakeGit) TreeHash(_ context.Context, _, sha, _ string) (string, error) {
+func (g *fakeSource) Render(_ context.Context, spec domain.RenderSpec) (domain.Rendered, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return "tree-" + sha, nil
-}
-func (g *fakeGit) Export(_ context.Context, _, _, _, dest string) error {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.exports++
-	// definitions belong to the App of Apps (named "root" in the tests); every other app gets a compose file
-	if g.files == nil || filepath.Base(dest) != "root" {
-		return os.WriteFile(filepath.Join(dest, "compose.yaml"), []byte("services: {}\n"), 0o644)
+	r := domain.Rendered{Checksum: "tree-" + spec.Revision}
+	files := map[string]string{"compose.yaml": "services: {}\n"}
+	if spec.Apps {
+		g.renders++
+		files = g.files
 	}
-	if err := os.RemoveAll(dest); err != nil {
-		return err
+	if g.blobs == nil {
+		g.blobs = map[string][]byte{}
 	}
-	os.MkdirAll(dest, 0o750)
-	for name, content := range g.files {
-		if err := os.WriteFile(filepath.Join(dest, name), []byte(content), 0o644); err != nil {
-			return err
+	for _, name := range slices.Sorted(maps.Keys(files)) {
+		h := blob.Hash([]byte(files[name]))
+		g.blobs[h] = []byte(files[name])
+		r.Files = append(r.Files, domain.File{Path: name, Mode: 0o644, SHA256: h})
+	}
+	if spec.Apps {
+		dir, err := os.MkdirTemp("", "defs")
+		if err != nil {
+			return r, err
 		}
+		defer os.RemoveAll(dir)
+		for name, content := range files {
+			os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644)
+		}
+		r.Apps, r.Invalid = appdef.Parse(dir)
 	}
-	return nil
+	return r, nil
 }
-func (g *fakeGit) Diff(context.Context, string, string, string, string) (string, error) {
+func (g *fakeSource) Blob(_ context.Context, hash string) ([]byte, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.blobs[hash], nil
+}
+func (g *fakeSource) Diff(context.Context, string, string, string, string) (string, error) {
 	return "", nil
 }
-func (g *fakeGit) CheckAccess(_ context.Context, url string) (domain.RepoAccess, error) {
+func (g *fakeSource) CheckAccess(_ context.Context, url string) (domain.RepoAccess, error) {
 	return domain.RepoAccess{Access: "public", Message: url}, nil
 }
-func (g *fakeGit) set(sha string) { g.mu.Lock(); g.sha = sha; g.mu.Unlock() }
+func (g *fakeSource) set(sha string) { g.mu.Lock(); g.sha = sha; g.mu.Unlock() }
 
 // define makes the next Revision hold one definitions file.
-func (g *fakeGit) define(sha, defs string) {
+func (g *fakeSource) define(sha, defs string) {
 	g.mu.Lock()
 	g.sha, g.files = sha, map[string]string{"apps.yaml": defs}
 	g.mu.Unlock()
@@ -374,7 +387,7 @@ func (e *fakeEngine) syncCount() int { e.mu.Lock(); defer e.mu.Unlock(); return 
 type rig struct {
 	c      *Controller
 	st     *fakeStore
-	g      *fakeGit
+	g      *fakeSource
 	e      *fakeEngine
 	sec    *fakeSecrets
 	master *age.X25519Identity
@@ -386,8 +399,8 @@ func newRig(t *testing.T) rig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := rig{st: newStore(), g: &fakeGit{sha: "aaaaaaaa"}, e: &fakeEngine{live: domain.LiveState{Health: domain.Healthy}}, sec: &fakeSecrets{}, master: master}
-	r.c = New(Config{Store: r.st, Git: r.g, Secrets: r.sec, MasterKey: master, Engine: r.e, WorkDir: t.TempDir(), PollInterval: time.Hour})
+	r := rig{st: newStore(), g: &fakeSource{sha: "aaaaaaaa"}, e: &fakeEngine{live: domain.LiveState{Health: domain.Healthy}}, sec: &fakeSecrets{}, master: master}
+	r.c = New(Config{Store: r.st, Source: r.g, Secrets: r.sec, MasterKey: master, Engine: r.e, WorkDir: t.TempDir(), PollInterval: time.Hour})
 	// Registered after TempDir, so it runs first: background Syncs (auto, self-heal, App of Apps
 	// children) must finish writing the work dir before it is removed.
 	t.Cleanup(func() {
@@ -1404,45 +1417,6 @@ func TestStartupDropsLeftoverSopsCopies(t *testing.T) {
 	r.c.restoreWorkDirs(t.Context())
 	if b, _ := os.ReadFile(r.c.decryptedList("web")); string(b) != "db.env\nearlier.env\nsub/app.yaml\n" {
 		t.Fatalf("list after a second start: %q", b)
-	}
-}
-
-func TestPlainSecrets(t *testing.T) {
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte(`services:
-  db:
-    image: mariadb
-    environment:
-      MARIADB_ROOT_PASSWORD: hunter2        # warn
-      MARIADB_PASSWORD: ${DB_PASSWORD}      # from a SOPS .env: fine
-      MARIADB_PASSWORD_FILE: /run/secrets/x # a path: fine
-      MARIADB_DATABASE: wordpress           # not a secret name
-      REQUIRE_PASSWORD: "true"              # a flag
-  web:
-    image: app
-    environment:
-      - API_TOKEN=abc123                    # warn (list form)
-      - SESSION_SECRET=$${KEEP}             # $ escapes: treated as templated
-      - GF_SECURITY_ADMIN_PASSWORD          # no value: passed through from the env
-      - EMPTY_SECRET=
-`), 0o644)
-	os.WriteFile(filepath.Join(dir, "prod.yaml"), []byte("services:\n  web:\n    environment: {AWS_SECRET_ACCESS_KEY: wJalr}\n"), 0o644)
-	os.WriteFile(filepath.Join(dir, "broken.yaml"), []byte("services: [\n"), 0o644)
-
-	got := plainSecrets(domain.Application{ComposeFiles: []string{"compose.yaml", "prod.yaml", "broken.yaml", "missing.yaml"}}, dir)
-	var keys []string
-	for _, w := range got {
-		keys = append(keys, strings.SplitN(w, " is in plain text", 2)[0])
-	}
-	if want := []string{"db: MARIADB_ROOT_PASSWORD", "web: API_TOKEN", "web: AWS_SECRET_ACCESS_KEY"}; !slices.Equal(keys, want) {
-		t.Fatalf("warned about %q, want %q", keys, want)
-	}
-	if want := "db: MARIADB_ROOT_PASSWORD is in plain text in compose.yaml, readable by anyone with access to the repository; " +
-		"put it in a SOPS-encrypted .env and write MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}"; got[0] != want {
-		t.Fatalf("message:\n%s", got[0])
-	}
-	if strings.Contains(strings.Join(got, ""), "hunter2") {
-		t.Fatal("a warning must not repeat the secret")
 	}
 }
 

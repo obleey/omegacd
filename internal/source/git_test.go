@@ -1,4 +1,4 @@
-package gitsrc
+package source
 
 import (
 	"context"
@@ -112,87 +112,6 @@ func TestResolveFetchCooldown(t *testing.T) {
 	g.FetchCooldown = 0
 	if got, _ := g.Resolve(ctx, "file://"+f.dir, "main"); got != c4 {
 		t.Errorf("after cooldown: got %s, want %s", got, c4)
-	}
-}
-
-func TestTreeHash(t *testing.T) {
-	f, g, c1, c2 := setup(t)
-	ctx := context.Background()
-	g.Resolve(ctx, f.dir, "main")
-	a1, _ := g.TreeHash(ctx, f.dir, c1, "app")
-	a2, _ := g.TreeHash(ctx, f.dir, c2, "app/")
-	r1, _ := g.TreeHash(ctx, f.dir, c1, "")
-	r2, _ := g.TreeHash(ctx, f.dir, c2, ".")
-	if a1 == "" || a1 != a2 || r1 == r2 {
-		t.Errorf("app %s %s root %s %s", a1, a2, r1, r2)
-	}
-	if h, err := g.TreeHash(ctx, f.dir, c1, "missing"); h != "" || err != nil {
-		t.Errorf("missing: %q %v", h, err)
-	}
-	c3 := f.commit(map[string]string{"app/compose.yaml": "services: {a: {}}\n"})
-	if a3, _ := g.TreeHash(ctx, f.dir, c3, "app"); a3 == a1 { // c3 not fetched yet: exercises fetch-on-miss
-		t.Error("app tree hash did not change")
-	}
-}
-
-func TestExport(t *testing.T) {
-	f, g, c1, _ := setup(t)
-	ctx := context.Background()
-	dest := t.TempDir()
-	os.WriteFile(filepath.Join(dest, "stale.txt"), []byte("x"), 0o644)
-	os.MkdirAll(filepath.Join(dest, "olddir"), 0o755)
-	os.WriteFile(filepath.Join(dest, "olddir", "f"), []byte("x"), 0o644)
-	os.WriteFile(filepath.Join(dest, "db.env"), []byte("decrypted"), 0o600) // secrets output
-	os.WriteFile(filepath.Join(dest, domain.MarkerFile), []byte("web"), 0o644)
-	if err := g.Export(ctx, f.dir, c1, "app", dest); err != nil {
-		t.Fatal(err)
-	}
-	compose := filepath.Join(dest, "compose.yaml")
-	before, err := os.Stat(compose)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if fi, _ := os.Stat(filepath.Join(dest, "run.sh")); fi.Mode().Perm() != 0o755 {
-		t.Errorf("run.sh mode %v", fi.Mode())
-	}
-	for _, gone := range []string{"stale.txt", "olddir"} {
-		if _, err := os.Stat(filepath.Join(dest, gone)); !os.IsNotExist(err) {
-			t.Errorf("%s not deleted", gone)
-		}
-	}
-	if _, err := os.Stat(filepath.Join(dest, "db.env")); err != nil {
-		t.Error("decrypted secret output was deleted")
-	}
-
-	c3 := f.commit(map[string]string{"app/compose.yaml": "services: {web: {}}\n", "app/" + domain.MarkerFile: "other"})
-	if err := g.Export(ctx, f.dir, c3, "app", dest); err != nil {
-		t.Fatal(err)
-	}
-	after, _ := os.Stat(compose)
-	if !os.SameFile(before, after) {
-		t.Error("compose.yaml inode changed")
-	}
-	if b, _ := os.ReadFile(compose); string(b) != "services: {web: {}}\n" {
-		t.Errorf("content %q", b)
-	}
-	if _, err := os.Stat(filepath.Join(dest, domain.MarkerFile)); !os.IsNotExist(err) {
-		t.Errorf("marker: %v; Export must delete an old one and never take one from Git", err)
-	}
-	if err := g.Export(ctx, f.dir, c3, "missing", t.TempDir()); !errors.Is(err, domain.ErrNotFound) {
-		t.Errorf("missing path: %v", err)
-	}
-}
-
-func TestExportRejectsEscapingSymlink(t *testing.T) {
-	f := newFixture(t)
-	os.MkdirAll(filepath.Join(f.dir, "app"), 0o755)
-	os.Symlink("../../etc/passwd", filepath.Join(f.dir, "app", "evil"))
-	wt, _ := f.repo.Worktree()
-	wt.Add("app/evil")
-	h, _ := wt.Commit("c", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@t", When: time.Now()}})
-	g := New(t.TempDir(), nil)
-	if err := g.Export(context.Background(), f.dir, h.String(), "app", t.TempDir()); !errors.Is(err, domain.ErrInvalid) {
-		t.Errorf("want ErrInvalid, got %v", err)
 	}
 }
 

@@ -1,4 +1,4 @@
-package gitsrc
+package source
 
 import (
 	"context"

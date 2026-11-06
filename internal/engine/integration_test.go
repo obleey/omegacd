@@ -70,16 +70,6 @@ func write(t *testing.T, dir, name, content string) {
 	}
 }
 
-func TestValidateRejectsBuild(t *testing.T) {
-	e := newTestEngine(t)
-	dir := t.TempDir()
-	write(t, dir, "compose.yaml", "services:\n  app:\n    build: .\n")
-	err := e.Validate(context.Background(), domain.Application{Name: "omegacd-it-build"}, dir)
-	if !errors.Is(err, domain.ErrInvalid) {
-		t.Fatalf("Validate = %v, want ErrInvalid", err)
-	}
-}
-
 func TestLifecycle(t *testing.T) {
 	ctx := context.Background()
 	e := newTestEngine(t)

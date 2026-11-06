@@ -27,7 +27,7 @@ gets its own `source/v1` service definition for gRPC (M1-05).
 decodes every message, and the schema has a short README (versioning rules: add fields, never reuse numbers).
 
 ### M1-03 · Source Server package with its interface, in-process
-**Status:** todo
+**Status:** done (2026-11-06, PR #71)
 **Depends on:** M1-02, M1-04
 
 New `internal/source` package (Q5, Q12, Q46): Resolve(repo, ref) → commit; Render(app spec) → file list with

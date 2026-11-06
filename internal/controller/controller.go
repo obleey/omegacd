@@ -10,7 +10,6 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
-	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -21,11 +20,7 @@ import (
 
 	"filippo.io/age"
 
-	"github.com/obleey/omegacd/internal/appdef"
-	"gopkg.in/yaml.v3"
-
 	"github.com/obleey/omegacd/internal/domain"
-	"github.com/obleey/omegacd/internal/secretkey"
 )
 
 const (
@@ -42,7 +37,7 @@ var nameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
 
 type Config struct {
 	Store        domain.Store
-	Git          domain.Git
+	Source       domain.Source
 	Secrets      domain.Secrets
 	MasterKey    *age.X25519Identity // seals stored secrets; also the Host Key of LocalHost
 	NoLocalHost  bool                // OMEGACD_LOCAL_HOST=false: no local Docker engine, only remote Hosts
@@ -363,13 +358,17 @@ func (c *Controller) target(ctx context.Context, a domain.Application, fetch boo
 			return sha, tree, nil
 		}
 	}
-	if sha, err = c.cfg.Git.Resolve(ctx, a.RepoURL, a.TargetRevision); err != nil {
+	if sha, err = c.cfg.Source.Resolve(ctx, a.RepoURL, a.TargetRevision); err != nil {
 		return "", "", err
 	}
-	if tree, err = c.cfg.Git.TreeHash(ctx, a.RepoURL, sha, a.Path); err == nil && tree == "" {
-		err = fmt.Errorf("path %q not found at %s", a.Path, short(sha))
-	}
-	return sha, tree, err
+	r, err := c.render(ctx, a, sha)
+	return sha, r.Checksum, err
+}
+
+// render is a's Desired State at sha.
+func (c *Controller) render(ctx context.Context, a domain.Application, sha string) (domain.Rendered, error) {
+	return c.cfg.Source.Render(ctx, domain.RenderSpec{RepoURL: a.RepoURL, Revision: sha, Path: a.Path,
+		ComposeFiles: a.ComposeFiles, Profiles: a.Profiles, Apps: a.Kind == domain.KindApps})
 }
 
 // watch reconciles an Application without a Git fetch whenever its containers change,
@@ -450,10 +449,11 @@ func (c *Controller) autoTrigger(a domain.Application, s *appState, v domain.App
 // startSync records a Sync Operation and runs it in the background.
 func (c *Controller) startSync(a domain.Application, sha, trigger string) (int64, error) {
 	ctx := context.Background()
-	tree, err := c.cfg.Git.TreeHash(ctx, a.RepoURL, sha, a.Path)
+	r, err := c.render(ctx, a, sha)
 	if err != nil {
 		return 0, err
 	}
+	tree := r.Checksum
 	c.mu.Lock()
 	s := c.state(a.Name)
 	if s.syncing || s.deleting {
@@ -581,14 +581,15 @@ func (c *Controller) apply(ctx context.Context, a domain.Application, op domain.
 			return err
 		}
 	}
+	r, err := c.render(ctx, a, op.Revision)
+	if err != nil {
+		return fmt.Errorf("render: %w", err)
+	}
+	if r.Invalid != nil {
+		return r.Invalid
+	}
 	if a.Kind == domain.KindApps {
-		// an App of Apps has no files: its definitions are only read
-		dir, done, err := c.stage(ctx, a, op.Revision)
-		if err != nil {
-			return fmt.Errorf("export: %w", err)
-		}
-		defer done()
-		return c.syncChildren(ctx, a, dir)
+		return c.syncChildren(ctx, a, r.Apps) // an App of Apps has no files: its definitions are only read
 	}
 	keys, err := c.syncKeys(ctx, a)
 	if err != nil {
@@ -611,8 +612,8 @@ func (c *Controller) apply(ctx context.Context, a domain.Application, op domain.
 		return err
 	}
 	dir := c.appDir(a)
-	if err := c.cfg.Git.Export(ctx, a.RepoURL, op.Revision, a.Path, dir); err != nil {
-		return fmt.Errorf("export: %w", err)
+	if err := c.write(ctx, r, dir); err != nil {
+		return fmt.Errorf("write files: %w", err)
 	}
 	if err := c.decrypt(a, dir, keys); err != nil {
 		return err
@@ -909,8 +910,8 @@ func (c *Controller) Sync(ctx context.Context, name string, req domain.SyncReque
 	if req.Prune != nil {
 		a.Prune = *req.Prune // this Sync only; not saved
 	}
-	c.cfg.Git.Invalidate(a.RepoURL)
-	sha, err := c.cfg.Git.Resolve(ctx, a.RepoURL, a.TargetRevision)
+	c.cfg.Source.Invalidate(a.RepoURL)
+	sha, err := c.cfg.Source.Resolve(ctx, a.RepoURL, a.TargetRevision)
 	if err != nil {
 		return 0, err
 	}
@@ -947,7 +948,7 @@ func (c *Controller) Refresh(ctx context.Context, name string) (domain.AppView, 
 	if err != nil {
 		return domain.AppView{}, err
 	}
-	c.cfg.Git.Invalidate(a.RepoURL)
+	c.cfg.Source.Invalidate(a.RepoURL)
 	if a.Kind == domain.KindApps {
 		children, err := c.children(ctx, a.Name)
 		if err != nil {
@@ -955,7 +956,7 @@ func (c *Controller) Refresh(ctx context.Context, name string) (domain.AppView, 
 		}
 		for _, ch := range children {
 			if ch.RepoURL != a.RepoURL {
-				c.cfg.Git.Invalidate(ch.RepoURL)
+				c.cfg.Source.Invalidate(ch.RepoURL)
 			}
 		}
 		for _, ch := range children {
@@ -979,8 +980,8 @@ func (c *Controller) Diff(ctx context.Context, name string) (domain.DiffView, er
 	if err != nil {
 		return domain.DiffView{}, err
 	}
-	c.cfg.Git.Invalidate(a.RepoURL)
-	to, err := c.cfg.Git.Resolve(ctx, a.RepoURL, a.TargetRevision)
+	c.cfg.Source.Invalidate(a.RepoURL)
+	to, err := c.cfg.Source.Resolve(ctx, a.RepoURL, a.TargetRevision)
 	if err != nil {
 		return domain.DiffView{}, err
 	}
@@ -988,7 +989,7 @@ func (c *Controller) Diff(ctx context.Context, name string) (domain.DiffView, er
 	if last, err := c.cfg.Store.LastSucceededOp(ctx, name); err == nil {
 		dv.FromSHA = last.Revision
 	}
-	if dv.GitDiff, err = c.cfg.Git.Diff(ctx, a.RepoURL, dv.FromSHA, to, a.Path); err != nil {
+	if dv.GitDiff, err = c.cfg.Source.Diff(ctx, a.RepoURL, dv.FromSHA, to, a.Path); err != nil {
 		return domain.DiffView{}, err
 	}
 
@@ -998,15 +999,22 @@ func (c *Controller) Diff(ctx context.Context, name string) (domain.DiffView, er
 			return domain.DiffView{}, err
 		}
 	}
-	stage, done, err := c.stage(ctx, a, to)
+	r, err := c.render(ctx, a, to)
+	if err != nil {
+		return domain.DiffView{}, err
+	}
+	if r.Invalid != nil {
+		return domain.DiffView{}, r.Invalid
+	}
+	if a.Kind == domain.KindApps {
+		dv.Services, err = c.childDiff(ctx, a.Name, r.Apps)
+		return dv, err
+	}
+	stage, done, err := c.stage(ctx, a, r)
 	if err != nil {
 		return domain.DiffView{}, err
 	}
 	defer done()
-	if a.Kind == domain.KindApps {
-		dv.Services, err = c.childDiff(ctx, a.Name, stage)
-		return dv, err
-	}
 	if err := c.decrypt(a, stage, keys); err != nil {
 		return domain.DiffView{}, err
 	}
@@ -1019,7 +1027,7 @@ func (c *Controller) Diff(ctx context.Context, name string) (domain.DiffView, er
 	if dv.Desired, err = composeText(a, stage); err != nil {
 		return domain.DiffView{}, err
 	}
-	dv.Warnings = plainSecrets(a, stage)
+	dv.Warnings = r.Warnings
 	// Live: the copy of the deployed Revision on the Host (kept here too for remote Hosts)
 	if live := c.liveDir(a); dirExists(live) {
 		if dv.Live, err = composeText(a, live); err != nil {
@@ -1139,50 +1147,6 @@ func (c *Controller) resolveInAppDir(a domain.Application, rel string) (string, 
 		return "", fmt.Errorf("%w: %q links outside the working directory", domain.ErrInvalid, rel)
 	}
 	return path, nil
-}
-
-// plainSecrets warns about environment values in the compose files that look like secrets and are written out
-// in Git instead of coming from ${VAR} (a SOPS-encrypted .env) or an env_file. Files are read as written,
-// before interpolation; unreadable ones are skipped (Validate reports them).
-func plainSecrets(a domain.Application, dir string) []string {
-	var warnings []string
-	for _, f := range a.ComposeFilesIn(dir) {
-		b, err := os.ReadFile(filepath.Join(dir, f))
-		if err != nil {
-			continue
-		}
-		var doc struct {
-			Services map[string]struct {
-				Environment yaml.Node `yaml:"environment"`
-			} `yaml:"services"`
-		}
-		if yaml.Unmarshal(b, &doc) != nil {
-			continue
-		}
-		for _, svc := range slices.Sorted(maps.Keys(doc.Services)) {
-			env := doc.Services[svc].Environment
-			var pairs [][2]string
-			switch env.Kind {
-			case yaml.MappingNode:
-				for i := 0; i+1 < len(env.Content); i += 2 {
-					pairs = append(pairs, [2]string{env.Content[i].Value, env.Content[i+1].Value})
-				}
-			case yaml.SequenceNode:
-				for _, n := range env.Content {
-					k, v, _ := strings.Cut(n.Value, "=")
-					pairs = append(pairs, [2]string{k, v})
-				}
-			}
-			for _, kv := range pairs {
-				k, v := strings.TrimSpace(kv[0]), strings.TrimSpace(kv[1])
-				if secretkey.Plain(k, v) {
-					warnings = append(warnings, fmt.Sprintf("%s: %s is in plain text in %s, readable by anyone with access to the repository; "+
-						"put it in a SOPS-encrypted .env and write %s: ${%s}", svc, k, f, k, k))
-				}
-			}
-		}
-	}
-	return warnings
 }
 
 // composeText is the app's compose files in dir as written, one after another when there are several.
@@ -1317,7 +1281,7 @@ func (c *Controller) Logs(ctx context.Context, name, containerID string, follow 
 
 func (c *Controller) RepoChanged(ctx context.Context, repoURL string) {
 	want := c.cfg.NormalizeURL(repoURL)
-	c.cfg.Git.Invalidate(repoURL)
+	c.cfg.Source.Invalidate(repoURL)
 	apps, err := c.cfg.Store.ListApps(ctx)
 	if err != nil {
 		c.cfg.Log.Error("list applications", "err", err)
@@ -1464,13 +1428,9 @@ func (c *Controller) refreshParent(ctx context.Context, name string) {
 	c.emit(domain.Event{Type: "app", App: name, Data: v})
 }
 
-// syncChildren makes parent's Child Applications match the definitions in dir.
+// syncChildren makes parent's Child Applications match defs.
 // Every definition is validated before anything is changed.
-func (c *Controller) syncChildren(ctx context.Context, parent domain.Application, dir string) error {
-	defs, err := appdef.Parse(dir)
-	if err != nil {
-		return err
-	}
+func (c *Controller) syncChildren(ctx context.Context, parent domain.Application, defs []domain.Application) error {
 	apps, err := c.cfg.Store.ListApps(ctx)
 	if err != nil {
 		return err
@@ -1538,12 +1498,8 @@ func (c *Controller) syncChildren(ctx context.Context, parent domain.Application
 	return nil
 }
 
-// childDiff compares the definitions in dir with parent's stored Child Applications.
-func (c *Controller) childDiff(ctx context.Context, parent, dir string) ([]domain.ServiceDiff, error) {
-	defs, err := appdef.Parse(dir)
-	if err != nil {
-		return nil, err
-	}
+// childDiff compares defs with parent's stored Child Applications.
+func (c *Controller) childDiff(ctx context.Context, parent string, defs []domain.Application) ([]domain.ServiceDiff, error) {
 	children, err := c.children(ctx, parent)
 	if err != nil {
 		return nil, err
@@ -1588,9 +1544,8 @@ func (c *Controller) pendingChildren(ctx context.Context, a domain.Application, 
 	}
 	c.mu.Unlock()
 	var msg string
-	if dir, done, err := c.stage(ctx, a, sha); err == nil {
-		diffs, _ := c.childDiff(ctx, a.Name, dir)
-		done()
+	if r, err := c.render(ctx, a, sha); err == nil && r.Invalid == nil {
+		diffs, _ := c.childDiff(ctx, a.Name, r.Apps)
 		msg = describeChildren(diffs)
 	}
 	c.mu.Lock()
@@ -1775,7 +1730,7 @@ func (c *Controller) CheckRepo(ctx context.Context, repoURL string) (domain.Repo
 	if repoURL == "" {
 		return domain.RepoAccess{}, fmt.Errorf("%w: repoURL is required", domain.ErrInvalid)
 	}
-	return c.cfg.Git.CheckAccess(ctx, repoURL)
+	return c.cfg.Source.CheckAccess(ctx, repoURL)
 }
 
 // ---- Host Keys ----

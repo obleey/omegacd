@@ -11,6 +11,7 @@ import (
 	"slices"
 
 	"github.com/obleey/omegacd/internal/domain"
+	"github.com/obleey/omegacd/internal/workdir"
 )
 
 // appDir is where a's files live in the local work dir: <work dir>/<name>, or <work dir>/<parent>/<name> for a
@@ -137,9 +138,9 @@ func (c *Controller) removeFiles(a domain.Application, keep string) error {
 	return errors.Join(errs...)
 }
 
-// stage exports a's path at sha into a new folder named like the app under the work dir's .staging (Application
-// names never start with a dot), for reading without touching the app's files. done removes it.
-func (c *Controller) stage(ctx context.Context, a domain.Application, sha string) (dir string, done func(), err error) {
+// stage writes r into a new folder named like the app under the work dir's .staging (Application names never
+// start with a dot), for reading without touching the app's files. done removes it.
+func (c *Controller) stage(ctx context.Context, a domain.Application, r domain.Rendered) (dir string, done func(), err error) {
 	root := filepath.Join(c.cfg.WorkDir, ".staging")
 	if err := os.MkdirAll(root, 0o750); err != nil {
 		return "", nil, err
@@ -150,13 +151,14 @@ func (c *Controller) stage(ctx context.Context, a domain.Application, sha string
 	}
 	done = func() { os.RemoveAll(tmp) }
 	dir = filepath.Join(tmp, a.Name)
-	if err := os.Mkdir(dir, 0o750); err != nil {
-		done()
-		return "", nil, err
-	}
-	if err := c.cfg.Git.Export(ctx, a.RepoURL, sha, a.Path, dir); err != nil {
+	if err := c.write(ctx, r, dir); err != nil {
 		done()
 		return "", nil, err
 	}
 	return dir, done, nil
+}
+
+// write makes dir hold r's files, fetched from the Source Server.
+func (c *Controller) write(ctx context.Context, r domain.Rendered, dir string) error {
+	return workdir.Write(dir, r.Files, func(hash string) ([]byte, error) { return c.cfg.Source.Blob(ctx, hash) })
 }

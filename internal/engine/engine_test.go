@@ -3,11 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"slices"
-	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/compose-spec/compose-go/v2/types"
@@ -128,55 +124,6 @@ func TestResolveRefsMissingContainer(t *testing.T) {
 	s.NetworkMode = "service:db"
 	if _, ok := resolveRefs(s, nil); ok {
 		t.Fatal("resolveRefs with no db container = ok; want not ok")
-	}
-}
-
-func TestValidateBindSources(t *testing.T) {
-	tests := []struct {
-		volume  string
-		wantErr string // "" = accepted
-	}{
-		{"./conf.yaml:/etc/app.yaml:ro", ""},  // file from Git
-		{"./html:/html", ""},                  // folder from Git
-		{".:/app", ""},                        // the whole app folder
-		{"data:/data", ""},                    // named volume
-		{"/opt/omegacd-it-missing:/data", ""}, // absolute path: never touched, Docker creates it
-		{"./data:/data", "mounts ./data, which is not in Git"},
-		{"./html/cache:/cache", "mounts ./html/cache, which is not in Git"},
-		{"{type: bind, source: ./db, target: /db}", "mounts ./db, which is not in Git"},
-		{"../shared:/shared", "mounts ../shared, outside the Application's files"},
-		{"./html/../../x:/x", "outside the Application's files"},
-		{"ROOT/other:/other", ""}, // absolute, even right next to the app folder
-		{"~/media:/media", ""},    // home dir: absolute too
-	}
-	for _, tt := range tests {
-		root := t.TempDir()
-		dir := filepath.Join(root, "web") // as in the work dir
-		if err := os.MkdirAll(filepath.Join(dir, "html"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		vol := strings.Replace(tt.volume, "ROOT", root, 1)
-		if !strings.HasPrefix(vol, "{") {
-			vol = strconv.Quote(vol)
-		}
-		files := map[string]string{
-			"conf.yaml": "a: 1\n",
-			"web.env":   "A=1\n",
-			"compose.yaml": "services:\n  web:\n    image: busybox\n    env_file: web.env\n    configs: [conf]\n    volumes: [" + vol + "]\n" +
-				"configs:\n  conf: {file: ./conf.yaml}\nvolumes:\n  data: {}\n",
-		}
-		for name, content := range files {
-			if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
-				t.Fatal(err)
-			}
-		}
-		err := (&Engine{}).Validate(context.Background(), domain.Application{Name: "web"}, dir)
-		switch {
-		case tt.wantErr == "" && err != nil:
-			t.Errorf("%s: Validate = %v, want accepted", tt.volume, err)
-		case tt.wantErr != "" && (!errors.Is(err, domain.ErrInvalid) || !strings.Contains(err.Error(), tt.wantErr)):
-			t.Errorf("%s: Validate = %v, want ErrInvalid containing %q", tt.volume, err, tt.wantErr)
-		}
 	}
 }
 
