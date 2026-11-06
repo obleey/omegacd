@@ -40,7 +40,7 @@ compose files, apply profiles; anything that needs a decrypted `.env` is left to
 gitsrc/validation tests pass in their new home, and Render is deterministic (same commit → same hashes).
 
 ### M1-04 · Content-addressed blob store
-**Status:** in progress (feat/m1-04-blob-store)
+**Status:** done (2026-11-06, PR #70)
 **Depends on:** —
 
 A small shared package (Q27, Q31): put/get/has by sha256 on disk, atomic writes, references from Revisions, garbage
