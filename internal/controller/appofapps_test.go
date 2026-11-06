@@ -144,6 +144,7 @@ func TestChildIsOwnedByGit(t *testing.T) {
 	r.c.CreateApp(ctx, parentApp("root"))
 	r.g.define("aaaaaaaa", "name: web\nrepoURL: x\nhost: local\n")
 	r.mustSync(t, "root")
+	r.childrenSynced(t, "web")
 	r.g.files = nil      // the child's path holds a compose.yaml
 	r.mustSync(t, "web") // manual Sync of a child is allowed
 
