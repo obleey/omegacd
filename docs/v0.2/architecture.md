@@ -183,5 +183,6 @@ users reinstall.
 ## Later (not v0.2)
 
 Web terminal, GitHub SSO, roles and audit (v0.3, paid tiers); secret sources beyond SOPS (paid); gRPC to Agents;
-Agent self-update; Podman beyond the tested rootless setup. Editions: open source core, Teams, Enterprise, to be
+Agent self-update; Podman beyond the tested rootless setup; owner and mode of decrypted files per file, declared in
+Git next to the encrypted file (Q58: v0.2 has `0600`, or `0640` with one group per Host). Editions: open source core, Teams, Enterprise, to be
 decided (Q29, Q44, Q49).

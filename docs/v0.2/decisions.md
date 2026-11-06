@@ -73,6 +73,10 @@ change it here first.
   (`OMEGACD_AGENT_WORKDIR_ALLOW`, plus the Host's work dir), so Git or a breached Control Plane can't aim it at
   `/etc`; ownership rules and path parity hold in every root. A Child Application sets its own, like `host:`; an App
   of Apps deploys nothing and passes no defaults to its children.
+- **Q58** (2026-11-06) Decrypted files are owned by the Agent's user, mode `0600`: no one else on the Host reads them,
+  and containers running as root (rootful) or as the Agent's user (rootless) do. For images that read a secret file
+  as a non-root user, `OMEGACD_AGENT_SECRET_GROUP=<gid>` makes them `0640` with that group, and the service joins it
+  with `group_add:`. Later: owner and mode per file, declared in Git next to the encrypted file.
 - **Q47** `import` goes only through the Agent (`--host NAME`); no SSH path.
 - **Q34/Q52** Talks to any Docker-compatible socket; Podman rootless is in v0.2's test matrix; engine badges everywhere.
 

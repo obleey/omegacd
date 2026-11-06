@@ -53,9 +53,13 @@ is refused, and a container without path parity refuses to start with an explana
 A `SecretSource` interface on the Agent (Q29) with SOPS+age as the only v0.2 implementation. The Agent generates its
 age Host Key at first start (Q4). Decryption reads ciphertext from the cache and writes plaintext **only** into the
 app's folder, never to a temp file (Q19). The decrypted-file list and key names are reported for the UI's masked view.
+Decrypted files are `0600`, owned by the Agent's user; with `OMEGACD_AGENT_SECRET_GROUP=<gid>` they are `0640` with
+that group, for non-root containers that join it with `group_add:` (Q58). `omegacd agent --help` and the docs say
+which containers can read them (root yes; a non-root user only through the group).
 
 **Done when:** a test proves no plaintext touches any path but the app folder, SOPS files from v0.1's format still
-decrypt, and a second (dummy) source can be registered without changing callers.
+decrypt, a second (dummy) source can be registered without changing callers, and an e2e shows a non-root container
+refused a `0600` secret file and reading it with `OMEGACD_AGENT_SECRET_GROUP` and `group_add:`.
 
 ### M2-06 · Compose on the Agent
 **Status:** todo
