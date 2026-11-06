@@ -22,7 +22,7 @@ make e2e                # end-to-end: throwaway OmegaCDs driven through the CLI
 cd web && npm run check # type-check the UI
 ```
 
-Before sending a pull request: `go vet ./...`, `make test` and `make test-integration` pass, and new behaviour has a test. Keep pull requests focused; one change per PR.
+Every feature and fix is tested at every level: unit tests for its logic and an end-to-end test in `test/e2e` that drives it through the real binary. Before sending a pull request, the whole suite passes: `go vet ./...`, `make test`, `make test-integration` and `make e2e` (with Forgejo running for the webhook test: `docker compose -f test/e2e/forgejo.yaml up -d`). Keep pull requests focused; one change per PR.
 
 **Never commit secrets** — no age keys, private keys, tokens or databases, not even for tests (generate them at test time). CI runs gitleaks on every push.
 

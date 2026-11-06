@@ -16,7 +16,7 @@ https://github.com/obleey/omegacd.
 
 1. Pick the next ticket whose dependencies are done; branch `feat/<ticket-id>-<slug>` (e.g. `feat/m1-02-proto`).
 2. Set its **Status** line to `in progress (branch)`; when merged, `done (date, PR #)`, in the same PR.
-3. Its "Done when" is the acceptance test: meet it, with tests.
+3. Its "Done when" is the acceptance test: meet it, with tests at every level (see **Testing** below).
 4. Open a PR to `main`; CI must be green. The user reviews and merges unless they say otherwise.
 5. If a decision in docs/v0.2 turns out wrong, stop and ask; then update decisions.md and architecture.md first.
 
@@ -36,8 +36,11 @@ https://github.com/obleey/omegacd.
   (macOS file sharing cache; Linux is unaffected). Tests that delete and recreate an app pause first.
 - Keep code like the surrounding code: comment only the why; small diffs; README, TESTING.md and ROADMAP.md updated
   with user-visible changes.
-- Before claiming something works, run it: unit tests at least; Docker integration and `make e2e` for engine,
-  Agent or controller changes.
+- **Testing, for every feature and fix:** unit tests for its logic, an end-to-end test in `test/e2e` that drives it
+  through the real binary (a feature with nothing to drive yet, like an internal package, gets its e2e with the first
+  ticket that exposes it, and that ticket's PR says so), and before the PR the **whole** suite green locally:
+  `go test -race ./...`, `make test-integration` and `make e2e` (start Forgejo first:
+  `docker compose -f test/e2e/forgejo.yaml up -d`, so the webhook test runs instead of skipping). The PR says what ran.
 
 ## Commands
 

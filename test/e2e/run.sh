@@ -9,7 +9,7 @@
 set -u
 cd "$(dirname "$0")"
 scripts=("$@")
-[ ${#scripts[@]} -gt 0 ] || scripts=(mounts compose-views secrets adopt readme-walkthrough webhook source-server)
+[ ${#scripts[@]} -gt 0 ] || scripts=(mounts compose-views secrets adopt readme-walkthrough webhook source-server agent)
 failed=()
 for s in "${scripts[@]}"; do
 	out=$(bash "./${s%.sh}.sh" 2>&1)
