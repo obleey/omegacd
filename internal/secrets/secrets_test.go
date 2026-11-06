@@ -225,17 +225,20 @@ func TestDecryptDirUsesOnlyGivenIdentities(t *testing.T) {
 
 func TestEncrypt(t *testing.T) {
 	id := newID(t)
+	// each secret is long enough that random ciphertext can't contain it by chance (a 3-character one did)
 	for name, plain := range map[string]string{
-		"db.sops.env":    "DB_PASSWORD=s3cret\nDB_USER=app\n",
-		"conf.sops.yaml": "api:\n  key: abc123\n",
-		"pw.sops.txt":    "hunter2\n",
-		"raw.sops.json":  `{"token":"t0k"}`,
+		"db.sops.env":    "DB_PASSWORD=s3cret-db-password-value\nDB_USER=app\n",
+		"conf.sops.yaml": "api:\n  key: abc123-api-key-value\n",
+		"pw.sops.txt":    "hunter2-hunter2-hunter2\n",
+		"raw.sops.json":  `{"token":"t0k-t0k-t0k-token-value"}`,
 	} {
+		secret := map[string]string{"db.sops.env": "s3cret-db-password-value", "conf.sops.yaml": "abc123-api-key-value",
+			"pw.sops.txt": "hunter2-hunter2-hunter2", "raw.sops.json": "t0k-t0k-t0k-token-value"}[name]
 		enc, err := Encrypt([]byte(plain), name, []string{id.Recipient().String()})
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		if strings.Contains(string(enc), "s3cret") || strings.Contains(string(enc), "abc123") || strings.Contains(string(enc), "hunter2") || strings.Contains(string(enc), "t0k") {
+		if strings.Contains(string(enc), secret) {
 			t.Fatalf("%s: plaintext in the encrypted file:\n%s", name, enc)
 		}
 		// OmegaCD reads it back
@@ -246,7 +249,7 @@ func TestEncrypt(t *testing.T) {
 		}
 		got, _ := os.ReadFile(filepath.Join(dir, strings.Replace(name, ".sops.", ".", 1)))
 		if name == "raw.sops.json" || name == "conf.sops.yaml" { // SOPS re-indents structured files, like its CLI
-			if !strings.Contains(string(got), "t0k") && !strings.Contains(string(got), "key: abc123") {
+			if !strings.Contains(string(got), secret) {
 				t.Fatalf("%s: %q", name, got)
 			}
 		} else if string(got) != plain {
