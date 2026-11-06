@@ -104,7 +104,7 @@ func TestAgentRestoresAfterReboot(t *testing.T) {
 		if !strings.Contains(err.Error(), "restore --files") {
 			t.Fatalf("the error doesn't say how to fix it: %v", err)
 		}
-		if err := removePlaceholders(ctx, ag.work.Dir(a), "docker.io/library/busybox:1.36"); err != nil {
+		if err := reclaim(ctx, ag.work.Root, ag.work.Dir(a), "docker.io/library/busybox:1.36"); err != nil {
 			t.Fatal(err)
 		}
 		if err := ag.Restore(ctx); err != nil {

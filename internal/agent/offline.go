@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -83,8 +84,9 @@ func placeholders(dir string, err error) error {
 		return err
 	}
 	return fmt.Errorf("%w: Docker restarted a container before the Agent restored %s and made its missing bind-mount "+
-		"sources as root-owned directories; run the Agent's files restore before Docker starts (omegacd agent restore "+
-		"--files, see the systemd unit), or remove them once: sudo find %s -depth -type d -empty -delete", err, dir, dir)
+		"sources (and the folders above them) as root; run the Agent's files restore before Docker starts (omegacd agent "+
+		"restore --files, see the systemd unit), or fix it once: sudo find %s -mindepth 1 -depth -type d -empty -delete && "+
+		"sudo chown %d:%d %s %s", err, dir, dir, os.Getuid(), os.Getgid(), filepath.Dir(dir), dir)
 }
 
 // Restore brings every deployed Application back as it was after a reboot (Q24): files from the cache where they are
@@ -123,7 +125,7 @@ func (ag *Agent) restore(ctx context.Context, a App) error {
 	}
 	if missing && inContainer() {
 		// a containerised Agent starts after Docker: clear the placeholders through Docker, with its own image
-		if err := removePlaceholders(ctx, dir, ""); err != nil {
+		if err := reclaim(ctx, ag.work.Root, dir, ""); err != nil {
 			return err
 		}
 	}
@@ -137,11 +139,23 @@ func (ag *Agent) restore(ctx context.Context, a App) error {
 	})
 }
 
-// removePlaceholders deletes the empty directories under dir through Docker, as root, with image (the Agent's own
-// when empty: it is local, so this works offline). Only empty directories: never a file.
-func removePlaceholders(ctx context.Context, dir, image string) error {
+// reclaim undoes what Docker did to a RAM work dir it found empty after a reboot: it deletes the empty directories it
+// made under dir (the app folder) for missing bind-mount sources, and gives root and the folders from root down to dir
+// back to the Agent's user, all through Docker as root, with image (the Agent's own when empty: it is local, so this
+// works offline). It deletes only empty directories and changes the owner of directories only: never a file.
+func reclaim(ctx context.Context, root, dir, image string) error {
 	if _, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) {
 		return nil
+	}
+	rel, err := filepath.Rel(root, dir)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return fmt.Errorf("%s is not in the work dir %s", dir, root)
+	}
+	chown := []string{root}
+	for p := root; rel != "."; {
+		first, rest, _ := strings.Cut(rel, string(filepath.Separator))
+		p, rel = filepath.Join(p, first), cmp.Or(rest, ".")
+		chown = append(chown, p)
 	}
 	c, err := client.New(client.FromEnv)
 	if err != nil {
@@ -157,25 +171,26 @@ func removePlaceholders(ctx context.Context, dir, image string) error {
 		image = insp.Container.Config.Image
 	}
 	created, err := c.ContainerCreate(ctx, client.ContainerCreateOptions{
-		Config: &container.Config{Image: image, User: "0", Entrypoint: []string{"find", dir, "-mindepth", "1", "-depth",
-			"-type", "d", "-empty", "-delete"}, Labels: map[string]string{"dev.omegacd.agent": "placeholders"}},
-		HostConfig: &container.HostConfig{Binds: []string{dir + ":" + dir}, AutoRemove: false},
+		Config: &container.Config{Image: image, User: "0", Labels: map[string]string{"dev.omegacd.agent": "reclaim"},
+			Entrypoint: append([]string{"sh", "-c", `find "$1" -mindepth 1 -depth -type d -empty -delete && owner=$2 && shift 2 && chown "$owner" "$@"`,
+				"reclaim", dir, fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())}, chown...)},
+		HostConfig: &container.HostConfig{Binds: []string{root + ":" + root}},
 	})
 	if err != nil {
-		return fmt.Errorf("remove placeholders in %s: %w", dir, err)
+		return fmt.Errorf("reclaim %s: %w", dir, err)
 	}
 	defer c.ContainerRemove(context.Background(), created.ID, client.ContainerRemoveOptions{Force: true})
 	if _, err := c.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
-		return fmt.Errorf("remove placeholders in %s: %w", dir, err)
+		return fmt.Errorf("reclaim %s: %w", dir, err)
 	}
 	wait := c.ContainerWait(ctx, created.ID, client.ContainerWaitOptions{})
 	select {
 	case res := <-wait.Result:
 		if res.StatusCode != 0 {
-			return fmt.Errorf("remove placeholders in %s: exit %d", dir, res.StatusCode)
+			return fmt.Errorf("reclaim %s: exit %d", dir, res.StatusCode)
 		}
 	case err := <-wait.Error:
-		return fmt.Errorf("remove placeholders in %s: %w", dir, err)
+		return fmt.Errorf("reclaim %s: %w", dir, err)
 	}
 	return nil
 }
