@@ -232,8 +232,13 @@ func runSourceServer(log *slog.Logger) error {
 	return g.Serve(l)
 }
 
-// runAgent runs the Agent on this Host (Q3, Q10).
+// runAgent runs the Agent on this Host (Q3, Q10) until it is stopped. "omegacd agent restore --files" only writes
+// the deployed Applications' files back from the cache, without any engine: before Docker starts at boot (Q59).
 func runAgent(log *slog.Logger) error {
+	filesOnly := len(os.Args) > 2 && os.Args[2] == "restore"
+	if filesOnly && (len(os.Args) != 4 || os.Args[3] != "--files") || !filesOnly && len(os.Args) > 2 {
+		return fmt.Errorf("usage: omegacd agent [restore --files] (omegacd agent --help: its settings)")
+	}
 	cfg, err := agent.LoadConfig(os.Getenv, os.Geteuid())
 	if err != nil {
 		return err
@@ -245,33 +250,53 @@ func runAgent(log *slog.Logger) error {
 		return fmt.Errorf("work dir: %w (set OMEGACD_AGENT_WORKDIR to a folder the Agent's user owns, "+
 			"or give it this one, e.g. RuntimeDirectory=omegacd in its systemd unit)", err)
 	}
-	if err := agent.CheckPathParity(context.Background(), cfg.WorkDir); err != nil {
-		return err
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if !filesOnly {
+		if err := agent.CheckPathParity(ctx, cfg.WorkDir); err != nil {
+			return err
+		}
 	}
 	db, err := agent.OpenDB(filepath.Join(cfg.StateDir, "agent.db"))
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	if _, err := agent.OpenCache(db, filepath.Join(cfg.StateDir, "cache"), cfg.CacheRevisions); err != nil {
+	cache, err := agent.OpenCache(db, filepath.Join(cfg.StateDir, "cache"), cfg.CacheRevisions)
+	if err != nil {
 		return err
 	}
 	hostKey, err := agent.HostKey(cfg.StateDir)
 	if err != nil {
 		return err
 	}
-	apps, err := db.ListApps(context.Background())
+	secrets := agent.NewSecrets(cfg.SecretGroup, agent.SOPS{HostKey: hostKey})
+	work := agent.NewWorkDir(cfg.WorkDir, db, cache)
+	if filesOnly {
+		return agent.New(db, cache, work, secrets, nil).RestoreFiles(ctx)
+	}
+	if agent.WorkDirOnDisk(cfg.WorkDir) {
+		log.Warn("the work dir is not in RAM: decrypted secrets written there stay on disk, also across reboots; "+
+			"point OMEGACD_AGENT_WORKDIR at a tmpfs (such as /run/omegacd) to keep them off disk", "workdir", cfg.WorkDir)
+	}
+	apps, err := db.ListApps(ctx)
 	if err != nil {
 		return err
 	}
-	if eng, err := agent.DetectEngine(context.Background()); err != nil {
+	if eng, err := agent.DetectEngine(ctx); err != nil {
 		log.Warn("no container engine reachable (DOCKER_HOST or the default socket)", "err", err)
 	} else {
 		log.Info("container engine", "engine", eng.Name, "version", eng.Version, "rootless", eng.Rootless, "os", eng.OS, "arch", eng.Arch)
 	}
+	eng, err := engine.New(engine.Config{})
+	if err != nil {
+		return err
+	}
+	defer eng.Close()
 	log.Info("omegacd agent", "state", cfg.StateDir, "workdir", cfg.WorkDir, "controlPlane", cfg.ControlPlane,
 		"cacheRevisions", cfg.CacheRevisions, "apps", len(apps), "hostKey", hostKey.Recipient().String())
-	return nil
+	log.Info("omegacd agent running")
+	return agent.New(db, cache, work, secrets, eng).Run(ctx, log)
 }
 
 // localHostDisabled reads OMEGACD_LOCAL_HOST: "false" where no Docker engine runs next to OmegaCD (Kubernetes).

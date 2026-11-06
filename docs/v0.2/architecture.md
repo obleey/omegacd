@@ -106,8 +106,9 @@ only the Control Plane, never Agents or users. A reverse proxy in between must p
   (owner-only files, optionally sealed with `systemd-creds`/TPM), a small SQLite database (apps, deployed
   Revisions, cache index, outbox of reports made while offline) and the **content-addressed cache** (ciphertext
   only; the last 10 Revisions per app by default, configurable).
-- **Work dir**: each Application's folder, plaintext; on RAM (`/run`, `$XDG_RUNTIME_DIR`) or disk
-  (`/opt/services`) as configured. Files are written **in place** (single-file bind mounts keep their inode) and
+- **Work dir**: each Application's folder, plaintext; on RAM (`/run`, `$XDG_RUNTIME_DIR`, the default) or disk
+  (`/opt/services`) as configured. In RAM, decrypted secrets never touch a disk and are restored from the cache after a
+  reboot; on disk they persist (owner-only) and the Agent warns about it at start. Files are written **in place** (single-file bind mounts keep their inode) and
   everything not in the Desired State is pruned; the ownership rules (never sync into a folder OmegaCD didn't
   create) live here (Q11, Q48). An Application may name its own work dir instead, under a root the Agent's
   configuration allows (Q57).
@@ -116,7 +117,8 @@ only the Control Plane, never Agents or users. A reverse proxy in between must p
   Agent; 1Password, LastPass, Vault, OpenBao, Ansible Vault later (paid). Their credentials live in the Agent's
   configuration, never on the Control Plane or in Git, which holds references only (Q29).
 - **Computes** Live State, per-service Diff and Health; watches engine events for drift; streams changes.
-- **Offline autonomy**: keeps apps exactly as last deployed; restores them after a reboot from the cache; runs
+- **Offline autonomy**: keeps apps exactly as last deployed; restores them after a reboot from the cache (the files
+  before Docker starts where it can, so plaintext stays in RAM with rootful Docker too, Q59); runs
   Self-Heal from the last Desired State; never deploys anything new and never deletes an app because the Control
   Plane is gone; reports on reconnect (Q24).
 - **Offline rollback**: `omegacd agent rollback APP REVISION` to any cached Revision; recorded and reported on

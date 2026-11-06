@@ -79,6 +79,13 @@ change it here first.
   with `group_add:` (rootless engines show the Agent's user and group as root inside containers: `group_add: ["0"]`,
   verified on rootless Docker). Later: owner and mode per file, declared in Git next to the encrypted file. On macOS, Docker
   Desktop and OrbStack share host folders ignoring owner and mode: there any container reads them (Linux Hosts don't).
+- **Q59** (2026-11-06) Plaintext stays in RAM, also across reboots with rootful Docker. After a reboot Docker restarts
+  containers with a restart policy before the Agent runs, and creates their missing bind-mount sources as empty
+  root-owned directories a non-root Agent can't replace. So the restore is split: the files (from the cache, decrypted)
+  and then Compose. A native Agent writes the files before Docker starts (`omegacd agent restore --files`, a systemd
+  unit ordered `Before=docker.service`); a containerised Agent, which starts after Docker, removes those placeholders
+  through Docker with a short-lived container of its own image (local, so offline is fine; empty directories only, never
+  files) and then writes the files. Rootless engines need neither. Anything left over is reported with the fix.
 - **Q47** `import` goes only through the Agent (`--host NAME`); no SSH path.
 - **Q34/Q52** Talks to any Docker-compatible socket; Podman rootless is in v0.2's test matrix; engine badges everywhere.
 

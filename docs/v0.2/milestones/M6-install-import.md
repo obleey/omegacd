@@ -27,9 +27,12 @@ as today; Kubernetes context always confirmed.
 **Depends on:** M2-01
 
 A user unit for rootless (`~/.config/systemd/user/omegacd-agent.service`, lingering enabled) and a system unit with a
-dedicated docker-group user (Q10).
+dedicated docker-group user (Q10). With the system unit, `omegacd-agent-restore.service` (oneshot, as that user,
+`omegacd agent restore --files`) is ordered `Before=docker.service`, so the files are back in the RAM work dir before
+Docker restarts any container (Q59).
 
-**Done when:** both survive a reboot with apps restored offline.
+**Done when:** both survive a reboot with apps restored offline, including services with a restart policy on rootful
+Docker.
 
 ### M6-04 · Kubernetes
 **Status:** todo

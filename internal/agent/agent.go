@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/obleey/omegacd/internal/domain"
 )
@@ -19,6 +20,10 @@ type Agent struct {
 	work    *WorkDir
 	secrets *Secrets
 	engine  domain.Engine // on this Host only
+
+	// mu makes Deploy, Remove, a restore and a Self-Heal run one at a time: two at once could bring an app up twice
+	// or back after its Remove. ponytail: one lock for the whole Host, per-app locks if Syncs ever need to overlap.
+	mu sync.Mutex
 }
 
 func New(db *DB, cache *Cache, work *WorkDir, secrets *Secrets, engine domain.Engine) *Agent {
@@ -35,9 +40,17 @@ func application(a App, r Revision) domain.Application {
 // decrypted, and the project is rendered (with the decrypted .env) and brought up. Only then is r recorded as
 // deployed: a failed Deploy leaves the previous Revision as the one to restore.
 func (ag *Agent) Deploy(ctx context.Context, a App, r Revision, fetch func(hash string) ([]byte, error), progress func(domain.ProgressEvent)) error {
+	ag.mu.Lock()
+	defer ag.mu.Unlock()
 	if err := ag.cache.Add(ctx, r, fetch); err != nil {
 		return err
 	}
+	return ag.apply(ctx, a, r, false, progress)
+}
+
+// apply writes a cached Revision into a's folder, decrypts it and brings the project up; recreate re-attaches every
+// container's bind mounts (after a restore the files are new). It records r as deployed. Caller holds ag.mu.
+func (ag *Agent) apply(ctx context.Context, a App, r Revision, recreate bool, progress func(domain.ProgressEvent)) error {
 	if err := ag.work.Write(ctx, a, r); err != nil {
 		return err
 	}
@@ -54,7 +67,9 @@ func (ag *Agent) Deploy(ctx context.Context, a App, r Revision, fetch func(hash 
 	if err := ag.engine.Validate(ctx, app, dir); err != nil {
 		return err
 	}
-	if err := ag.engine.Sync(ctx, app, dir, domain.SyncOptions{Prune: app.Prune, PruneVolumes: app.PruneVolumes, Progress: progress}); err != nil {
+	err := ag.engine.Sync(ctx, app, dir, domain.SyncOptions{Prune: app.Prune, PruneVolumes: app.PruneVolumes,
+		ForceRecreate: recreate, Progress: progress})
+	if err != nil {
 		return err
 	}
 	a.Revision, a.Dir = r.Revision, dir
@@ -120,11 +135,17 @@ func (ag *Agent) Logs(ctx context.Context, name, service string, follow bool, ta
 	return nil
 }
 
-// Watch calls changed with an Application's name whenever its containers change: the start of drift detection.
+// Watch calls changed with an Application's name whenever its containers change: the start of drift detection. After
+// the engine's event stream reconnects, events may have been lost, so it calls changed for every Application.
 func (ag *Agent) Watch(ctx context.Context, changed func(app string)) error {
 	return ag.engine.Watch(ctx, func(_, project string) {
 		if project != "" {
 			changed(project)
+			return
+		}
+		apps, _ := ag.db.ListApps(ctx)
+		for _, a := range apps {
+			changed(a.Name)
 		}
 	})
 }
@@ -132,6 +153,8 @@ func (ag *Agent) Watch(ctx context.Context, changed func(app string)) error {
 // Remove deletes an Application from the Host: its containers and networks (with volumes only when asked), its
 // folder and its cached Revisions.
 func (ag *Agent) Remove(ctx context.Context, name string, volumes bool) error {
+	ag.mu.Lock()
+	defer ag.mu.Unlock()
 	a, err := ag.db.GetApp(ctx, name)
 	if err != nil {
 		return err
