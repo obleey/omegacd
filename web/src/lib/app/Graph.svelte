@@ -157,7 +157,7 @@
 	}
 	.ico { flex: none; width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 	.txt { min-width: 0; flex: 1; display: grid; line-height: 1.25; }
-	.kind { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--subtext0); font-weight: 600; display: flex; gap: 0.35rem; align-items: center; }
+	.kind { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--subtext0); font-weight: 600; display: flex; gap: 0.35rem; align-items: center; white-space: nowrap; }
 	.ntag { text-transform: none; letter-spacing: 0; padding: 0 0.35rem; border-radius: 999px; color: var(--yellow); border: 1px solid color-mix(in srgb, var(--yellow) 45%, transparent); font-size: 0.64rem; }
 	.name, .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.name { font-size: 0.88rem; font-weight: 600; letter-spacing: -0.005em; }
