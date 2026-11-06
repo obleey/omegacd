@@ -341,7 +341,7 @@ Changes *inside* data folders and volumes never count as drift. Back up volumes 
 
 ## Git access
 
-Public repositories need no setup; the New Application form checks access as you type (public / private with a credential / denied, with an inline *Add credential*). For private ones, add a credential under **Settings → Repository credentials** (for reading Git repositories), matched by URL prefix: a username and password/token for HTTPS, or an SSH private key. Private images need **Settings → Registry credentials** (for pulling Docker images), keyed by registry host such as `ghcr.io` — not a URL.
+Public repositories need no setup; the New Application form checks access as you type (public / private with a credential / denied, with an inline *Add credential*). For private ones, add a credential under **Settings → Repository credentials** (for reading Git repositories), matched by URL prefix: a username and password/token for HTTPS, or an SSH private key. Credentials are kept by the [Source Server](#standalone-source-server), not in OmegaCD's database: in `credentials.age` in its data dir, encrypted with its own key `source.key` (created at its first start, owner-only). Back up both together; without `source.key` the credentials can't be read. Secrets go in and are never shown again. Private images need **Settings → Registry credentials** (for pulling Docker images), keyed by registry host such as `ghcr.io` — not a URL.
 
 ![New Application form reporting a public repository](assets/screenshots/new-app.png)
 
@@ -580,8 +580,9 @@ OMEGACD_SOURCE_SERVER=https://source-server:9090 OMEGACD_SOURCE_TLS_DIR=./source
 directory and run it again on both sides. Keep the Source Server on an internal network. A reverse proxy or load
 balancer between the two must pass TLS through untouched (TCP mode: Traefik `HostSNI` TCP router with
 `tls.passthrough`, nginx `stream` with `ssl_preread`, HAProxy `mode tcp`): terminating TLS there would drop the
-client certificate and the Source Server refuses the connection. Repository credentials move to the Source Server
-next (v0.2 M1-06); until then a standalone one reads public repositories only.
+client certificate and the Source Server refuses the connection. Repository credentials live in the Source
+Server's data dir (see [Git access](#git-access)); credentials an older version kept in the database move there at
+the first start.
 
 CLI: `OMEGACD_SERVER`, `OMEGACD_TOKEN`, `NO_COLOR`.
 

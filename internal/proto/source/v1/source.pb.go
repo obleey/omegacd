@@ -881,6 +881,7 @@ type Credential struct {
 	SshPrivateKey string                 `protobuf:"bytes,4,opt,name=ssh_private_key,json=sshPrivateKey,proto3" json:"ssh_private_key,omitempty"` // write-only: never returned
 	HasPassword   bool                   `protobuf:"varint,5,opt,name=has_password,json=hasPassword,proto3" json:"has_password,omitempty"`
 	HasSshKey     bool                   `protobuf:"varint,6,opt,name=has_ssh_key,json=hasSshKey,proto3" json:"has_ssh_key,omitempty"`
+	Id            int64                  `protobuf:"varint,7,opt,name=id,proto3" json:"id,omitempty"` // 0 in PutCredential: a new one
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -955,6 +956,13 @@ func (x *Credential) GetHasSshKey() bool {
 		return x.HasSshKey
 	}
 	return false
+}
+
+func (x *Credential) GetId() int64 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
 }
 
 type ListCredentialsRequest struct {
@@ -1083,6 +1091,7 @@ func (x *PutCredentialRequest) GetCredential() *Credential {
 
 type PutCredentialResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
+	Credential    *Credential            `protobuf:"bytes,1,opt,name=credential,proto3" json:"credential,omitempty"` // as saved, without secrets
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1117,9 +1126,16 @@ func (*PutCredentialResponse) Descriptor() ([]byte, []int) {
 	return file_omegacd_source_v1_source_proto_rawDescGZIP(), []int{18}
 }
 
+func (x *PutCredentialResponse) GetCredential() *Credential {
+	if x != nil {
+		return x.Credential
+	}
+	return nil
+}
+
 type DeleteCredentialRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	UrlPrefix     string                 `protobuf:"bytes,1,opt,name=url_prefix,json=urlPrefix,proto3" json:"url_prefix,omitempty"`
+	Id            int64                  `protobuf:"varint,2,opt,name=id,proto3" json:"id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1154,11 +1170,11 @@ func (*DeleteCredentialRequest) Descriptor() ([]byte, []int) {
 	return file_omegacd_source_v1_source_proto_rawDescGZIP(), []int{19}
 }
 
-func (x *DeleteCredentialRequest) GetUrlPrefix() string {
+func (x *DeleteCredentialRequest) GetId() int64 {
 	if x != nil {
-		return x.UrlPrefix
+		return x.Id
 	}
-	return ""
+	return 0
 }
 
 type DeleteCredentialResponse struct {
@@ -1260,7 +1276,7 @@ const file_omegacd_source_v1_source_proto_rawDesc = "" +
 	"\x06access\x18\x01 \x01(\tR\x06access\x12+\n" +
 	"\x11credential_prefix\x18\x02 \x01(\tR\x10credentialPrefix\x12%\n" +
 	"\x0edefault_branch\x18\x03 \x01(\tR\rdefaultBranch\x12\x18\n" +
-	"\amessage\x18\x04 \x01(\tR\amessage\"\xce\x01\n" +
+	"\amessage\x18\x04 \x01(\tR\amessage\"\xde\x01\n" +
 	"\n" +
 	"Credential\x12\x1d\n" +
 	"\n" +
@@ -1269,18 +1285,22 @@ const file_omegacd_source_v1_source_proto_rawDesc = "" +
 	"\bpassword\x18\x03 \x01(\tR\bpassword\x12&\n" +
 	"\x0fssh_private_key\x18\x04 \x01(\tR\rsshPrivateKey\x12!\n" +
 	"\fhas_password\x18\x05 \x01(\bR\vhasPassword\x12\x1e\n" +
-	"\vhas_ssh_key\x18\x06 \x01(\bR\thasSshKey\"\x18\n" +
+	"\vhas_ssh_key\x18\x06 \x01(\bR\thasSshKey\x12\x0e\n" +
+	"\x02id\x18\a \x01(\x03R\x02id\"\x18\n" +
 	"\x16ListCredentialsRequest\"Z\n" +
 	"\x17ListCredentialsResponse\x12?\n" +
 	"\vcredentials\x18\x01 \x03(\v2\x1d.omegacd.source.v1.CredentialR\vcredentials\"U\n" +
 	"\x14PutCredentialRequest\x12=\n" +
 	"\n" +
 	"credential\x18\x01 \x01(\v2\x1d.omegacd.source.v1.CredentialR\n" +
-	"credential\"\x17\n" +
-	"\x15PutCredentialResponse\"8\n" +
-	"\x17DeleteCredentialRequest\x12\x1d\n" +
+	"credential\"V\n" +
+	"\x15PutCredentialResponse\x12=\n" +
 	"\n" +
-	"url_prefix\x18\x01 \x01(\tR\turlPrefix\"\x1a\n" +
+	"credential\x18\x01 \x01(\v2\x1d.omegacd.source.v1.CredentialR\n" +
+	"credential\";\n" +
+	"\x17DeleteCredentialRequest\x12\x0e\n" +
+	"\x02id\x18\x02 \x01(\x03R\x02idJ\x04\b\x01\x10\x02R\n" +
+	"url_prefix\"\x1a\n" +
 	"\x18DeleteCredentialResponse2\xb8\x06\n" +
 	"\rSourceService\x12P\n" +
 	"\aResolve\x12!.omegacd.source.v1.ResolveRequest\x1a\".omegacd.source.v1.ResolveResponse\x12Y\n" +
@@ -1335,29 +1355,30 @@ var file_omegacd_source_v1_source_proto_depIdxs = []int32{
 	7,  // 1: omegacd.source.v1.RenderResponse.apps:type_name -> omegacd.source.v1.AppDefinition
 	14, // 2: omegacd.source.v1.ListCredentialsResponse.credentials:type_name -> omegacd.source.v1.Credential
 	14, // 3: omegacd.source.v1.PutCredentialRequest.credential:type_name -> omegacd.source.v1.Credential
-	0,  // 4: omegacd.source.v1.SourceService.Resolve:input_type -> omegacd.source.v1.ResolveRequest
-	2,  // 5: omegacd.source.v1.SourceService.Invalidate:input_type -> omegacd.source.v1.InvalidateRequest
-	4,  // 6: omegacd.source.v1.SourceService.Render:input_type -> omegacd.source.v1.RenderRequest
-	8,  // 7: omegacd.source.v1.SourceService.Blob:input_type -> omegacd.source.v1.BlobRequest
-	10, // 8: omegacd.source.v1.SourceService.Diff:input_type -> omegacd.source.v1.DiffRequest
-	12, // 9: omegacd.source.v1.SourceService.CheckAccess:input_type -> omegacd.source.v1.CheckAccessRequest
-	15, // 10: omegacd.source.v1.SourceService.ListCredentials:input_type -> omegacd.source.v1.ListCredentialsRequest
-	17, // 11: omegacd.source.v1.SourceService.PutCredential:input_type -> omegacd.source.v1.PutCredentialRequest
-	19, // 12: omegacd.source.v1.SourceService.DeleteCredential:input_type -> omegacd.source.v1.DeleteCredentialRequest
-	1,  // 13: omegacd.source.v1.SourceService.Resolve:output_type -> omegacd.source.v1.ResolveResponse
-	3,  // 14: omegacd.source.v1.SourceService.Invalidate:output_type -> omegacd.source.v1.InvalidateResponse
-	5,  // 15: omegacd.source.v1.SourceService.Render:output_type -> omegacd.source.v1.RenderResponse
-	9,  // 16: omegacd.source.v1.SourceService.Blob:output_type -> omegacd.source.v1.BlobResponse
-	11, // 17: omegacd.source.v1.SourceService.Diff:output_type -> omegacd.source.v1.DiffResponse
-	13, // 18: omegacd.source.v1.SourceService.CheckAccess:output_type -> omegacd.source.v1.CheckAccessResponse
-	16, // 19: omegacd.source.v1.SourceService.ListCredentials:output_type -> omegacd.source.v1.ListCredentialsResponse
-	18, // 20: omegacd.source.v1.SourceService.PutCredential:output_type -> omegacd.source.v1.PutCredentialResponse
-	20, // 21: omegacd.source.v1.SourceService.DeleteCredential:output_type -> omegacd.source.v1.DeleteCredentialResponse
-	13, // [13:22] is the sub-list for method output_type
-	4,  // [4:13] is the sub-list for method input_type
-	4,  // [4:4] is the sub-list for extension type_name
-	4,  // [4:4] is the sub-list for extension extendee
-	0,  // [0:4] is the sub-list for field type_name
+	14, // 4: omegacd.source.v1.PutCredentialResponse.credential:type_name -> omegacd.source.v1.Credential
+	0,  // 5: omegacd.source.v1.SourceService.Resolve:input_type -> omegacd.source.v1.ResolveRequest
+	2,  // 6: omegacd.source.v1.SourceService.Invalidate:input_type -> omegacd.source.v1.InvalidateRequest
+	4,  // 7: omegacd.source.v1.SourceService.Render:input_type -> omegacd.source.v1.RenderRequest
+	8,  // 8: omegacd.source.v1.SourceService.Blob:input_type -> omegacd.source.v1.BlobRequest
+	10, // 9: omegacd.source.v1.SourceService.Diff:input_type -> omegacd.source.v1.DiffRequest
+	12, // 10: omegacd.source.v1.SourceService.CheckAccess:input_type -> omegacd.source.v1.CheckAccessRequest
+	15, // 11: omegacd.source.v1.SourceService.ListCredentials:input_type -> omegacd.source.v1.ListCredentialsRequest
+	17, // 12: omegacd.source.v1.SourceService.PutCredential:input_type -> omegacd.source.v1.PutCredentialRequest
+	19, // 13: omegacd.source.v1.SourceService.DeleteCredential:input_type -> omegacd.source.v1.DeleteCredentialRequest
+	1,  // 14: omegacd.source.v1.SourceService.Resolve:output_type -> omegacd.source.v1.ResolveResponse
+	3,  // 15: omegacd.source.v1.SourceService.Invalidate:output_type -> omegacd.source.v1.InvalidateResponse
+	5,  // 16: omegacd.source.v1.SourceService.Render:output_type -> omegacd.source.v1.RenderResponse
+	9,  // 17: omegacd.source.v1.SourceService.Blob:output_type -> omegacd.source.v1.BlobResponse
+	11, // 18: omegacd.source.v1.SourceService.Diff:output_type -> omegacd.source.v1.DiffResponse
+	13, // 19: omegacd.source.v1.SourceService.CheckAccess:output_type -> omegacd.source.v1.CheckAccessResponse
+	16, // 20: omegacd.source.v1.SourceService.ListCredentials:output_type -> omegacd.source.v1.ListCredentialsResponse
+	18, // 21: omegacd.source.v1.SourceService.PutCredential:output_type -> omegacd.source.v1.PutCredentialResponse
+	20, // 22: omegacd.source.v1.SourceService.DeleteCredential:output_type -> omegacd.source.v1.DeleteCredentialResponse
+	14, // [14:23] is the sub-list for method output_type
+	5,  // [5:14] is the sub-list for method input_type
+	5,  // [5:5] is the sub-list for extension type_name
+	5,  // [5:5] is the sub-list for extension extendee
+	0,  // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_omegacd_source_v1_source_proto_init() }

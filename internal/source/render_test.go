@@ -19,7 +19,7 @@ import (
 )
 
 func server(t *testing.T) *Server {
-	s, err := NewServer(t.TempDir(), nil)
+	s, err := NewServer(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}

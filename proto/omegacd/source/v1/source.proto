@@ -110,6 +110,7 @@ message Credential {
   string ssh_private_key = 4; // write-only: never returned
   bool has_password = 5;
   bool has_ssh_key = 6;
+  int64 id = 7; // 0 in PutCredential: a new one
 }
 
 message ListCredentialsRequest {}
@@ -122,10 +123,14 @@ message PutCredentialRequest {
   Credential credential = 1;
 }
 
-message PutCredentialResponse {}
+message PutCredentialResponse {
+  Credential credential = 1; // as saved, without secrets
+}
 
 message DeleteCredentialRequest {
-  string url_prefix = 1;
+  reserved 1;
+  reserved "url_prefix";
+  int64 id = 2;
 }
 
 message DeleteCredentialResponse {}
