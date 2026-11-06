@@ -4,7 +4,7 @@
 	import { onMount } from 'svelte';
 	import { flip } from 'svelte/animate';
 	import { fly, slide } from 'svelte/transition';
-	import { ago, enc, errMsg, short, type AppView } from '#lib/api.ts';
+	import { ago, enc, errMsg, pendingChildren, short, type AppView, type PendingChild } from '#lib/api.ts';
 	import { live, loadApps } from '#lib/live.svelte.ts';
 	import Badge from '#lib/Badge.svelte';
 	import Icon from '#lib/Icon.svelte';
@@ -69,27 +69,46 @@
 		for (const k of Object.values(m)) k.sort((x, y) => x.name.localeCompare(y.name));
 		return m;
 	});
+	// Child Applications declared in Git but not created yet, from each OutOfSync App of Apps' Diff; hidden while filtering
+	let pending = $state<Record<string, PendingChild[]>>({});
+	const fetched: Record<string, string> = {};
+	$effect(() => {
+		for (const a of all) {
+			if (a.kind !== 'apps') continue;
+			const key = a.syncStatus === 'OutOfSync' ? `${a.targetSHA}:${kidsOf[a.name]?.length ?? 0}` : '';
+			if (fetched[a.name] === key) continue;
+			fetched[a.name] = key;
+			if (!key) pending[a.name] = [];
+			else
+				pendingChildren(a.name)
+					.then((p) => fetched[a.name] === key && (pending[a.name] = p))
+					.catch(() => (pending[a.name] = []));
+		}
+	});
+	const pendingOf = (name: string) => (filtering ? [] : (pending[name] ?? []));
+
 	let top = $derived(all.filter((a) => !a.parent || !live.apps[a.parent]).sort((a, b) => a.name.localeCompare(b.name)));
 
-	type Row = { a: AppView; depth: number; kids: number; open: boolean };
+	type Row = { a: AppView; depth: number; kids: number; open: boolean; p?: PendingChild }; // p: a pending child of a
 	// A row is shown when it or a descendant matches the filter; filtering expands every parent.
 	function rowsOf(a: AppView, depth: number): Row[] {
 		const kids = kidsOf[a.name] ?? [];
 		const open = filtering || !collapsed[a.name];
-		const sub = kids.flatMap((k) => rowsOf(k, depth + 1));
+		const sub = [...kids.flatMap((k) => rowsOf(k, depth + 1)), ...pendingOf(a.name).map((p) => ({ a, depth: depth + 1, kids: 0, open, p }))];
 		if (!matches(a) && !sub.length) return [];
-		return [{ a, depth, kids: kids.length, open }, ...(open ? sub : [])];
+		return [{ a, depth, kids: sub.filter((r) => r.depth === depth + 1).length, open }, ...(open ? sub : [])];
 	}
 	let rows = $derived(top.flatMap((a) => rowsOf(a, 0)));
 
 	// Tiles: each App of Apps is a group holding all its matching descendants.
-	type Group = { a: AppView; kids: AppView[]; total: number; open: boolean };
+	type Group = { a: AppView; kids: AppView[]; pending: PendingChild[]; total: number; open: boolean };
 	let groups = $derived(
 		top.flatMap((a): Group[] => {
-			const desc = rowsOf(a, 0).slice(1).map((r) => r.a);
+			const desc = rowsOf(a, 0).slice(1).filter((r) => !r.p).map((r) => r.a);
 			if (!matches(a) && !desc.length) return [];
-			const total = kidsOf[a.name]?.length ?? 0;
-			return [{ a, kids: desc, total, open: filtering || !collapsed[a.name] }];
+			const pending = pendingOf(a.name);
+			const total = (kidsOf[a.name]?.length ?? 0) + pending.length;
+			return [{ a, kids: desc, pending, total, open: filtering || !collapsed[a.name] }];
 		})
 	);
 
@@ -194,7 +213,7 @@
 						<span class="muted small">of App of Apps <strong>{g.a.name}</strong></span>
 					</div>
 					<div class="tiles inner">
-						<AppTile a={g.a} kids={g.total} />
+						<AppTile a={g.a} kids={g.total - g.pending.length} />
 						{#if g.open}
 							{#each g.kids as k, j (k.name)}
 								<div
@@ -205,6 +224,13 @@
 								>
 									<AppTile a={k} kids={kidsOf[k.name]?.length} />
 								</div>
+							{/each}
+							{#each g.pending as p (p.name)}
+								<article class="card pending">
+									<header><Icon name="app" size={18} /><h3>{p.name}</h3><span class="tag">pending</span></header>
+									<div class="status"><Badge status="OutOfSync" label="Sync Status" /><Badge status="Missing" label="Health Status" /></div>
+									<p class="muted small"><span class="mono">{p.host || 'local'}</span> · Sync {g.a.name} to create</p>
+								</article>
 							{/each}
 						{/if}
 					</div>
@@ -229,56 +255,69 @@
 				</tr>
 			</thead>
 			<tbody>
-				{#each rows as { a, depth, kids, open } (a.name)}
+				{#each rows as { a, depth, kids, open, p } (p ? `p:${p.name}` : a.name)}
 					{@const op = a.lastOperation}
-					<tr class:child={depth > 0} animate:flip={{ duration: ms(250) }} in:slide={{ duration: ms(200) }}>
-						<td style:padding-left="{0.7 + depth * 1.6}rem">
-							<div class="namecell">
-								{#if kids}
-									<button
-										class="ghost toggle"
-										aria-expanded={open}
-										aria-label="{open ? 'Hide' : 'Show'} Child Applications of {a.name}"
-										disabled={filtering}
-										onclick={() => (collapsed[a.name] = open)}><span class="chev" class:open><Icon name="chevron" size={14} /></span></button
-									>
-								{:else if depth > 0}
-									<span class="muted" aria-hidden="true">↳</span>
+					<tr class:child={depth > 0} class:pending={p} animate:flip={{ duration: ms(250) }} in:slide={{ duration: ms(200) }}>
+						{#if p}
+							<td style:padding-left="{0.7 + depth * 1.6}rem">
+								<div class="namecell"><span class="muted" aria-hidden="true">↳</span><span class="name">{p.name}</span><span class="tag">pending</span></div>
+								<div class="muted small">Sync {a.name} to create</div>
+							</td>
+							<td class="mono small">{p.host || 'local'}</td>
+							<td></td>
+							<td><Badge status="OutOfSync" label="Sync Status" /></td>
+							<td><Badge status="Missing" label="Health Status" /></td>
+							<td class="small"><span class="muted">Never</span></td>
+							<td></td>
+						{:else}
+							<td style:padding-left="{0.7 + depth * 1.6}rem">
+								<div class="namecell">
+									{#if kids}
+										<button
+											class="ghost toggle"
+											aria-expanded={open}
+											aria-label="{open ? 'Hide' : 'Show'} Child Applications of {a.name}"
+											disabled={filtering}
+											onclick={() => (collapsed[a.name] = open)}><span class="chev" class:open><Icon name="chevron" size={14} /></span></button
+										>
+									{:else if depth > 0}
+										<span class="muted" aria-hidden="true">↳</span>
+									{/if}
+									<a class="name" href="/apps/{enc(a.name)}">{a.name}</a>
+									{#if a.kind === 'apps'}<span class="tag">App of Apps</span>{/if}
+									{#if a.notInGit}<span class="tag warn">not in Git</span>{/if}
+								</div>
+								<div class="muted small mono trunc" title="{a.repoURL} {a.path}">
+									<GitLink href={gitWeb(a.repoURL)?.repo}>{a.repoURL.replace(/^https?:\/\//, '')}</GitLink>{a.path && a.path !== '.' ? ` · ${a.path}` : ''}
+								</div>
+							</td>
+							<td class="mono small">{a.kind === 'apps' ? a.hosts?.join(', ') || '—' : a.host || 'local'}</td>
+							<td class="mono small">
+								{a.targetRevision}
+								<div class="muted"><GitLink href={a.targetSHA && gitWeb(a.repoURL)?.commit(a.targetSHA)}>{short(a.targetSHA)}</GitLink></div>
+							</td>
+							<td title={a.syncStatus === 'Unknown' ? a.syncMessage : undefined}>
+								<Badge status={shownSync(a)} label="Sync Status" />
+								<div class="pol"><PolicyChips {a} /></div>
+							</td>
+							<td><Badge status={a.health} label="Health Status" /></td>
+							<td class="small">
+								{#if op}
+									<Badge status={op.phase} size="sm" label="Last Sync Operation" />
+									<div class="muted">{op.trigger} · {ago(op.finishedAt || op.startedAt)}</div>
+								{:else}
+									<span class="muted">Never</span>
 								{/if}
-								<a class="name" href="/apps/{enc(a.name)}">{a.name}</a>
-								{#if a.kind === 'apps'}<span class="tag">App of Apps</span>{/if}
-								{#if a.notInGit}<span class="tag warn">not in Git</span>{/if}
-							</div>
-							<div class="muted small mono trunc" title="{a.repoURL} {a.path}">
-								<GitLink href={gitWeb(a.repoURL)?.repo}>{a.repoURL.replace(/^https?:\/\//, '')}</GitLink>{a.path && a.path !== '.' ? ` · ${a.path}` : ''}
-							</div>
-						</td>
-						<td class="mono small">{a.kind === 'apps' ? a.hosts?.join(', ') || '—' : a.host || 'local'}</td>
-						<td class="mono small">
-							{a.targetRevision}
-							<div class="muted"><GitLink href={a.targetSHA && gitWeb(a.repoURL)?.commit(a.targetSHA)}>{short(a.targetSHA)}</GitLink></div>
-						</td>
-						<td title={a.syncStatus === 'Unknown' ? a.syncMessage : undefined}>
-							<Badge status={shownSync(a)} label="Sync Status" />
-							<div class="pol"><PolicyChips {a} /></div>
-						</td>
-						<td><Badge status={a.health} label="Health Status" /></td>
-						<td class="small">
-							{#if op}
-								<Badge status={op.phase} size="sm" label="Last Sync Operation" />
-								<div class="muted">{op.trigger} · {ago(op.finishedAt || op.startedAt)}</div>
-							{:else}
-								<span class="muted">Never</span>
-							{/if}
-						</td>
-						<td class="actions">
-							<button class="sm" onclick={() => rowAction(a.name, syncApp)} disabled={busy[a.name] || isSyncing(a)} aria-label="Sync {a.name}"
-								><Icon name="sync" size={14} spin={isSyncing(a)} />{isSyncing(a) ? 'Syncing' : 'Sync'}</button
-							>
-							<button class="sm ghost icon-btn" onclick={() => rowAction(a.name, refreshApp)} disabled={busy[a.name]} aria-label="Refresh {a.name}" title="Refresh"
-								><Icon name="refresh" size={14} spin={busy[a.name]} /></button
-							>
-						</td>
+							</td>
+							<td class="actions">
+								<button class="sm" onclick={() => rowAction(a.name, syncApp)} disabled={busy[a.name] || isSyncing(a)} aria-label="Sync {a.name}"
+									><Icon name="sync" size={14} spin={isSyncing(a)} />{isSyncing(a) ? 'Syncing' : 'Sync'}</button
+								>
+								<button class="sm ghost icon-btn" onclick={() => rowAction(a.name, refreshApp)} disabled={busy[a.name]} aria-label="Refresh {a.name}" title="Refresh"
+									><Icon name="refresh" size={14} spin={busy[a.name]} /></button
+								>
+							</td>
+						{/if}
 					</tr>
 				{/each}
 			</tbody>
@@ -319,6 +358,12 @@
 	.namecell { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
 	.name { font-weight: 620; font-size: 0.95rem; color: var(--text); }
 	.toggle { padding: 0.1rem; color: var(--subtext0); }
+	.pending { opacity: 0.65; }
+	article.pending { display: grid; gap: 0.6rem; align-content: start; border-style: dashed; }
+	article.pending header { display: flex; align-items: center; gap: 0.5rem; }
+	article.pending h3 { margin: 0; font-size: 1rem; }
+	article.pending .status { display: flex; gap: 0.4rem; flex-wrap: wrap; align-items: center; }
+	article.pending p { margin: 0; }
 	.child { background: color-mix(in srgb, var(--crust) 25%, transparent); }
 	.trunc { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.pol { margin-top: 0.3rem; }
