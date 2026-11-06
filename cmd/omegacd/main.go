@@ -264,6 +264,11 @@ func runAgent(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	if eng, err := agent.DetectEngine(context.Background()); err != nil {
+		log.Warn("no container engine reachable (DOCKER_HOST or the default socket)", "err", err)
+	} else {
+		log.Info("container engine", "engine", eng.Name, "version", eng.Version, "rootless", eng.Rootless, "os", eng.OS, "arch", eng.Arch)
+	}
 	log.Info("omegacd agent", "state", cfg.StateDir, "workdir", cfg.WorkDir, "controlPlane", cfg.ControlPlane,
 		"cacheRevisions", cfg.CacheRevisions, "apps", len(apps), "hostKey", hostKey.Recipient().String())
 	return nil

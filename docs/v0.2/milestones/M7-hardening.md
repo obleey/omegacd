@@ -7,7 +7,8 @@ Proving "no data loss" and every supported setup (Q50, Q52).
 **Depends on:** M4-05
 
 Unit tests; integration tests running a real Agent against Docker-in-Docker **rootful and rootless**, and **rootless
-Podman**; CI runs all of them.
+Podman**; CI runs all of them. M2-06 builds this matrix for the Agent alone; here it grows to the Control Plane
+driving the Agent.
 
 **Done when:** CI is green on all three engines.
 

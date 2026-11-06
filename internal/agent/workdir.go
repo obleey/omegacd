@@ -57,8 +57,9 @@ func (w *WorkDir) Write(ctx context.Context, a App, r Revision) error {
 	if err := workdir.Claim(dir, a.Name, owned, nil); err != nil {
 		return err
 	}
-	// recorded before writing: a write that stops halfway leaves a folder that is still a's
-	a.Dir = dir
+	// recorded before writing: a write that stops halfway leaves a folder that is still a's; the deployed Revision
+	// stays the previous one until a Deploy succeeds
+	a.Dir, a.Revision = dir, prev.Revision
 	if err := w.db.SaveApp(ctx, a); err != nil {
 		return err
 	}
