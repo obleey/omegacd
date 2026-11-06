@@ -3,6 +3,7 @@
 package domain
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -61,6 +62,9 @@ type Application struct {
 	Parent         string    `json:"parent,omitempty"` // the App of Apps that owns this Child Application
 	NotInGit       bool      `json:"notInGit"`         // a Child Application its parent no longer declares (kept because Prune is off)
 	CreatedAt      time.Time `json:"createdAt"`
+	// Dirs is the folders (HostDir) Syncs wrote the Application's files to and that may still hold them: a Sync may
+	// write into them again, and deletes the ones it moved away from. Only Store.SetAppDirs changes it.
+	Dirs []string `json:"-"`
 }
 
 type SyncStatus string
@@ -147,8 +151,11 @@ func (a Application) ComposeFilesIn(dir string) []string {
 // Child Application. Names are unique, so no two Applications share a folder; an App of Apps has no files.
 func (a Application) Dir() string { return path.Join(a.Parent, a.Name) }
 
-// MarkerFile marks a folder OmegaCD created in a work dir and holds the name of the Application it belongs to.
-// A Sync never writes into a folder with content that lacks this Application's marker.
+// HostDir names folder dir on host ("" = LocalHost), as Application.Dirs holds it.
+func HostDir(host, dir string) string { return cmp.Or(host, LocalHost) + ":" + dir }
+
+// MarkerFile marked the folders OmegaCD created, holding the name of their Application, before Application.Dirs.
+// A Sync still takes a folder marked for its Application (and deletes the marker) and refuses one marked for another.
 const MarkerFile = ".omegacd"
 
 // LegacyDir held every Application's files before Dir (<work dir>/apps/<name>); a Sync removes the old folder.
@@ -339,6 +346,8 @@ type Store interface {
 	ListOps(ctx context.Context, app string) ([]SyncOperation, error) // newest first
 	// LastSucceededOp returns the newest Succeeded op, or ErrNotFound.
 	LastSucceededOp(ctx context.Context, app string) (SyncOperation, error)
+	// SetAppDirs replaces the Application's Dirs; UpdateApp never changes them.
+	SetAppDirs(ctx context.Context, name string, dirs []string) error
 
 	// Secrets in credentials are encrypted at rest and decrypted on read.
 	ListRepoCredentials(ctx context.Context) ([]RepoCredential, error)
@@ -415,6 +424,11 @@ type SyncOptions struct {
 	// ForceRecreate recreates every container even if its config is unchanged
 	// (after a restore, bind mounts must be re-attached to the restored files).
 	ForceRecreate bool
+	// Children is, for a Child Application on a remote Host, its App of Apps' children: their folders are all its
+	// App of Apps' folder may hold for a Sync to write there.
+	Children []string
+	// Wrote is called with the folder (HostDir) on a remote Host the files were just written to; an error fails the Sync.
+	Wrote func(dir string) error
 }
 
 // Engine runs Compose projects on a Host. dir is the Application's stable working directory
@@ -433,6 +447,8 @@ type Engine interface {
 	Remove(ctx context.Context, app Application, volumes bool) error
 	// Status returns the Live State, including Health per container and overall.
 	Status(ctx context.Context, app Application) (LiveState, error)
+	// WorkingDirs lists the folders (compose's working_dir label) app's containers created by OmegaCD run from.
+	WorkingDirs(ctx context.Context, app Application) ([]string, error)
 	// ProjectExists reports whether a Compose project with this name has containers on host, and whether omegacd manages it.
 	ProjectExists(ctx context.Context, host, name string) (exists, managed bool, err error)
 	// HostStatus contacts the host's Docker engine.

@@ -475,8 +475,13 @@ func (e *Engine) Sync(ctx context.Context, app domain.Application, dir string, o
 	var stale bool
 	if hc.host.Name != domain.LocalHost {
 		placeFor(p, hc, app, dir, "")
-		if stale, err = e.pushFiles(ctx, hc, app, dir); err != nil {
+		if stale, err = e.pushFiles(ctx, hc, app, dir, opts.Children); err != nil {
 			return fmt.Errorf("copy files to host %s: %w", hc.host.Name, err)
+		}
+		if opts.Wrote != nil {
+			if err := opts.Wrote(domain.HostDir(hc.host.Name, remoteAppDir(hc.host, app))); err != nil {
+				return err
+			}
 		}
 	}
 	svc, err := newCompose(authCLI{Cli: hc.cli, cf: registryConfig(opts.Registries)}, opts.Progress)
@@ -772,6 +777,30 @@ func worst(a, b domain.HealthStatus) domain.HealthStatus {
 		return b
 	}
 	return a
+}
+
+func (e *Engine) WorkingDirs(ctx context.Context, app domain.Application) ([]string, error) {
+	hc, err := e.conn(ctx, app.Host)
+	if err != nil {
+		return nil, err
+	}
+	return workingDirs(ctx, hc.cli.Client(), app.Name)
+}
+
+// workingDirs lists the working_dir labels of the containers OmegaCD created for app (managed-by=omegacd). Containers
+// of an adopted project, created by another tool, don't count: their folder isn't OmegaCD's.
+func workingDirs(ctx context.Context, c client.APIClient, app string) ([]string, error) {
+	ctrs, err := containers(ctx, c, app)
+	if err != nil {
+		return nil, err
+	}
+	var dirs []string
+	for _, ct := range ctrs {
+		if ct.Labels[domain.ManagedByLabel] == domain.ManagedByValue && ct.Labels[domain.ManagedLabel] == app {
+			dirs = append(dirs, ct.Labels[api.WorkingDirLabel])
+		}
+	}
+	return dirs, nil
 }
 
 func (e *Engine) ProjectExists(ctx context.Context, host, name string) (exists, managed bool, err error) {

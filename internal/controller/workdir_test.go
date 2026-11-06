@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -32,19 +33,24 @@ func TestWorkDirLayout(t *testing.T) {
 	r.childrenSynced(t, "web")
 
 	for path, want := range map[string]string{
-		"solo/" + domain.MarkerFile:     "solo",
-		"solo/compose.yaml":             "services: {}\n",
-		"root/" + domain.MarkerFile:     "root", // the App of Apps' folder holds only its children's
-		"root/web/" + domain.MarkerFile: "web",
-		"root/web/compose.yaml":         "services: {}\n",
+		"solo/compose.yaml":     "services: {}\n",
+		"root/web/compose.yaml": "services: {}\n",
 	} {
 		if got := readFile(t, filepath.Join(work, path)); got != want {
 			t.Errorf("%s = %q, want %q", path, got, want)
 		}
 	}
 	entries, _ := os.ReadDir(filepath.Join(work, "root"))
-	if len(entries) != 2 {
+	if len(entries) != 1 {
 		t.Errorf("App of Apps folder holds %v; its definitions are only staged", entries)
+	}
+	for name, want := range map[string]string{"solo": "solo", "web": "root/web"} {
+		if a, _ := r.st.GetApp(ctx, name); !slices.Equal(a.Dirs, []string{domain.HostDir("", filepath.Join(work, want))}) {
+			t.Errorf("%s recorded %v", name, a.Dirs)
+		}
+	}
+	if markers, _ := filepath.Glob(filepath.Join(work, "*", domain.MarkerFile)); len(markers) != 0 {
+		t.Errorf("markers written: %v", markers)
 	}
 	if staged, _ := os.ReadDir(filepath.Join(work, ".staging")); len(staged) != 0 {
 		t.Errorf("staging left behind: %v", staged)
@@ -72,6 +78,11 @@ func TestSyncRefusesFoldersOmegaCDDidNotCreate(t *testing.T) {
 	if op := r.syncNow(t, "alloy"); op.Phase != domain.OpFailed || op.Message != want {
 		t.Fatalf("folder of another Application: %s %q", op.Phase, op.Message)
 	}
+	r.st.SetAppDirs(ctx, "alloy", []string{domain.HostDir("", dir)}) // not even with a record
+	if op := r.syncNow(t, "alloy"); op.Phase != domain.OpFailed || op.Message != want {
+		t.Fatalf("folder of another Application, recorded: %s %q", op.Phase, op.Message)
+	}
+	r.st.SetAppDirs(ctx, "alloy", nil)
 	if r.e.syncCount() != 0 || readFile(t, filepath.Join(dir, "data.db")) != "host-only data" {
 		t.Fatal("synced into the foreign folder")
 	}
@@ -95,10 +106,39 @@ func TestSyncRefusesFoldersOmegaCDDidNotCreate(t *testing.T) {
 	os.MkdirAll(filepath.Join(work, "fresh", "conf.d"), 0o750)
 	r.c.CreateApp(ctx, app("fresh"))
 	r.mustSync(t, "fresh")
-	if got := readFile(t, filepath.Join(work, "fresh", domain.MarkerFile)); got != "fresh" {
-		t.Fatalf("marker = %q", got)
-	}
 	r.mustSync(t, "fresh") // and its own folder stays its own
+}
+
+// A folder with files is the app's when a Sync recorded writing to it or a container OmegaCD created for the app runs
+// from it; one an older OmegaCD marked for it is too, and loses the marker.
+func TestSyncTakesItsOwnFolders(t *testing.T) {
+	r := newRig(t)
+	ctx := t.Context()
+	work := r.c.cfg.WorkDir
+	full := func(name string) string {
+		dir := filepath.Join(work, name)
+		os.MkdirAll(dir, 0o750)
+		os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte("old"), 0o644)
+		return dir
+	}
+	r.c.CreateApp(ctx, app("recorded"))
+	r.st.SetAppDirs(ctx, "recorded", []string{domain.HostDir("", full("recorded"))})
+	r.mustSync(t, "recorded")
+
+	r.c.CreateApp(ctx, app("running"))
+	r.e.workingDirs = map[string][]string{"running": {full("running")}}
+	r.mustSync(t, "running")
+	if a, _ := r.st.GetApp(ctx, "running"); !slices.Equal(a.Dirs, []string{domain.HostDir("", filepath.Join(work, "running"))}) {
+		t.Errorf("recorded %v", a.Dirs)
+	}
+
+	r.c.CreateApp(ctx, app("marked"))
+	os.WriteFile(filepath.Join(full("marked"), domain.MarkerFile), []byte("marked"), 0o644)
+	r.mustSync(t, "marked")
+	if _, err := os.Stat(filepath.Join(work, "marked", domain.MarkerFile)); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("marker kept: %v", err)
+	}
+	r.mustSync(t, "marked") // the record takes over
 }
 
 func TestClaimDir(t *testing.T) {
@@ -112,30 +152,52 @@ func TestClaimDir(t *testing.T) {
 		}
 		return dir
 	}
+	kids := []string{"web", "api"}
 	for _, tt := range []struct {
-		name string
-		dir  string
-		ok   bool
+		name  string
+		dir   string
+		owned bool
+		ok    bool
 	}{
-		{"missing", filepath.Join(root, "missing", "web"), true},
-		{"empty", mk("empty", nil), true},
-		{"a file deep down", mk("dirs", map[string]string{"a/b/.keep": ""}), false}, // even an empty one
-		{"marked for web", mk("mine", map[string]string{domain.MarkerFile: "web", "compose.yaml": "x"}), true},
-		{"marked for another app", mk("other", map[string]string{domain.MarkerFile: "api"}), false},
-		{"unmarked files", mk("foreign", map[string]string{"data": "x"}), false},
-		{"unmarked old layout", mk("legacy", map[string]string{"compose.yaml": "x"}), true},
+		{"missing", filepath.Join(root, "missing", "web"), false, true},
+		{"empty", mk("empty", nil), false, true},
+		{"a file deep down", mk("dirs", map[string]string{"a/b/.keep": ""}), false, false}, // even an empty one
+		{"owned", mk("owned", map[string]string{"compose.yaml": "x"}), true, true},
+		{"marked for web", mk("mine", map[string]string{domain.MarkerFile: "web", "compose.yaml": "x"}), false, true},
+		{"marked for another app", mk("other", map[string]string{domain.MarkerFile: "api"}), true, false},
+		{"foreign files", mk("foreign", map[string]string{"data": "x"}), false, false},
+		{"children's folders", mk("parent", map[string]string{"web/compose.yaml": "x", "api/compose.yaml": "x"}), false, true},
+		{"children's folders and more", mk("mixed", map[string]string{"api/compose.yaml": "x", "notes": "x"}), false, false},
+		{"another app's folder", mk("stranger", map[string]string{"db/data": "x"}), false, false},
 	} {
-		err := claimDir(tt.dir, "web", filepath.Join(root, "legacy"))
+		err := claimDir(tt.dir, "web", tt.owned, kids)
 		if (err == nil) != tt.ok {
 			t.Errorf("%s: %v", tt.name, err)
 		}
-		if b, _ := os.ReadFile(filepath.Join(tt.dir, domain.MarkerFile)); tt.ok && string(b) != "web" {
-			t.Errorf("%s: marker %q", tt.name, b)
+		if _, merr := os.Stat(filepath.Join(tt.dir, domain.MarkerFile)); tt.ok && !errors.Is(merr, fs.ErrNotExist) {
+			t.Errorf("%s: marker left: %v", tt.name, merr)
 		}
 	}
 	os.RemoveAll(filepath.Join(root, "dirs", "a", "b", ".keep"))
-	if err := claimDir(filepath.Join(root, "dirs"), "web", ""); err != nil {
+	if err := claimDir(filepath.Join(root, "dirs"), "web", false, nil); err != nil {
 		t.Errorf("only empty directories: %v", err)
+	}
+}
+
+// An App of Apps' folder that already holds its children's folders takes a new child, whatever the order they sync in.
+func TestAppOfAppsFolderTakesNewChild(t *testing.T) {
+	r := newRig(t)
+	ctx := t.Context()
+	work := r.c.cfg.WorkDir
+	r.c.CreateApp(ctx, parentApp("root"))
+	r.g.define("aaaaaaaa", "name: web\nrepoURL: x\nhost: local\n")
+	r.mustSync(t, "root")
+	r.childrenSynced(t, "web")
+	r.g.define("bbbbbbbb", "name: web\nrepoURL: x\nhost: local\n---\nname: api\nrepoURL: x\nhost: local\n")
+	r.mustSync(t, "root")
+	r.childrenSynced(t, "api")
+	if got := readFile(t, filepath.Join(work, "root", "api", "compose.yaml")); got != "services: {}\n" {
+		t.Fatalf("api = %q", got)
 	}
 }
 

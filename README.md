@@ -337,7 +337,7 @@ Each Application has its own folder in the work dir: `<work dir>/<name>`, or `<w
 
 Changes *inside* data folders and volumes never count as drift. Back up volumes and data folders yourself (e.g. restic or borg) — OmegaCD doesn't.
 
-**Folders OmegaCD didn't create are never synced into.** A work dir like `/opt/services` may already hold other folders. OmegaCD marks each folder it creates with a `.omegacd` file naming its Application, and a Sync into a folder that exists with files but without that Application's marker fails, naming the folder: rename the Application, pick another work dir, or move the folder away. An empty folder (or one holding only empty directories) is taken over.
+**Folders OmegaCD didn't create are never synced into.** A work dir like `/opt/services` may already hold other folders. A Sync writes into an Application's folder only if it is missing or empty (or holds only empty directories), if OmegaCD's database records that a Sync of that Application wrote there, or if a container OmegaCD created for it (`managed-by=omegacd`) runs from it — containers of other tools don't count. An App of Apps' folder may also hold its children's folders. Anything else fails, naming the folder: rename the Application, pick another work dir, or move the folder away. Older versions marked their folders with a `.omegacd` file instead: a folder marked for the Application is still taken, and the Sync deletes the marker; one marked for another Application is refused.
 
 ## Git access
 

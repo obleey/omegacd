@@ -175,8 +175,8 @@ func TestExport(t *testing.T) {
 	if b, _ := os.ReadFile(compose); string(b) != "services: {web: {}}\n" {
 		t.Errorf("content %q", b)
 	}
-	if b, _ := os.ReadFile(filepath.Join(dest, domain.MarkerFile)); string(b) != "web" {
-		t.Errorf("marker = %q; Export must keep OmegaCD's marker and never take one from Git", b)
+	if _, err := os.Stat(filepath.Join(dest, domain.MarkerFile)); !os.IsNotExist(err) {
+		t.Errorf("marker: %v; Export must delete an old one and never take one from Git", err)
 	}
 	if err := g.Export(ctx, f.dir, c3, "missing", t.TempDir()); !errors.Is(err, domain.ErrNotFound) {
 		t.Errorf("missing path: %v", err)
