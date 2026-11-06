@@ -72,11 +72,19 @@ func TestConnRouting(t *testing.T) {
 }
 
 func TestRemoteAppDir(t *testing.T) {
-	if got := remoteAppDir(domain.Host{}, "web"); got != "/var/lib/omegacd/apps/web" {
-		t.Errorf("default = %s", got)
-	}
-	if got := remoteAppDir(domain.Host{WorkDir: "/srv/cd/"}, "web"); got != "/srv/cd/apps/web" {
-		t.Errorf("custom = %s", got)
+	web, alloy := domain.Application{Name: "web"}, domain.Application{Name: "alloy", Parent: "platform"}
+	for _, tt := range []struct {
+		h    domain.Host
+		app  domain.Application
+		want string
+	}{
+		{domain.Host{}, web, "/var/lib/omegacd/web"},
+		{domain.Host{WorkDir: "/srv/cd/"}, web, "/srv/cd/web"},
+		{domain.Host{WorkDir: "/opt/services"}, alloy, "/opt/services/platform/alloy"}, // a Child Application: in its App of Apps' folder
+	} {
+		if got := remoteAppDir(tt.h, tt.app); got != tt.want {
+			t.Errorf("remoteAppDir(%q, %s) = %s, want %s", tt.h.WorkDir, tt.app.Dir(), got, tt.want)
+		}
 	}
 }
 
@@ -84,7 +92,7 @@ func TestRemoteAppDir(t *testing.T) {
 func TestPlaceForRemote(t *testing.T) {
 	remote := &hostConn{host: domain.Host{Name: "edge", WorkDir: "/srv"}}
 	app := domain.Application{Name: "web"}
-	for _, asDir := range []string{"", "/var/lib/omegacd/apps/web"} {
+	for _, asDir := range []string{"", "/var/lib/omegacd/web"} {
 		dir := t.TempDir()
 		write := func(name, content string) { os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644) }
 		write("compose.yaml", `
@@ -107,10 +115,10 @@ secrets:
 		if err != nil {
 			t.Fatal(err)
 		}
-		placeFor(p, remote, app.Name, dir, asDir)
+		placeFor(p, remote, app, dir, asDir)
 		s := p.Services["web"]
 		got := []string{p.WorkingDir, s.EnvFiles[0].Path, s.Volumes[0].Source, s.Volumes[1].Source, p.Configs["conf"].File, p.Secrets["pw"].File}
-		want := []string{"/srv/apps/web", "/srv/apps/web/app.env", "/srv/apps/web/site.conf", "/var/log", "/srv/apps/web/app.conf", "/srv/apps/web/pw.txt"}
+		want := []string{"/srv/web", "/srv/web/app.env", "/srv/web/site.conf", "/var/log", "/srv/web/app.conf", "/srv/web/pw.txt"}
 		if !slices.Equal(got, want) {
 			t.Errorf("asDir %q: paths = %q, want %q", asDir, got, want)
 		}

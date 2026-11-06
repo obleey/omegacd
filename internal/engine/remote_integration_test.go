@@ -11,6 +11,7 @@ import (
 	mrand "math/rand/v2"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -151,6 +152,77 @@ func TestRemoteHost(t *testing.T) {
 		}
 		remoteLifecycle(t, e, d, d.ssh)
 	})
+	t.Run("folders", func(t *testing.T) { remoteFolders(t, e, d, d.tls) })
+}
+
+// remoteFolders checks the layout on a remote Host, the refusal of folders OmegaCD didn't create (it runs in the
+// file helper, so a copy can't bypass it), and the move from the old layout.
+func remoteFolders(t *testing.T, e *Engine, d dind, h domain.Host) {
+	ctx := context.Background()
+	inDind := func(args ...string) (string, error) { return dockerCmd(append([]string{"exec", d.id}, args...)...) }
+	id := mrand.IntN(1e9)
+	dir := t.TempDir()
+	write(t, dir, "compose.yaml", "services:\n  web:\n    image: busybox:1.36\n    command: [sleep, \"3600\"]\n    volumes: [\"./site.conf:/etc/site.conf:ro\"]\n")
+	write(t, dir, "site.conf", "s1\n")
+
+	// someone else's folder: refused, and left as it was, by Sync and Remove alike
+	foreign := domain.Application{Name: fmt.Sprintf("omegacd-foreign-%d", id), Host: h.Name}
+	t.Cleanup(func() { e.Remove(context.Background(), foreign, false) })
+	fdir := remoteAppDir(h, foreign)
+	if out, err := inDind("sh", "-c", `mkdir -p "$1" && echo keep > "$1/data"`, "sh", fdir); err != nil {
+		t.Fatal(out)
+	}
+	want := "refusing to sync into " + fdir + ": the folder exists and OmegaCD did not create it for Application \"" + foreign.Name + "\""
+	if err := e.Sync(ctx, foreign, dir, domain.SyncOptions{}); err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("Sync into a foreign folder = %v, want %q", err, want)
+	}
+	inDind("sh", "-c", `printf other > "$1/.omegacd"`, "sh", fdir)
+	if err := e.Sync(ctx, foreign, dir, domain.SyncOptions{}); err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("Sync into a folder marked for another Application = %v", err)
+	}
+	if err := e.Remove(ctx, foreign, false); err != nil {
+		t.Fatal(err)
+	}
+	if out, _ := inDind("cat", fdir+"/data"); out != "keep" {
+		t.Fatalf("foreign data = %q", out)
+	}
+
+	// a Child Application deployed before the layout change: it moves into its App of Apps' folder, and its old
+	// folder goes once Up recreated the container
+	child := domain.Application{Name: fmt.Sprintf("omegacd-child-%d", id), Parent: fmt.Sprintf("omegacd-parent-%d", id), Host: h.Name}
+	t.Cleanup(func() { e.Remove(context.Background(), child, false) })
+	legacy := remoteWorkDir(h) + "/apps/" + child.Name
+	if out, err := inDind("sh", "-c", `mkdir -p "$1" && echo old > "$1/site.conf"`, "sh", legacy); err != nil {
+		t.Fatal(out)
+	}
+	if err := e.Sync(ctx, child, dir, domain.SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	cdir := remoteAppDir(h, child)
+	if cdir != remoteWorkDir(h)+"/"+child.Parent+"/"+child.Name {
+		t.Fatalf("child dir = %s", cdir)
+	}
+	for f, want := range map[string]string{cdir + "/site.conf": "s1", cdir + "/.omegacd": child.Name, path.Dir(cdir) + "/.omegacd": child.Parent} {
+		if out, err := inDind("cat", f); out != want {
+			t.Errorf("%s = %q, %v; want %q", f, out, err, want)
+		}
+	}
+	if _, err := inDind("test", "-e", legacy); err == nil {
+		t.Error("old-layout folder survived the Sync")
+	}
+	ls, err := e.Status(ctx, child)
+	if err != nil || len(ls.Containers) != 1 {
+		t.Fatalf("Status = %+v, %v", ls, err)
+	}
+	if out, _ := inDind("docker", "exec", ls.Containers[0].ID, "cat", "/etc/site.conf"); out != "s1" {
+		t.Errorf("container mounts %q, want the new folder's s1", out)
+	}
+	if err := e.Remove(ctx, child, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := inDind("test", "-e", cdir); err == nil {
+		t.Error("child dir survived Remove")
+	}
 }
 
 func remoteLifecycle(t *testing.T, e *Engine, d dind, h domain.Host) {
@@ -160,7 +232,7 @@ func remoteLifecycle(t *testing.T, e *Engine, d dind, h domain.Host) {
 	}
 	app := domain.Application{Name: fmt.Sprintf("omegacd-it-%d", mrand.IntN(1e9)), Host: h.Name}
 	t.Cleanup(func() { e.Remove(context.Background(), app, true) })
-	remote := remoteAppDir(h, app.Name)
+	remote := remoteAppDir(h, app)
 	inDind := func(args ...string) (string, error) { return dockerCmd(append([]string{"exec", d.id}, args...)...) }
 
 	seen := make(chan [2]string, 256)
@@ -210,7 +282,7 @@ secrets:
 	if out, err := exec.Command("cp", "-a", dir+"/.", stage).CombinedOutput(); err != nil {
 		t.Fatal(string(out))
 	}
-	if diffs, err := e.Diff(ctx, app, stage, "/var/lib/omegacd/apps/"+app.Name); err != nil || len(diffs) != 0 {
+	if diffs, err := e.Diff(ctx, app, stage, "/var/lib/omegacd/"+app.Name); err != nil || len(diffs) != 0 {
 		t.Fatalf("Diff from staging = %+v, %v; want empty", diffs, err)
 	}
 	if exists, managed, err := e.ProjectExists(ctx, h.Name, app.Name); err != nil || !exists || !managed {
@@ -239,6 +311,9 @@ secrets:
 	}
 	if _, err := inDind("test", "-e", remote+"/stale.txt"); err == nil {
 		t.Error("stale file survived sync")
+	}
+	if out, _ := inDind("cat", remote+"/"+domain.MarkerFile); out != app.Name {
+		t.Errorf("marker = %q, want %s", out, app.Name)
 	}
 	if got := inode("app.conf"); got != confInode {
 		t.Errorf("changed file got a new inode: %s -> %s", confInode, got)

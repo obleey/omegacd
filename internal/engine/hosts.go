@@ -43,9 +43,14 @@ const defaultWorkDir = "/var/lib/omegacd"
 
 func hostName(h string) string { return cmp.Or(h, domain.LocalHost) }
 
+// remoteWorkDir is the Host's work dir, which holds its Applications' folders.
+func remoteWorkDir(h domain.Host) string {
+	return path.Clean(cmp.Or(h.WorkDir, defaultWorkDir))
+}
+
 // remoteAppDir is where an Application's files live on a non-local Host.
-func remoteAppDir(h domain.Host, app string) string {
-	return path.Join(cmp.Or(h.WorkDir, defaultWorkDir), "apps", app)
+func remoteAppDir(h domain.Host, app domain.Application) string {
+	return path.Join(remoteWorkDir(h), app.Dir())
 }
 
 // conn returns the cached connection to host ("" = LocalHost), creating it on first use.

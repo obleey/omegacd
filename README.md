@@ -96,6 +96,8 @@ Open http://localhost:8080, log in as `admin` with the password from the log, an
 
 **Upgrade:** bump the image tag (or `docker compose pull` for `latest`) and run `docker compose up -d`. Data lives in the `omegacd-data` volume.
 
+**Upgrading from 0.1.0-rc.5 or earlier:** Application files used to live in `<work dir>/apps/<name>`; now they are in `<work dir>/<name>` (see [Where your data lives](#where-your-data-lives)). Nothing changes on start: each Application keeps running from its old folder until its next Sync, which writes the new folder (recreating containers whose bind mounts moved) and then deletes the Application's old `apps/<name>` folder, and `apps/` once it is empty; anything in `apps/` that isn't an Application's folder is left alone.
+
 ### Option 2: Binary + systemd
 
 Download the `linux_amd64` or `linux_arm64` archive from [GitHub Releases](https://github.com/obleey/omegacd/releases) and verify it:
@@ -323,7 +325,7 @@ The App of Apps shows the worst Health of its children.
 
 ## Where your data lives
 
-OmegaCD makes each Application's work dir match Git on every Sync (files not in Git are deleted), so **data must not live there**. Only named volumes and absolute paths keep data:
+Each Application has its own folder in the work dir: `<work dir>/<name>`, or `<work dir>/<App of Apps>/<name>` for a Child Application (an App of Apps itself has no files) — on the machine OmegaCD runs on and on remote Hosts alike. OmegaCD makes that folder match Git on every Sync (files not in Git are deleted), so **data must not live there**. Only named volumes and absolute paths keep data:
 
 | In your compose file | Where the data is | Kept across reboots, Syncs and deletes? |
 |---|---|---|
@@ -334,6 +336,8 @@ OmegaCD makes each Application's work dir match Git on every Sync (files not in 
 | `- ./data:/data` (not in Git) | — | ⛔ **refused**: every Sync deletes files that are not in Git, so the Sync fails and asks for a named volume or an absolute path. The same goes for `../` paths |
 
 Changes *inside* data folders and volumes never count as drift. Back up volumes and data folders yourself (e.g. restic or borg) — OmegaCD doesn't.
+
+**Folders OmegaCD didn't create are never synced into.** A work dir like `/opt/services` may already hold other folders. OmegaCD marks each folder it creates with a `.omegacd` file naming its Application, and a Sync into a folder that exists with files but without that Application's marker fails, naming the folder: rename the Application, pick another work dir, or move the folder away. An empty folder (or one holding only empty directories) is taken over.
 
 ## Git access
 
@@ -356,7 +360,7 @@ Applications deploy to the built-in `local` Host by default. Add more Docker eng
 
 Each remote Host gets its own [Host Key](#secrets) when it is added; nothing deploys to a Host without one.
 
-On Sync, the Application's files are copied to the Host's work dir (default `/var/lib/omegacd`, set per Host) so bind mounts, configs and secrets resolve there. It is on disk, so after the Host reboots its containers come back with their files; decrypted secret files are kept there too (mode 0600) — use disk encryption if that matters to you. Values from env files are stored by Docker in the container configuration in any case. To move an Application to another Host, delete and recreate it.
+On Sync, the Application's files are copied to its folder in the Host's work dir (default `/var/lib/omegacd`, set per Host; same layout and the same [protection of other folders](#where-your-data-lives) as locally) so bind mounts, configs and secrets resolve there. Files synced by 0.1.0-rc.5 or earlier, in `<work dir>/apps/<name>`, move on their next Sync after the [upgrade](#option-1-docker-compose-recommended). It is on disk, so after the Host reboots its containers come back with their files; decrypted secret files are kept there too (mode 0600) — use disk encryption if that matters to you. Values from env files are stored by Docker in the container configuration in any case. To move an Application to another Host, delete and recreate it.
 
 ![Settings → Hosts](assets/screenshots/settings-hosts.png)
 

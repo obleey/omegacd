@@ -142,12 +142,12 @@ func TestValidateBindSources(t *testing.T) {
 		{"{type: bind, source: ./db, target: /db}", "mounts ./db, which is not in Git"},
 		{"../shared:/shared", "mounts ../shared, outside the Application's files"},
 		{"./html/../../x:/x", "outside the Application's files"},
-		{"ROOT/apps/other:/other", ""}, // absolute, even right next to the app folder
-		{"~/media:/media", ""},         // home dir: absolute too
+		{"ROOT/other:/other", ""}, // absolute, even right next to the app folder
+		{"~/media:/media", ""},    // home dir: absolute too
 	}
 	for _, tt := range tests {
 		root := t.TempDir()
-		dir := filepath.Join(root, "apps", "web") // as in the work dir
+		dir := filepath.Join(root, "web") // as in the work dir
 		if err := os.MkdirAll(filepath.Join(dir, "html"), 0o755); err != nil {
 			t.Fatal(err)
 		}

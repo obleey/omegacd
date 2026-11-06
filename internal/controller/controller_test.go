@@ -174,6 +174,7 @@ type fakeGit struct {
 	tree     string
 	err      error
 	resolves int
+	exports  int
 	files    map[string]string // exported instead of a compose.yaml when set
 }
 
@@ -192,6 +193,7 @@ func (g *fakeGit) TreeHash(_ context.Context, _, sha, _ string) (string, error) 
 func (g *fakeGit) Export(_ context.Context, _, _, _, dest string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	g.exports++
 	// definitions belong to the App of Apps (named "root" in the tests); every other app gets a compose file
 	if g.files == nil || filepath.Base(dest) != "root" {
 		return os.WriteFile(filepath.Join(dest, "compose.yaml"), []byte("services: {}\n"), 0o644)
@@ -765,8 +767,8 @@ func TestHosts(t *testing.T) {
 func TestResourceDetail(t *testing.T) {
 	r := newRig(t)
 	r.st.apps["web"] = app("web")
-	dir := r.c.appDir("web")
-	outside := filepath.Join(r.c.cfg.WorkDir, "apps", "outside.txt")
+	dir := r.c.appDir(app("web"))
+	outside := filepath.Join(r.c.cfg.WorkDir, "outside.txt")
 	for name, content := range map[string]string{
 		"plain.env": "A=1\n", "db.env": "USER=root\n# PASSWORD=hunter2\nexport PASSWORD=hunter2\nCERT=\"line1\nline2\"\n", "db.sops.env": "ENC[...]",
 		"app.yaml": "token: abc", "app.sops.yaml": "ENC[...]", "pw.txt": "hunter2",
@@ -954,11 +956,11 @@ func TestRestoreWorkDirsAfterReboot(t *testing.T) {
 		r.c.Sync(ctx, n, domain.SyncRequest{})
 		r.waitIdle(t, n)
 	}
-	r.g.set("bbbbbbbb")             // a newer target must NOT be deployed by a restore
-	os.RemoveAll(r.c.appDir("web")) // tmpfs wiped by a reboot
+	r.g.set("bbbbbbbb")                  // a newer target must NOT be deployed by a restore
+	os.RemoveAll(r.c.appDir(app("web"))) // tmpfs wiped by a reboot
 	// ...and Docker re-created a missing bind-mount source as an empty directory
-	os.MkdirAll(filepath.Join(r.c.appDir("web"), "nginx", "default.conf"), 0o755)
-	os.MkdirAll(r.c.appDir("never"), 0o750)
+	os.MkdirAll(filepath.Join(r.c.appDir(app("web")), "nginx", "default.conf"), 0o755)
+	os.MkdirAll(r.c.appDir(app("never")), 0o750)
 	syncs := r.e.syncCount()
 
 	r.c.restoreWorkDirs(ctx)
@@ -1297,13 +1299,13 @@ func TestDecryptedFilesAreRecordedAndMasked(t *testing.T) {
 		r.waitIdle(t, "web")
 	}
 	sync()
-	os.WriteFile(filepath.Join(r.c.appDir("web"), "plain.env"), []byte("A=1\n"), 0o644)
+	os.WriteFile(filepath.Join(r.c.appDir(app("web")), "plain.env"), []byte("A=1\n"), 0o644)
 
 	list := r.c.decryptedList("web")
 	if b, err := os.ReadFile(list); err != nil || string(b) != "db.env\n" {
 		t.Fatalf("decrypted list: %q, %v", b, err)
 	}
-	if filepath.Dir(list) == r.c.appDir("web") {
+	if filepath.Dir(list) == r.c.appDir(app("web")) {
 		t.Fatal("the list must live outside the app dir (Export prunes it, remote Hosts get a copy)")
 	}
 	live, err := r.c.Resources(ctx, "web")
@@ -1353,7 +1355,7 @@ func TestStartupDropsLeftoverSopsCopies(t *testing.T) {
 	a := app("web")
 	a.ComposeFiles = []string{"compose.yaml"}
 	r.st.apps["web"] = a
-	dir := r.c.appDir("web")
+	dir := r.c.appDir(app("web"))
 	os.MkdirAll(filepath.Join(dir, "sub"), 0o750)
 	for name, content := range map[string]string{
 		"compose.yaml": "services: {}\n",
@@ -1363,6 +1365,7 @@ func TestStartupDropsLeftoverSopsCopies(t *testing.T) {
 	} {
 		os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600)
 	}
+	os.MkdirAll(filepath.Dir(r.c.decryptedList("web")), 0o700)
 	os.WriteFile(r.c.decryptedList("web"), []byte("earlier.env\n"), 0o600)
 
 	r.c.restoreWorkDirs(t.Context())
