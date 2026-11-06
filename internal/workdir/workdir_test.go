@@ -85,3 +85,46 @@ func TestWriteRefusesEscapes(t *testing.T) {
 		}
 	}
 }
+
+func TestClaim(t *testing.T) {
+	root := t.TempDir()
+	mk := func(name string, files map[string]string) string {
+		dir := filepath.Join(root, name)
+		os.MkdirAll(dir, 0o750)
+		for f, content := range files {
+			os.MkdirAll(filepath.Dir(filepath.Join(dir, f)), 0o750)
+			os.WriteFile(filepath.Join(dir, f), []byte(content), 0o644)
+		}
+		return dir
+	}
+	kids := []string{"web", "api"}
+	for _, tt := range []struct {
+		name  string
+		dir   string
+		owned bool
+		ok    bool
+	}{
+		{"missing", filepath.Join(root, "missing", "web"), false, true},
+		{"empty", mk("empty", nil), false, true},
+		{"a file deep down", mk("dirs", map[string]string{"a/b/.keep": ""}), false, false}, // even an empty one
+		{"owned", mk("owned", map[string]string{"compose.yaml": "x"}), true, true},
+		{"marked for web", mk("mine", map[string]string{domain.MarkerFile: "web", "compose.yaml": "x"}), false, true},
+		{"marked for another app", mk("other", map[string]string{domain.MarkerFile: "api"}), true, false},
+		{"foreign files", mk("foreign", map[string]string{"data": "x"}), false, false},
+		{"children's folders", mk("parent", map[string]string{"web/compose.yaml": "x", "api/compose.yaml": "x"}), false, true},
+		{"children's folders and more", mk("mixed", map[string]string{"api/compose.yaml": "x", "notes": "x"}), false, false},
+		{"another app's folder", mk("stranger", map[string]string{"db/data": "x"}), false, false},
+	} {
+		err := Claim(tt.dir, "web", tt.owned, kids)
+		if (err == nil) != tt.ok {
+			t.Errorf("%s: %v", tt.name, err)
+		}
+		if _, merr := os.Stat(filepath.Join(tt.dir, domain.MarkerFile)); tt.ok && !errors.Is(merr, fs.ErrNotExist) {
+			t.Errorf("%s: marker left: %v", tt.name, merr)
+		}
+	}
+	os.RemoveAll(filepath.Join(root, "dirs", "a", "b", ".keep"))
+	if err := Claim(filepath.Join(root, "dirs"), "web", false, nil); err != nil {
+		t.Errorf("only empty directories: %v", err)
+	}
+}

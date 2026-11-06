@@ -109,7 +109,8 @@ only the Control Plane, never Agents or users. A reverse proxy in between must p
 - **Work dir**: each Application's folder, plaintext; on RAM (`/run`, `$XDG_RUNTIME_DIR`) or disk
   (`/opt/services`) as configured. Files are written **in place** (single-file bind mounts keep their inode) and
   everything not in the Desired State is pruned; the ownership rules (never sync into a folder OmegaCD didn't
-  create) live here (Q11, Q48).
+  create) live here (Q11, Q48). An Application may name its own work dir instead, under a root the Agent's
+  configuration allows (Q57).
 - **Decryption in memory only**: ciphertext from the cache → plaintext straight into the app's folder; no
   temporary plaintext anywhere (Q19). Secret sources plug in behind one interface: SOPS+age in the open-source
   Agent; 1Password, LastPass, Vault, OpenBao, Ansible Vault later (paid). Their credentials live in the Agent's
@@ -182,5 +183,6 @@ users reinstall.
 ## Later (not v0.2)
 
 Web terminal, GitHub SSO, roles and audit (v0.3, paid tiers); secret sources beyond SOPS (paid); gRPC to Agents;
-Agent self-update; Podman beyond the tested rootless setup. Editions: open source core, Teams, Enterprise, to be
+Agent self-update; Podman beyond the tested rootless setup; owner and mode of decrypted files per file, declared in
+Git next to the encrypted file (Q58: v0.2 has `0600`, or `0640` with one group per Host). Editions: open source core, Teams, Enterprise, to be
 decided (Q29, Q44, Q49).

@@ -35,6 +35,11 @@ func TestConfigDefaults(t *testing.T) {
 			euid:  1000,
 			state: "/srv/agent", work: "/opt/services",
 		},
+		"dirs cleaned": {
+			env:   map[string]string{"HOME": "/h", "OMEGACD_AGENT_STATE_DIR": "/srv//agent/", "OMEGACD_AGENT_WORKDIR": "/opt/services/"},
+			euid:  1000,
+			state: "/srv/agent", work: "/opt/services",
+		},
 		"root refused": {
 			env: map[string]string{"HOME": "/root"}, euid: 0, err: "OMEGACD_AGENT_ALLOW_ROOT=true",
 		},

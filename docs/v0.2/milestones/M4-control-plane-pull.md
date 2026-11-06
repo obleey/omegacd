@@ -9,7 +9,8 @@ See [architecture](../architecture.md#control-plane-q9-q23-q26-q30-q31-q35-q36-q
 
 Sync = Source Server Render → blobs stored (kept, Q31) → desired state sent to the Host's Agent → Sync Operation
 from the Agent's reports. Queued Syncs for offline Hosts ("waiting for Host"); a newer Sync replaces a queued one
-(Q38). Auto-Sync, Self-Heal, retries, Prune and Rollback keep today's semantics.
+(Q38). Auto-Sync, Self-Heal, retries, Prune and Rollback keep today's semantics. The Desired State carries the
+Application's work dir (Q57, M2-09).
 
 **Done when:** the controller unit tests pass with a fake Agent, and an integration test syncs, rolls back and queues
 against a real Agent.

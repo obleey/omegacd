@@ -35,7 +35,7 @@ blobs shared across Revisions and apps.
 cache (test scans it), and a Rollback to a cached Revision needs no download.
 
 ### M2-04 · Work dir writer and ownership
-**Status:** todo
+**Status:** done (2026-11-06, PR #80)
 **Depends on:** M2-03
 
 Write an app's files into `<work dir>/<name>` (or `<work dir>/<parent>/<name>`) **in place** (keep inodes for
@@ -53,9 +53,13 @@ is refused, and a container without path parity refuses to start with an explana
 A `SecretSource` interface on the Agent (Q29) with SOPS+age as the only v0.2 implementation. The Agent generates its
 age Host Key at first start (Q4). Decryption reads ciphertext from the cache and writes plaintext **only** into the
 app's folder, never to a temp file (Q19). The decrypted-file list and key names are reported for the UI's masked view.
+Decrypted files are `0600`, owned by the Agent's user; with `OMEGACD_AGENT_SECRET_GROUP=<gid>` they are `0640` with
+that group, for non-root containers that join it with `group_add:` (Q58). `omegacd agent --help` and the docs say
+which containers can read them (root yes; a non-root user only through the group).
 
 **Done when:** a test proves no plaintext touches any path but the app folder, SOPS files from v0.1's format still
-decrypt, and a second (dummy) source can be registered without changing callers.
+decrypt, a second (dummy) source can be registered without changing callers, and an e2e shows a non-root container
+refused a `0600` secret file and reading it with `OMEGACD_AGENT_SECRET_GROUP` and `group_add:`.
 
 ### M2-06 · Compose on the Agent
 **Status:** todo
@@ -88,3 +92,20 @@ recorded in the outbox for the Control Plane to show as rolled back on the Host 
 
 **Done when:** works with the Control Plane unreachable, refuses uncached Revisions with the list of cached ones,
 and the outbox entry is produced.
+
+### M2-09 · Per-Application work dir
+**Status:** todo
+**Depends on:** M2-04
+
+An Application may name its own work dir (Q57): `workDir:` (absolute) in its definition; empty means the Host's
+work dir, so the folder stays `<OMEGACD_AGENT_WORKDIR>/<name>`. Otherwise the folder is `<workDir>/<name>` (or
+`<workDir>/<parent>/<name>`); a Child Application sets its own in its definition, nothing is inherited from its
+App of Apps. A root that doesn't exist yet is created like the Host's work dir. The Agent accepts a work dir only under a root in `OMEGACD_AGENT_WORKDIR_ALLOW`
+(comma-separated absolute paths) or its own work dir, and refuses others in the Sync with a message naming the
+setting. Ownership rules apply in every root; in a container every allowed root needs path parity, checked at
+start. Changing an Application's work dir moves its files like changing its App of Apps does. The field travels in
+the Desired State (protobuf) and the Application (definition, database, API) here; the UI field is M5-07.
+
+**Done when:** an Application in a second allowed root deploys there, one outside every allowed root is refused
+without a file written, moving between roots leaves no folder behind, and an allowed root without path parity
+stops a containerised Agent at start, each with unit and e2e tests.

@@ -57,3 +57,12 @@ through to it; the access check in the app form asks it (Q40).
 The file viewer shows `KEY=••••` from the key names the Agent reports; content of secret files is never shown.
 
 **Done when:** no code path can send a decrypted value from Agent to Control Plane (test).
+
+### M5-07 · Work dir in the Application form
+**Status:** todo
+**Depends on:** M2-09, M4-01
+
+An optional **Work dir** field in the Application form and detail (Q57): empty shows the Host's work dir as the
+placeholder; a path the Host's Agent doesn't allow shows the Agent's message and the setting to change.
+
+**Done when:** UI tests cover empty, allowed and refused, and an e2e creates an Application with its own work dir.

@@ -48,6 +48,9 @@ CREATE TABLE outbox (
 -- recency without clock ties: each add (or re-add, a Rollback) takes the next number
 ALTER TABLE revisions ADD COLUMN used INTEGER NOT NULL DEFAULT 0;
 UPDATE revisions SET used = rowid;
+`, `
+-- the folder the Agent writes the Application's files to: its own, whatever is in it (workdir.Claim)
+ALTER TABLE apps ADD COLUMN dir TEXT NOT NULL DEFAULT '';
 `}
 
 // DB is the Agent's own small database in its state dir (Q48).
@@ -57,6 +60,7 @@ type DB struct{ db *sql.DB }
 type App struct {
 	Name, Parent string
 	Revision     string // deployed
+	Dir          string // its folder in the work dir, once written
 	SelfHeal     bool
 	Prune        bool
 	PruneVolumes bool
@@ -118,17 +122,18 @@ func (d *DB) Close() error { return d.db.Close() }
 // ---- Applications ----
 
 func (d *DB) SaveApp(ctx context.Context, a App) error {
-	_, err := d.db.ExecContext(ctx, `INSERT INTO apps (name, parent, revision, self_heal, prune, prune_volumes, updated_at)
-		VALUES (?,?,?,?,?,?,?) ON CONFLICT(name) DO UPDATE SET parent=excluded.parent, revision=excluded.revision,
-		self_heal=excluded.self_heal, prune=excluded.prune, prune_volumes=excluded.prune_volumes, updated_at=excluded.updated_at`,
-		a.Name, a.Parent, a.Revision, a.SelfHeal, a.Prune, a.PruneVolumes, time.Now().UnixMilli())
+	_, err := d.db.ExecContext(ctx, `INSERT INTO apps (name, parent, revision, dir, self_heal, prune, prune_volumes, updated_at)
+		VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(name) DO UPDATE SET parent=excluded.parent, revision=excluded.revision,
+		dir=excluded.dir, self_heal=excluded.self_heal, prune=excluded.prune, prune_volumes=excluded.prune_volumes,
+		updated_at=excluded.updated_at`,
+		a.Name, a.Parent, a.Revision, a.Dir, a.SelfHeal, a.Prune, a.PruneVolumes, time.Now().UnixMilli())
 	return err
 }
 
 func (d *DB) GetApp(ctx context.Context, name string) (App, error) {
 	var a App
-	err := d.db.QueryRowContext(ctx, `SELECT name, parent, revision, self_heal, prune, prune_volumes FROM apps WHERE name = ?`, name).
-		Scan(&a.Name, &a.Parent, &a.Revision, &a.SelfHeal, &a.Prune, &a.PruneVolumes)
+	err := d.db.QueryRowContext(ctx, `SELECT name, parent, revision, dir, self_heal, prune, prune_volumes FROM apps WHERE name = ?`, name).
+		Scan(&a.Name, &a.Parent, &a.Revision, &a.Dir, &a.SelfHeal, &a.Prune, &a.PruneVolumes)
 	if errors.Is(err, sql.ErrNoRows) {
 		return a, domain.ErrNotFound
 	}
@@ -136,7 +141,7 @@ func (d *DB) GetApp(ctx context.Context, name string) (App, error) {
 }
 
 func (d *DB) ListApps(ctx context.Context) ([]App, error) {
-	rows, err := d.db.QueryContext(ctx, `SELECT name, parent, revision, self_heal, prune, prune_volumes FROM apps ORDER BY name`)
+	rows, err := d.db.QueryContext(ctx, `SELECT name, parent, revision, dir, self_heal, prune, prune_volumes FROM apps ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -144,7 +149,7 @@ func (d *DB) ListApps(ctx context.Context) ([]App, error) {
 	var apps []App
 	for rows.Next() {
 		var a App
-		if err := rows.Scan(&a.Name, &a.Parent, &a.Revision, &a.SelfHeal, &a.Prune, &a.PruneVolumes); err != nil {
+		if err := rows.Scan(&a.Name, &a.Parent, &a.Revision, &a.Dir, &a.SelfHeal, &a.Prune, &a.PruneVolumes); err != nil {
 			return nil, err
 		}
 		apps = append(apps, a)
