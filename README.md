@@ -615,7 +615,7 @@ Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). What is te
 
 ## Roadmap
 
-See [ROADMAP.md](ROADMAP.md) — next up: sync hooks and notifications. Related, planned as a separate project: a SOPS web GUI to encrypt secrets in the browser.
+See [ROADMAP.md](ROADMAP.md). **v0.2 is in development on `main`**: a redesign to pull-based Agents (every Host runs an Agent that dials out, secrets are decrypted only on the Host, Git lives in a separate Source Server). Its plan is in [docs/v0.2](docs/v0.2/README.md). This README describes v0.1, which continues on the `release-0.1` branch.
 
 ## License
 

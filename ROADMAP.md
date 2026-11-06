@@ -30,21 +30,36 @@ Still to test before v0.1.0 (see [TESTING.md](TESTING.md)):
 - [ ] A private Git repository over SSH (token and webhooks are tested)
 - [ ] Images from a private registry
 
-## v0.2 — trustworthy for real sites
+## v0.2 — pull-based Agents (in development on `main`)
+
+A breaking redesign; v0.1 continues on the `release-0.1` branch for fixes only, and both are released together.
+The plan: [docs/v0.2](docs/v0.2/README.md) (architecture, decisions, 8 milestones of tickets).
+
+- **Agents** on every Host dial out to the Control Plane over one WebSocket and run Compose themselves; push over SSH/TLS goes away
+- **Secrets decrypted only on the Agent**, with a Host Key born there; secret sources plug in on the Agent
+- **Source Server**: a separate component owning Git credentials and rendering; in-process by default, standalone with mTLS for production
+- **No data loss**: Agents keep, restore and self-heal their apps with the Control Plane or Source Server gone; offline rollback on the Host
+- **Enrollment** with single-use invites, Agent key pairs, fingerprint approval and signed challenges
+- **Rootless** Docker, docker-group users and rootless **Podman** (tested); Agent as a container or a systemd service
+- Built-in Agent in a full install; install script with full and agent modes; Kubernetes; reverse proxies everywhere
+- UI: Add Host flow, Host cards, engine badges everywhere, offline and queued states; then a polish milestone
+
+## After v0.2 — trustworthy for real sites (to be re-planned)
 
 - **Sync hooks** — jobs before/after a Sync: `artisan migrate`, `cache:clear`, `wp core update-db`, backups before upgrades
 - **Order between Child Applications** — `dependsOn: [caddy]` in a definition: the App of Apps syncs children in that order (e.g. the app that creates a shared network before those that join it), instead of a failed first attempt and a retry
 - **Notifications** — Slack, Discord, email, generic webhook on Sync failed / Degraded / recovered
 - **Restart unhealthy containers** — Self-Heal option `restartUnhealthy`: restart a container its own healthcheck reports unhealthy for a while (Docker's restart policies only react to exits), with backoff and a limit, each restart in History and notified
-- **Kubernetes polish** — on startup, check remote Hosts' files on the Host itself (today a pod without its work dir volume would restore and recreate every Application)
 - "Sync and recreate" in the UI; refresh from Git when an Application page opens
 
 ## v0.3 — many Applications, little repetition
 
+- **Web terminal** into containers through the Agent (paid)
+- **GitHub SSO** (paid)
 - **ApplicationSet** — one template + generators (list, Git directories, Hosts) generate Applications
 - **Image updater** — watch registries for new tags and commit the bump to Git
 - **Follow the latest Git tag** — `targetRevision: "v1.*"` or a semver range (`>=1.4 <2.0`): deploy the newest matching tag automatically, instead of editing the Application for each release
-- **Podman support** — run against Podman's Docker-compatible API socket (rootful and rootless): enable/check `podman-restart.service` so containers come back after a reboot, an SSH transport that doesn't need the Docker CLI on the server, rootless notes (ports < 1024, UID mapping on bind mounts), and the integration test suite running against Podman in CI; the engine (Docker or Podman, with version) detected per Host and shown as a badge on the Host and on every Application deployed there, so mixed fleets are obvious. Quick test against Podman 5.8 (Docker-compatible API): deploy, SOPS, bind-mounted files, diff, logs, events/drift and delete-with-volumes work; healthchecks need systemd on the Podman host (document it)
+- **Podman support** beyond v0.2's tested rootless setup — run against Podman's Docker-compatible API socket (rootful and rootless): enable/check `podman-restart.service` so containers come back after a reboot, an SSH transport that doesn't need the Docker CLI on the server, rootless notes (ports < 1024, UID mapping on bind mounts), and the integration test suite running against Podman in CI; the engine (Docker or Podman, with version) detected per Host and shown as a badge on the Host and on every Application deployed there, so mixed fleets are obvious. Quick test against Podman 5.8 (Docker-compatible API): deploy, SOPS, bind-mounted files, diff, logs, events/drift and delete-with-volumes work; healthchecks need systemd on the Podman host (document it)
 - Nested App of Apps
 - Name prefix per App of Apps, so two of them can declare an Application with the same name (e.g. `edge-caddy`, `blog-caddy`)
 - Theme picker (all Catppuccin flavors)
@@ -53,15 +68,12 @@ Still to test before v0.1.0 (see [TESTING.md](TESTING.md)):
 
 - **SSO** via OpenID Connect (Google, GitHub, GitLab, Microsoft Entra, Keycloak, Authentik, …), multiple users, RBAC (e.g. access per customer / App of Apps)
 - Audit log
-- **External secret managers** as Secret Sources next to SOPS: HashiCorp Vault / OpenBao, 1Password, Bitwarden, Infisical, AWS Secrets Manager, Google Secret Manager, Azure Key Vault — referenced from compose, resolved at Sync time, never stored in Git
+- **External secret managers** as Secret Sources next to SOPS, resolved on the Agent (paid): HashiCorp Vault / OpenBao, 1Password, Bitwarden, Infisical, AWS Secrets Manager, Google Secret Manager, Azure Key Vault — referenced from compose, resolved at Sync time, never stored in Git
 - Postgres as an alternative to SQLite
 
 ## Later
 
 - Docker Swarm
-- Agent mode for Hosts behind NAT or firewalls
-- Agent mode: Host Keys that never leave the Host (decrypt on the Host)
-- Web terminal into containers
 - OmegaCD upgrading itself
 
 ## Related projects
@@ -70,8 +82,6 @@ Still to test before v0.1.0 (see [TESTING.md](TESTING.md)):
 
 ## Housekeeping
 
-- Start watching a newly added Host's events immediately (today: within 30 s)
 - [x] Renovate for Go, npm, GitHub Actions and container images
 - [x] Gzip for the web UI
-- Copy only changed files to remote Hosts
 - A documentation site

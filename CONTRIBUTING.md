@@ -5,6 +5,11 @@ Thanks for your interest! OmegaCD is early, so issues with bug reports, rough ed
 - **Bugs and ideas:** open an [issue](https://github.com/obleey/omegacd/issues). For larger changes, please open an issue first so we can agree on the approach.
 - **Security issues:** do not open a public issue — see [SECURITY.md](SECURITY.md).
 
+## Branches
+
+- **`main` is v0.2 in development**, a breaking redesign to pull-based Agents. The plan, decisions and tickets are in [docs/v0.2](docs/v0.2/README.md); the vocabulary in [GLOSSARY.md](GLOSSARY.md); hard-to-reverse decisions in [docs/adr](docs/adr). Pick a ticket whose dependencies are done and mention its ID in the PR.
+- **`release-0.1`** is v0.1 (push over SSH/TLS): bug fixes only; send those PRs to that branch.
+
 ## Development
 
 Requires Go (version in `go.mod`), Node.js 24 and a running Docker engine.
@@ -13,6 +18,7 @@ Requires Go (version in `go.mod`), Node.js 24 and a running Docker engine.
 make build              # web UI, then bin/omegacd
 make test               # unit tests
 make test-integration   # integration tests against the local Docker engine
+make e2e                # end-to-end: throwaway OmegaCDs driven through the CLI
 cd web && npm run check # type-check the UI
 ```
 
@@ -22,7 +28,7 @@ Before sending a pull request: `go vet ./...`, `make test` and `make test-integr
 
 ## Releasing (maintainers)
 
-Push a tag `vX.Y.Z` on `main`. The Release workflow builds the binaries (stamped with the tag), the `SHA256SUMS`, the GitHub Release and the multi-arch image `ghcr.io/obleey/omegacd` (`X.Y.Z`, `X.Y`, `latest`; tags with a `-` suffix are pre-releases and do not move `latest`).
+Push a tag `vX.Y.Z` on `main` (0.2 and later) or `release-0.1` (0.1.x). The Release workflow builds the binaries (stamped with the tag), the `SHA256SUMS`, the GitHub Release and the multi-arch image `ghcr.io/obleey/omegacd` (`X.Y.Z`, `X.Y`, `latest`; tags with a `-` suffix are pre-releases and do not move `latest`).
 
 After the **first** release, the GHCR package is private: set its visibility to public once under the package's *Package settings → Change visibility*.
 

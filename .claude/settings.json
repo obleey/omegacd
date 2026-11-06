@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(go build:*)",
+      "Bash(go vet:*)",
+      "Bash(go test:*)",
+      "Bash(gofmt:*)",
+      "Bash(make build)",
+      "Bash(make test)",
+      "Bash(make test-integration)",
+      "Bash(make e2e)",
+      "Bash(make proto)",
+      "Bash(npm ci)",
+      "Bash(npm run check)",
+      "Bash(npm test)",
+      "Bash(npm run build)",
+      "Bash(shellcheck:*)",
+      "Bash(docs/v0.2/create-issues.sh)",
+      "Bash(rtk test:*)",
+      "Bash(rtk git status)",
+      "Bash(rtk git diff:*)",
+      "Bash(rtk git log:*)",
+      "Bash(git status)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)"
+    ],
+    "deny": [
+      "Bash(docs/v0.2/create-issues.sh --apply)",
+      "Bash(kill $(lsof -ti tcp:*))"
+    ]
+  }
+}

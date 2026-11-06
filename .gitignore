@@ -1,6 +1,9 @@
-# Design notes kept local
-GLOSSARY.md
-docs/
+# Superseded local notes
+docs/mvp-plan.md
+
+# Claude Code: local worktrees and personal settings (the shared .claude/settings.json is committed)
+.claude/worktrees/
+.claude/settings.local.json
 
 # Go
 /bin/
