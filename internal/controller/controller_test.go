@@ -1482,8 +1482,10 @@ func TestNoLocalHost(t *testing.T) {
 		t.Fatal(err)
 	}
 	// an app left on local from before is not restored (nothing to restore into)
+	r.st.mu.Lock() // the Host Key's reconcile may still be reading
 	r.st.apps["old"] = app("old")
 	r.st.ops = append(r.st.ops, domain.SyncOperation{App: "old", Phase: domain.OpSucceeded, Revision: "aaaaaaa"})
+	r.st.mu.Unlock()
 	r.c.restoreWorkDirs(ctx)
 	r.waitIdle(t, "old") // restores run in the background
 	if r.e.syncCount() != 0 {
