@@ -23,7 +23,7 @@
 <script lang="ts">
 	import { draw, scale } from 'svelte/transition';
 	import Icon from '../Icon.svelte';
-	import { meta, ms } from '../status.ts';
+	import { meta, ms, worstTone } from '../status.ts';
 
 	let { nodes, label }: { nodes: GNode[]; label: string } = $props();
 
@@ -80,7 +80,7 @@
 		{#each nodes as n (n.id)}
 			{@const p = layout.pos.get(n.id)}
 			{#if p}
-				{@const tone = meta(n.status?.at(-1)?.[1])[0]}
+				{@const tone = worstTone(n.status?.map(([, v]) => v) ?? [])}
 				<svelte:element
 					this={n.href ? 'a' : n.onclick ? 'button' : 'div'}
 					href={n.href}

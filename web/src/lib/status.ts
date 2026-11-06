@@ -52,5 +52,10 @@ export function appTone(a: AppView): Tone {
 	return 'green';
 }
 
+const severity: Tone[] = ['green', 'overlay', 'blue', 'yellow', 'red'];
+/** The worst tone among status values, empty ones ignored (a graph node's color). */
+export const worstTone = (values: string[]): Tone =>
+	values.filter(Boolean).map((v) => meta(v)[0]).reduce((w, t) => (severity.indexOf(t) > severity.indexOf(w) ? t : w), 'green');
+
 /** Transition duration that collapses to 0 when the user prefers reduced motion. */
 export const ms = (n: number) => (prefersReducedMotion.current ? 0 : n);
