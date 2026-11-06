@@ -1,4 +1,4 @@
-.PHONY: build web test test-integration e2e docker run stop up down clean
+.PHONY: build web proto test test-integration e2e docker run stop up down clean
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/obleey/omegacd/internal/version.Version=$(VERSION)
@@ -10,6 +10,12 @@ build: web
 
 web:
 	cd web && npm ci && npm run build
+
+# Generated code is committed; CI checks that this leaves it unchanged.
+BUF := go run github.com/bufbuild/buf/cmd/buf@v1.75.0
+proto:
+	$(BUF) lint
+	$(BUF) generate
 
 test:
 	go test ./...

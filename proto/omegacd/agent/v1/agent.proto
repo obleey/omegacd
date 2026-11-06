@@ -1,0 +1,117 @@
+syntax = "proto3";
+
+// Agent ↔ Control Plane messages, in binary WebSocket frames (Q20, Q27). Rules: proto/README.md.
+package omegacd.agent.v1;
+
+option go_package = "github.com/obleey/omegacd/internal/proto/agent/v1;agentv1";
+
+// Envelope is every frame, either direction.
+message Envelope {
+  uint64 id = 1;
+  uint64 reply_to = 2; // the id this answers, e.g. a LogChunk's LogsRequest
+  oneof body {
+    Hello hello = 10;
+    Challenge challenge = 11;
+    ChallengeResponse challenge_response = 12;
+    DesiredState desired_state = 13;
+    BlobRequest blob_request = 14;
+    BlobChunk blob_chunk = 15;
+    Resync resync = 16;
+    StatusReport status_report = 17;
+    SyncOperationReport sync_operation_report = 18;
+    LogsRequest logs_request = 19;
+    LogChunk log_chunk = 20;
+    OutboxEntry outbox_entry = 21;
+    Error error = 22;
+  }
+}
+
+message Hello {
+  string agent_version = 1;
+  uint32 protocol_version = 2;
+  string engine = 3; // "docker" or "podman"
+  string engine_version = 4;
+  bool rootless = 5;
+  string os = 6;
+  string arch = 7;
+  string hostname = 8;
+}
+
+message Challenge {
+  bytes nonce = 1;
+}
+
+message ChallengeResponse {
+  bytes public_key = 1; // ed25519, identifies the Host
+  bytes signature = 2; // of the nonce
+}
+
+message DesiredState {
+  string app = 1;
+  string revision = 2;
+  repeated File files = 3;
+  repeated string compose_files = 4;
+  repeated string profiles = 5;
+}
+
+message File {
+  string path = 1;
+  uint32 mode = 2;
+  bytes sha256 = 3;
+}
+
+message BlobRequest {
+  repeated bytes sha256 = 1;
+}
+
+message BlobChunk {
+  bytes sha256 = 1;
+  uint64 offset = 2;
+  bytes data = 3;
+}
+
+message Resync {
+  map<string, bytes> checksums = 1; // app → sha256 of its deployed file list
+}
+
+// Statuses are strings with the domain package's values (Healthy, Running, …).
+message StatusReport {
+  string app = 1;
+  string revision = 2;
+  string health = 3;
+  bool drifted = 4;
+  string message = 5;
+}
+
+message SyncOperationReport {
+  string app = 1;
+  string revision = 2;
+  string phase = 3;
+  string message = 4;
+  string trigger = 5;
+}
+
+message LogsRequest {
+  string app = 1;
+  string service = 2;
+  uint32 tail = 3;
+  bool follow = 4;
+}
+
+message LogChunk {
+  bytes data = 1;
+}
+
+// OutboxEntry is something that happened while offline, sent on reconnect in seq order.
+message OutboxEntry {
+  uint64 seq = 1;
+  int64 time_unix = 2;
+  oneof event {
+    StatusReport status_report = 3;
+    SyncOperationReport sync_operation_report = 4;
+  }
+}
+
+message Error {
+  string message = 1;
+}

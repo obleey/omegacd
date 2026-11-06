@@ -1,0 +1,15 @@
+# The Forgejo webhook.sh expects (container forgejo-forgejo-1 at http://git.localhost):
+#   docker compose -f test/e2e/forgejo.yaml up -d
+name: forgejo
+services:
+  forgejo:
+    image: codeberg.org/forgejo/forgejo:15
+    ports: ["80:3000"]
+    environment:
+      FORGEJO__security__INSTALL_LOCK: "true"
+      FORGEJO__server__ROOT_URL: http://git.localhost/
+      # webhooks go to OmegaCD on the host (host.docker.internal), a private address Forgejo blocks by default
+      FORGEJO__webhook__ALLOWED_HOST_LIST: "*"
+    volumes: [forgejo:/data]
+volumes:
+  forgejo:
