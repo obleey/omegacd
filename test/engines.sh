@@ -9,6 +9,12 @@ case ${1:-} in
 up)
   root=${2:?usage: test/engines.sh up ROOT}
   mkdir -p "$root"
+  # Both engines run as uid 1000 inside their containers, while the tests write as the runner's user; a real rootless
+  # Agent is its engine's own user. A default ACL lets uid 1000 read and traverse whatever the tests create under root.
+  if [ "$(uname)" = Linux ]; then
+    command -v setfacl >/dev/null || sudo apt-get install -y -q acl >/dev/null
+    setfacl -m u:1000:rx "$root" && setfacl -d -m u:1000:rx "$root"
+  fi
   docker inspect omegacd-it-rootless >/dev/null 2>&1 ||
     docker run -d --name omegacd-it-rootless --privileged -p 127.0.0.1:23750:2375 -e DOCKER_TLS_CERTDIR= \
       -v "$root:$root" docker:29-dind-rootless >/dev/null
