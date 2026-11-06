@@ -172,9 +172,16 @@ func TestOldLayoutMovesOnSync(t *testing.T) {
 	if !r.c.readDecrypted("web")["db.env"] {
 		t.Fatal("old layout's decrypted list not read")
 	}
+	// the new paths make the services differ; that's the move, not drift
+	r.e.mu.Lock()
+	r.e.drift = []domain.ServiceDiff{{Service: "web", Change: "changed", Fields: []string{"config"}}}
+	r.e.mu.Unlock()
 	if v, _ := r.c.Refresh(ctx, "web"); v.SyncStatus != domain.OutOfSync || !strings.Contains(v.SyncMessage, "on the next Sync") {
 		t.Fatalf("before the move: %s %q", v.SyncStatus, v.SyncMessage)
 	}
+	r.e.mu.Lock()
+	r.e.drift = nil
+	r.e.mu.Unlock()
 
 	r.mustSync(t, "web")
 	if got := r.c.liveDir(app("web")); got != filepath.Join(work, "web") {

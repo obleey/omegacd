@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/docker/compose/v5/pkg/api"
+
 	"github.com/obleey/omegacd/internal/domain"
 )
 
@@ -118,8 +120,10 @@ secrets:
 		}
 		placeFor(p, remote, app, dir, asDir)
 		s := p.Services["web"]
-		got := []string{p.WorkingDir, s.EnvFiles[0].Path, s.Volumes[0].Source, s.Volumes[1].Source, p.Configs["conf"].File, p.Secrets["pw"].File}
-		want := []string{"/srv/web", "/srv/web/app.env", "/srv/web/site.conf", "/var/log", "/srv/web/app.conf", "/srv/web/pw.txt"}
+		got := []string{p.WorkingDir, s.EnvFiles[0].Path, s.Volumes[0].Source, s.Volumes[1].Source, p.Configs["conf"].File, p.Secrets["pw"].File,
+			s.CustomLabels[api.WorkingDirLabel], s.CustomLabels[api.ConfigFilesLabel]}
+		want := []string{"/srv/web", "/srv/web/app.env", "/srv/web/site.conf", "/var/log", "/srv/web/app.conf", "/srv/web/pw.txt",
+			"/srv/web", "/srv/web/compose.yaml"}
 		if !slices.Equal(got, want) {
 			t.Errorf("asDir %q: paths = %q, want %q", asDir, got, want)
 		}

@@ -291,11 +291,11 @@ func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fe
 				return true
 			})
 			switch {
+			case c.liveDir(a) != c.appDir(a): // its files' new paths make every service differ: that's not drift
+				v.SyncStatus, v.SyncMessage = domain.OutOfSync, "files move to "+a.Dir()+" in the Host's work dir on the next Sync"
 			case len(diffs) > 0:
 				drift = true
 				v.SyncStatus, v.SyncMessage = domain.OutOfSync, "live state drifted: "+describe(diffs)
-			case c.liveDir(a) != c.appDir(a):
-				v.SyncStatus, v.SyncMessage = domain.OutOfSync, "files move to "+a.Dir()+" in the work dir on the next Sync"
 			default:
 				v.SyncStatus = domain.Synced
 			}

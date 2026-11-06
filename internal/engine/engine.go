@@ -252,7 +252,14 @@ func rebase(p *types.Project, from, to string) {
 		return path
 	}
 	p.WorkingDir = re(p.WorkingDir)
+	for i := range p.ComposeFiles {
+		p.ComposeFiles[i] = re(p.ComposeFiles[i])
+	}
 	for name, s := range p.Services {
+		if s.CustomLabels != nil { // set by load: the paths a person on the Host sees in docker inspect
+			s.CustomLabels[api.WorkingDirLabel] = p.WorkingDir
+			s.CustomLabels[api.ConfigFilesLabel] = strings.Join(p.ComposeFiles, ",")
+		}
 		for i := range s.EnvFiles {
 			s.EnvFiles[i].Path = re(s.EnvFiles[i].Path)
 		}
