@@ -25,7 +25,7 @@ Self-Heal repairs, offline rollbacks).
 **Done when:** schema with migrations from day one, and tests for outbox ordering and survival across restarts.
 
 ### M2-03 · Revision cache
-**Status:** in progress (feat/m2-03-revision-cache)
+**Status:** done (2026-11-06, PR #79)
 **Depends on:** M1-04, M2-02
 
 The content-addressed cache (Q27, Q32): ciphertext only, last 10 Revisions per app (`OMEGACD_AGENT_CACHE_REVISIONS`),
