@@ -17,7 +17,11 @@ up)
       -v "$root:$root" quay.io/podman/stable:v5 podman system service --time=0 tcp:0.0.0.0:8888 >/dev/null
   for port in 23750 23751; do
     for i in $(seq 120); do DOCKER_HOST=tcp://127.0.0.1:$port docker version >/dev/null 2>&1 && break; sleep 1; done
-    DOCKER_HOST=tcp://127.0.0.1:$port docker version >/dev/null || { echo "engine on $port did not come up" >&2; exit 1; }
+    DOCKER_HOST=tcp://127.0.0.1:$port docker version >/dev/null || {
+      echo "engine on $port did not come up; its log:" >&2
+      docker logs --tail 30 "$([ $port = 23750 ] && echo omegacd-it-rootless || echo omegacd-it-podman)" >&2
+      exit 1
+    }
   done
   ;;
 down) docker rm -f omegacd-it-rootless omegacd-it-podman >/dev/null 2>&1 || true ;;
