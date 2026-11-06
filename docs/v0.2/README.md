@@ -28,6 +28,10 @@ Work them in order; a ticket may start once the tickets it depends on are done.
 | M7 | [Hardening](milestones/M7-hardening.md): test pyramid incl. rootless Docker and Podman, e2e, chaos tests, real-world run, docs | 5 |
 | M8 | [UI polish, then release](milestones/M8-ui-polish.md): UX, accessibility, performance, visuals, release notes, v0.1.0 + v0.2.0 | 6 |
 
+A ticket is done when its "Done when" holds, proven by tests at every level: unit tests, an end-to-end test in
+`test/e2e` through the real binary (or, for a piece with nothing to drive yet, in the first ticket that exposes it),
+and the whole suite green: unit, integration and `make e2e` (Q50 adds the rest of the matrix in M7).
+
 A ticket's **Status** line is the source of truth while it's worked on: set it to `in progress (branch)` when
 starting and `done (date, PR)` when merged, in the same PR.
 
