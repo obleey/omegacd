@@ -47,7 +47,7 @@ container, check path parity at start (Q21).
 is refused, and a container without path parity refuses to start with an explanation.
 
 ### M2-05 · Secret sources and decryption in memory
-**Status:** todo
+**Status:** in progress (feat/m2-05-secrets)
 **Depends on:** M2-04
 
 A `SecretSource` interface on the Agent (Q29) with SOPS+age as the only v0.2 implementation. The Agent generates its
@@ -100,7 +100,8 @@ and the outbox entry is produced.
 An Application may name its own work dir (Q57): `workDir:` (absolute) in its definition; empty means the Host's
 work dir, so the folder stays `<OMEGACD_AGENT_WORKDIR>/<name>`. Otherwise the folder is `<workDir>/<name>` (or
 `<workDir>/<parent>/<name>`); a Child Application sets its own in its definition, nothing is inherited from its
-App of Apps. A root that doesn't exist yet is created like the Host's work dir. The Agent accepts a work dir only under a root in `OMEGACD_AGENT_WORKDIR_ALLOW`
+App of Apps. A root that doesn't exist yet is created like the Host's work dir; if the Agent's user can't create it,
+the Sync fails naming the folder and the command to run once (`sudo install -d -o <user> -g <group> <root>`). The Agent accepts a work dir only under a root in `OMEGACD_AGENT_WORKDIR_ALLOW`
 (comma-separated absolute paths) or its own work dir, and refuses others in the Sync with a message naming the
 setting. Ownership rules apply in every root; in a container every allowed root needs path parity, checked at
 start. Changing an Application's work dir moves its files like changing its App of Apps does. The field travels in
@@ -108,4 +109,5 @@ the Desired State (protobuf) and the Application (definition, database, API) her
 
 **Done when:** an Application in a second allowed root deploys there, one outside every allowed root is refused
 without a file written, moving between roots leaves no folder behind, and an allowed root without path parity
-stops a containerised Agent at start, each with unit and e2e tests.
+stops a containerised Agent at start, a root the Agent can't create fails with the folder and the `install -d`
+command in the message, each with unit and e2e tests.
