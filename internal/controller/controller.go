@@ -69,10 +69,11 @@ type appState struct {
 }
 
 type Controller struct {
-	cfg  Config
-	mu   sync.Mutex
-	apps map[string]*appState
-	subs map[chan domain.Event]struct{}
+	cfg     Config
+	mu      sync.Mutex
+	claimMu sync.Mutex // children syncing at once claim their App of Apps' folder together
+	apps    map[string]*appState
+	subs    map[chan domain.Event]struct{}
 }
 
 func New(cfg Config) *Controller {

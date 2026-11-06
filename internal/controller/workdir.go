@@ -32,6 +32,8 @@ func (c *Controller) liveDir(a domain.Application) string {
 // its App of Apps' folder. Every Sync makes a's folder match Git and deletes other files, so a folder that already
 // holds someone else's files (say /opt/services/alloy, host-only data) is refused, never synced into.
 func (c *Controller) claim(a domain.Application) error {
+	c.claimMu.Lock()
+	defer c.claimMu.Unlock()
 	legacy := filepath.Join(c.cfg.WorkDir, domain.LegacyDir)
 	if a.Parent != "" {
 		if err := claimDir(filepath.Join(c.cfg.WorkDir, a.Parent), a.Parent, legacy); err != nil {
