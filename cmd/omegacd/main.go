@@ -108,6 +108,7 @@ func run(log *slog.Logger) error {
 			return err
 		}
 		s.KnownHostsFile = knownHosts
+		go s.CollectBlobs(ctx, log)
 		src = s
 	}
 
@@ -213,6 +214,7 @@ func runSourceServer(log *slog.Logger) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go src.CollectBlobs(ctx, log)
 	go func() {
 		<-ctx.Done()
 		g.GracefulStop()

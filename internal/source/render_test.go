@@ -3,6 +3,7 @@ package source
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -201,4 +202,73 @@ func TestPlainSecrets(t *testing.T) {
 	if strings.Contains(strings.Join(got, ""), "hunter2") {
 		t.Fatal("a warning must not repeat the secret")
 	}
+}
+
+func TestRenderCacheKeepsRecentlyUsed(t *testing.T) {
+	f := newFixture(t)
+	var shas []string
+	for i := range 3 {
+		shas = append(shas, f.commit(map[string]string{"compose.yaml": fmt.Sprintf("services: {s%d: {image: x}}\n", i)}))
+	}
+	s := server(t)
+	s.maxRendered = 2
+	ctx := t.Context()
+	render := func(sha string) {
+		if _, err := s.Render(ctx, domain.RenderSpec{RepoURL: f.dir, Revision: sha}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cachedRevs := func() (revs []string) {
+		for e := s.recent.Front(); e != nil; e = e.Next() {
+			revs = append(revs, strings.Split(e.Value.(*cached).key, "\x00")[1][:1])
+		}
+		return revs
+	}
+	render(shas[0])
+	render(shas[1])
+	render(shas[0]) // used again: now the most recent
+	render(shas[2]) // evicts shas[1], the least recently used
+	if got, want := cachedRevs(), []string{shas[2][:1], shas[0][:1]}; !slices.Equal(got, want) || len(s.rendered) != 2 {
+		t.Fatalf("cached %v (%d in map), want %v", got, len(s.rendered), want)
+	}
+}
+
+func TestCollectBlobs(t *testing.T) {
+	f := newFixture(t)
+	old := f.commit(map[string]string{"compose.yaml": "services: {old: {image: x}}\n"})
+	cur := f.commit(map[string]string{"compose.yaml": "services: {cur: {image: x}}\n"})
+	s := server(t)
+	s.maxRendered = 1
+	ctx := t.Context()
+	rOld, _ := s.Render(ctx, domain.RenderSpec{RepoURL: f.dir, Revision: old})
+	rCur, _ := s.Render(ctx, domain.RenderSpec{RepoURL: f.dir, Revision: cur}) // evicts old's render
+	ageBlobs(t, s)
+	if n, err := s.collectBlobs(); err != nil || n != 1 {
+		t.Fatalf("collected %d, %v; want old's compose.yaml only", n, err)
+	}
+	if _, err := s.Blob(ctx, rOld.Files[0].SHA256); err == nil {
+		t.Error("an unused blob survived")
+	}
+	if _, err := s.Blob(ctx, rCur.Files[0].SHA256); err != nil {
+		t.Errorf("a cached render's blob was collected: %v", err)
+	}
+	// a cache only: rendering the old commit again puts it back (evicting cur's render, whose aged blob goes)
+	rOld, _ = s.Render(ctx, domain.RenderSpec{RepoURL: f.dir, Revision: old})
+	if n, err := s.collectBlobs(); err != nil || n != 1 {
+		t.Fatalf("collected %d, %v; want cur's compose.yaml only", n, err)
+	}
+	if b, err := s.Blob(ctx, rOld.Files[0].SHA256); err != nil || !strings.Contains(string(b), "old") {
+		t.Errorf("re-rendered blob: %q, %v", b, err)
+	}
+}
+
+// ageBlobs makes every blob older than the grace period.
+func ageBlobs(t *testing.T, s *Server) {
+	past := time.Now().Add(-2 * blobGrace)
+	filepath.WalkDir(filepath.Dir(s.staging)+"/blobs", func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			os.Chtimes(p, past, past)
+		}
+		return err
+	})
 }
