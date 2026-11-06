@@ -165,8 +165,18 @@ func TestOldLayoutMovesOnSync(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(old, "web", "compose.yaml")); err != nil {
 		t.Fatalf("old folder gone before a Sync: %v", err)
 	}
+	// until then its status, Diff and files are read from there, its decrypted files still masked
+	if got := r.c.liveDir(app("web")); got != filepath.Join(old, "web") {
+		t.Fatalf("liveDir before the move: %s", got)
+	}
+	if !r.c.readDecrypted("web")["db.env"] {
+		t.Fatal("old layout's decrypted list not read")
+	}
 
 	r.mustSync(t, "web")
+	if got := r.c.liveDir(app("web")); got != filepath.Join(work, "web") {
+		t.Fatalf("liveDir after the move: %s", got)
+	}
 	if got := readFile(t, filepath.Join(work, "web", "compose.yaml")); got != "services: {}\n" {
 		t.Fatalf("new folder: %q", got)
 	}

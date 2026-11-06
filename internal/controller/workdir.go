@@ -17,6 +17,17 @@ func (c *Controller) appDir(a domain.Application) string {
 	return filepath.Join(c.cfg.WorkDir, filepath.FromSlash(a.Dir()))
 }
 
+// liveDir is where a's deployed files are: its folder or, after the upgrade from the old layout and until a's
+// next Sync moves it, <work dir>/apps/<name>.
+func (c *Controller) liveDir(a domain.Application) string {
+	dir := c.appDir(a)
+	if old := filepath.Join(c.cfg.WorkDir, domain.LegacyDir, a.Name); !composeFilesPresent(dir, a.ComposeFilesIn(dir)) &&
+		composeFilesPresent(old, a.ComposeFilesIn(old)) {
+		return old
+	}
+	return dir
+}
+
 // claim makes sure a Sync of a writes only into folders OmegaCD made for it: its own and, for a Child Application,
 // its App of Apps' folder. Every Sync makes a's folder match Git and deletes other files, so a folder that already
 // holds someone else's files (say /opt/services/alloy, host-only data) is refused, never synced into.

@@ -153,9 +153,8 @@ func (c *Controller) restoreWorkDirs(ctx context.Context) {
 			c.dropSopsCopies(a)
 			continue
 		}
-		// upgraded from <work dir>/apps/<name>: it keeps running from there until its next Sync moves it
-		if old := filepath.Join(c.cfg.WorkDir, domain.LegacyDir, a.Name); composeFilesPresent(old, a.ComposeFilesIn(old)) {
-			continue
+		if c.liveDir(a) != c.appDir(a) {
+			continue // still in the old layout: running from there until its next Sync moves it
 		}
 		last, err := c.cfg.Store.LastSucceededOp(ctx, a.Name)
 		if err != nil {
@@ -272,7 +271,7 @@ func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fe
 			v.SyncStatus, v.SyncMessage = domain.OutOfSync, "not in Git: "+strings.Join(gone, ", ")
 		}
 	default:
-		diffs, derr := c.cfg.Engine.Diff(ctx, a, c.appDir(a), "")
+		diffs, derr := c.cfg.Engine.Diff(ctx, a, c.liveDir(a), "")
 		switch {
 		case derr != nil:
 			v.SyncMessage = derr.Error()
@@ -984,7 +983,7 @@ func (c *Controller) Diff(ctx context.Context, name string) (domain.DiffView, er
 	if err := c.cfg.Engine.Validate(ctx, a, stage); err != nil {
 		return domain.DiffView{}, err
 	}
-	if dv.Services, err = c.cfg.Engine.Diff(ctx, a, stage, c.appDir(a)); err != nil {
+	if dv.Services, err = c.cfg.Engine.Diff(ctx, a, stage, c.liveDir(a)); err != nil {
 		return domain.DiffView{}, err
 	}
 	if dv.Desired, err = composeText(a, stage); err != nil {
@@ -992,7 +991,7 @@ func (c *Controller) Diff(ctx context.Context, name string) (domain.DiffView, er
 	}
 	dv.Warnings = plainSecrets(a, stage)
 	// Live: the copy of the deployed Revision on the Host (kept here too for remote Hosts)
-	if live := c.appDir(a); dirExists(live) {
+	if live := c.liveDir(a); dirExists(live) {
 		if dv.Live, err = composeText(a, live); err != nil {
 			c.cfg.Log.Warn("read live compose files", "app", name, "err", err)
 		}
@@ -1013,7 +1012,7 @@ func (c *Controller) Resources(ctx context.Context, name string) (domain.LiveSta
 	if err != nil {
 		return domain.LiveState{}, err
 	}
-	dir := c.appDir(a)
+	dir := c.liveDir(a)
 	if _, err := os.Stat(dir); err != nil {
 		return live, nil // never synced
 	}
@@ -1091,7 +1090,7 @@ func (c *Controller) ResourceDetail(ctx context.Context, name, kind, resName str
 
 // resolveInAppDir joins rel to the app's working dir and refuses anything resolving outside it, symlinks included.
 func (c *Controller) resolveInAppDir(a domain.Application, rel string) (string, error) {
-	dir, err := filepath.EvalSymlinks(c.appDir(a))
+	dir, err := filepath.EvalSymlinks(c.liveDir(a))
 	if err != nil {
 		return "", err
 	}
@@ -1243,7 +1242,10 @@ func (c *Controller) writeDecrypted(name, dir string, written []string) error {
 }
 
 func (c *Controller) readDecrypted(name string) map[string]bool {
-	b, _ := os.ReadFile(c.decryptedList(name))
+	b, err := os.ReadFile(c.decryptedList(name))
+	if errors.Is(err, fs.ErrNotExist) { // the old layout's list, until the app's next Sync
+		b, _ = os.ReadFile(filepath.Join(c.cfg.WorkDir, domain.LegacyDir, "."+name+".decrypted"))
+	}
 	set := map[string]bool{}
 	for line := range strings.Lines(string(b)) {
 		if line = strings.TrimSpace(line); line != "" {
