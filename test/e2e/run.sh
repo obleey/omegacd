@@ -3,7 +3,8 @@
 # drives it through the CLI and API, and removes everything it created. Run them one at a time (make e2e).
 #
 # Needs: docker with compose, git, curl, python3, age-keygen, sops; readme-walkthrough.sh fetches this repository
-# from GitHub; webhook.sh needs a running Forgejo (OMEGACD_E2E_FORGEJO, default forgejo-forgejo-1) and skips without.
+# from GitHub; webhook.sh needs a running Forgejo (OMEGACD_E2E_FORGEJO, default forgejo-forgejo-1; start one with
+# docker compose -f test/e2e/forgejo.yaml up -d) and skips without.
 # OMEGACD_BIN picks the binary (default bin/omegacd); name scripts to run only those: run.sh secrets adopt
 set -u
 cd "$(dirname "$0")"
