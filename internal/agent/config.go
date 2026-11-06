@@ -30,7 +30,8 @@ var settings = []struct{ name, def, help string }{
 	{"OMEGACD_AGENT_STATE_DIR", "$STATE_DIRECTORY (systemd), else $XDG_DATA_HOME/omegacd-agent, else ~/.local/share/omegacd-agent",
 		"keys, database and cache; keep it, losing it loses the Host Key"},
 	{"OMEGACD_AGENT_WORKDIR", "$XDG_RUNTIME_DIR/omegacd, else /run/omegacd",
-		"where Applications' files are written (RAM by default; a disk path keeps them across reboots)"},
+		"where Applications' files are written, decrypted secrets included: in RAM (tmpfs, the default) they never touch a " +
+			"disk and are restored from the cache after a reboot; on a disk path they stay there across reboots (the Agent warns)"},
 	{"DOCKER_HOST", "the engine's default socket", "Docker or Podman socket, e.g. unix:///run/user/1000/docker.sock for rootless Docker"},
 	{"OMEGACD_AGENT_CACHE_REVISIONS", "10", "Revisions kept per Application for offline restore and rollback"},
 	{"OMEGACD_AGENT_SECRET_GROUP", "", "a group (name or gid) decrypted files belong to, mode 0640, for containers that read them " +

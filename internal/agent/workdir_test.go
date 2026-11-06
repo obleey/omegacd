@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/moby/moby/api/types/container"
+
+	"github.com/obleey/omegacd/internal/domain"
 )
 
 func newWorkDir(t *testing.T) (*WorkDir, *source, string) {
@@ -121,5 +123,27 @@ func TestPathParity(t *testing.T) {
 		if err != nil && !strings.Contains(err.Error(), "-v /opt/services:/opt/services") {
 			t.Errorf("%s: the message doesn't say how to fix it: %v", name, err)
 		}
+	}
+}
+
+// A deployed folder is complete although decrypting replaced x.sops.env with x.env; a wiped one isn't, and neither is
+// one where Docker made a directory in place of a file.
+func TestComplete(t *testing.T) {
+	dir := t.TempDir()
+	r := Revision{Files: []domain.File{{Path: "compose.yaml"}, {Path: "conf/app.conf"}, {Path: ".sops.env"}}}
+	os.MkdirAll(filepath.Join(dir, "conf"), 0o755)
+	for _, f := range []string{"compose.yaml", "conf/app.conf", ".env"} {
+		os.WriteFile(filepath.Join(dir, f), []byte("x"), 0o600)
+	}
+	if !complete(dir, r) {
+		t.Fatal("a deployed folder counts as incomplete")
+	}
+	os.Remove(filepath.Join(dir, "conf/app.conf"))
+	os.Mkdir(filepath.Join(dir, "conf/app.conf"), 0o755) // Docker's placeholder
+	if complete(dir, r) {
+		t.Fatal("a placeholder directory counts as the file")
+	}
+	if complete(t.TempDir(), r) {
+		t.Fatal("an empty folder counts as complete")
 	}
 }

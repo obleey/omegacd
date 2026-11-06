@@ -136,7 +136,7 @@ func TestAgentDeploys(t *testing.T) {
 	}
 
 	// a stopped container is seen: an engine event, then Degraded
-	changed := make(chan string, 10)
+	changed := make(chan string, 100)
 	wctx, stop := context.WithCancel(ctx)
 	defer stop()
 	go ag.Watch(wctx, func(app string) { changed <- app })
@@ -149,13 +149,17 @@ func TestAgentDeploys(t *testing.T) {
 	if _, err := c.ContainerStop(ctx, live.Containers[0].ID, client.ContainerStopOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case got := <-changed:
-		if got != name {
-			t.Fatalf("event for %s, want %s", got, name)
+	// other tests' projects on the same engine send events too: wait for this app's
+	for deadline := time.After(30 * time.Second); ; {
+		select {
+		case got := <-changed:
+			if got != name {
+				continue
+			}
+		case <-deadline:
+			t.Fatal("no event for the stopped container")
 		}
-	case <-time.After(30 * time.Second):
-		t.Fatal("no event for the stopped container")
+		break
 	}
 	if live, _ := ag.Status(ctx, name); live.Health == domain.Healthy {
 		t.Fatal("a stopped container still Healthy")

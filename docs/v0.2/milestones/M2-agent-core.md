@@ -73,15 +73,20 @@ Prune. Detect and report the engine (Docker/Podman), version, rootless (Q34). Fi
 rootless Podman.
 
 ### M2-07 · Offline autonomy and restore
-**Status:** todo
+**Status:** done (2026-11-06, PR #85)
 **Depends on:** M2-06
 
 With no Control Plane (Q24): restore apps after a reboot from the cache (RAM work dir), run Self-Heal from the last
 Desired State, never deploy new Revisions, never delete or stop an app because the Control Plane is gone; record
-everything in the outbox.
+everything in the outbox. The restore is two steps (Q59): the files (`omegacd agent restore --files`, needs no engine)
+and then Compose; root-owned placeholders Docker made for missing bind-mount sources are removed through Docker with
+a container of the Agent's own image when the Agent runs in a container, and reported with the fix otherwise. A work
+dir that isn't in RAM (tmpfs) keeps decrypted secrets on disk across reboots: the Agent says so at start (a warning
+naming the folder and how to keep them off disk), and `--help` explains the choice.
 
-**Done when:** tests reboot (wipe the RAM work dir) with no Control Plane and get every app back with its files, and
-a stopped container is repaired offline when Self-Heal is on.
+**Done when:** tests reboot (wipe the RAM work dir) with no Control Plane and get every app back with its files, also
+when rootful Docker restarted a container first (its placeholders), a stopped container is repaired offline when
+Self-Heal is on, and a work dir on disk is warned about at start (one in RAM isn't).
 
 ### M2-08 · Offline rollback on the Host
 **Status:** todo
@@ -104,7 +109,8 @@ App of Apps. A root that doesn't exist yet is created like the Host's work dir; 
 the Sync fails naming the folder and the command to run once (`sudo install -d -o <user> -g <group> <root>`). The Agent accepts a work dir only under a root in `OMEGACD_AGENT_WORKDIR_ALLOW`
 (comma-separated absolute paths) or its own work dir, and refuses others in the Sync with a message naming the
 setting. Ownership rules apply in every root; in a container every allowed root needs path parity, checked at
-start. Changing an Application's work dir moves its files like changing its App of Apps does. The field travels in
+start, and one not in RAM gets the same warning as the Host's work dir (M2-07). Changing an Application's work dir
+moves its files like changing its App of Apps does. The field travels in
 the Desired State (protobuf) and the Application (definition, database, API) here; the UI field is M5-07.
 
 **Done when:** an Application in a second allowed root deploys there, one outside every allowed root is refused

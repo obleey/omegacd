@@ -43,6 +43,9 @@ Your VPS and a Host behind NAT, installed with `install.sh`, a real stack import
 **Depends on:** M7-03
 
 README rewritten for v0.2 (concepts, install modes, Agents, Source Server, proxies, security model, upgrade note:
-reinstall from v0.1), TESTING.md, ROADMAP.md, SECURITY.md (trust boundaries), ADRs final, screenshots.
+reinstall from v0.1), TESTING.md, ROADMAP.md, SECURITY.md (trust boundaries), ADRs final, screenshots. The Agent's
+work dir in RAM vs on disk (where decrypted secrets live, what a reboot does, Q19/Q59) and the file modes of decrypted
+secrets per engine (Q58) get their own section, from the draft [user-ids.md](../user-ids.md): rootful vs rootless,
+who owns which files, data folders and `chown`, the "user 1000" convention, choosing an engine.
 
 **Done when:** a new user installs from the README alone (the v0.1 checklist's test 6, redone).
