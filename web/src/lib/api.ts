@@ -224,6 +224,13 @@ export async function api<T = unknown>(method: string, path: string, body?: unkn
 
 export const get = <T>(path: string) => api<T>('GET', path);
 
+export type PendingChild = { name: string; host?: string };
+/** Child Applications an App of Apps declares in Git but hasn't created yet: its next Sync creates them. */
+export const pendingChildren = (app: string) =>
+	get<DiffView>(`/apps/${enc(app)}/diff`).then((d) =>
+		(d.services ?? []).filter((s) => !s.kind && s.change === 'added').map((s): PendingChild => ({ name: s.service, host: s.host }))
+	);
+
 export function errMsg(e: unknown): string {
 	return e instanceof Error ? e.message : String(e);
 }

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { ago, enc, get, short, type AppView, type DiffView } from '../api.ts';
+	import { ago, enc, pendingChildren, short, type AppView, type PendingChild } from '../api.ts';
 	import Badge from '../Badge.svelte';
 	import Icon from '../Icon.svelte';
 	import Empty from '../Empty.svelte';
@@ -12,11 +12,11 @@
 	let mode = $state<'graph' | 'list'>(matchMedia('(max-width: 640px)').matches ? 'list' : 'graph');
 
 	// Children declared in Git but not created yet: the App of Apps' next Sync creates them
-	let pending = $state<{ name: string; host?: string }[]>([]);
+	let pending = $state<PendingChild[]>([]);
 	$effect(() => {
 		const key = `${app.targetSHA}:${apps.length}`;
-		get<DiffView>(`/apps/${enc(app.name)}/diff`)
-			.then((d) => key && (pending = (d.services ?? []).filter((s) => !s.kind && s.change === 'added').map((s) => ({ name: s.service, host: s.host }))))
+		pendingChildren(app.name)
+			.then((p) => key && (pending = p))
 			.catch(() => (pending = []));
 	});
 	let nodes = $derived<GNode[]>([
