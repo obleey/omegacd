@@ -62,7 +62,7 @@ server and client certificates at install. It refuses anything without the Contr
 client without the certificate is refused, and the docs explain TLS passthrough for proxies in between.
 
 ### M1-06 · Git credentials owned by the Source Server
-**Status:** in progress (feat/m1-06-source-credentials)
+**Status:** done (2026-11-06, PR #73)
 **Depends on:** M1-03, M1-05
 
 The Source Server stores Repository credentials sealed with **its own key** (generated at its first start, in its
