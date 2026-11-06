@@ -4,7 +4,7 @@
 // - protoc             (unknown)
 // source: omegacd/source/v1/source.proto
 
-// Control Plane → Source Server, gRPC over mTLS (Q45). Rules: proto/README.md.
+// Control Plane → Source Server, gRPC over mTLS (Q45). Mirrors domain.Source. Rules: proto/README.md.
 
 package sourcev1
 
@@ -22,8 +22,10 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	SourceService_Resolve_FullMethodName          = "/omegacd.source.v1.SourceService/Resolve"
+	SourceService_Invalidate_FullMethodName       = "/omegacd.source.v1.SourceService/Invalidate"
 	SourceService_Render_FullMethodName           = "/omegacd.source.v1.SourceService/Render"
 	SourceService_Blob_FullMethodName             = "/omegacd.source.v1.SourceService/Blob"
+	SourceService_Diff_FullMethodName             = "/omegacd.source.v1.SourceService/Diff"
 	SourceService_CheckAccess_FullMethodName      = "/omegacd.source.v1.SourceService/CheckAccess"
 	SourceService_ListCredentials_FullMethodName  = "/omegacd.source.v1.SourceService/ListCredentials"
 	SourceService_PutCredential_FullMethodName    = "/omegacd.source.v1.SourceService/PutCredential"
@@ -35,8 +37,10 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type SourceServiceClient interface {
 	Resolve(ctx context.Context, in *ResolveRequest, opts ...grpc.CallOption) (*ResolveResponse, error)
+	Invalidate(ctx context.Context, in *InvalidateRequest, opts ...grpc.CallOption) (*InvalidateResponse, error)
 	Render(ctx context.Context, in *RenderRequest, opts ...grpc.CallOption) (*RenderResponse, error)
 	Blob(ctx context.Context, in *BlobRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[BlobResponse], error)
+	Diff(ctx context.Context, in *DiffRequest, opts ...grpc.CallOption) (*DiffResponse, error)
 	CheckAccess(ctx context.Context, in *CheckAccessRequest, opts ...grpc.CallOption) (*CheckAccessResponse, error)
 	ListCredentials(ctx context.Context, in *ListCredentialsRequest, opts ...grpc.CallOption) (*ListCredentialsResponse, error)
 	PutCredential(ctx context.Context, in *PutCredentialRequest, opts ...grpc.CallOption) (*PutCredentialResponse, error)
@@ -55,6 +59,16 @@ func (c *sourceServiceClient) Resolve(ctx context.Context, in *ResolveRequest, o
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ResolveResponse)
 	err := c.cc.Invoke(ctx, SourceService_Resolve_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sourceServiceClient) Invalidate(ctx context.Context, in *InvalidateRequest, opts ...grpc.CallOption) (*InvalidateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(InvalidateResponse)
+	err := c.cc.Invoke(ctx, SourceService_Invalidate_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -89,6 +103,16 @@ func (c *sourceServiceClient) Blob(ctx context.Context, in *BlobRequest, opts ..
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type SourceService_BlobClient = grpc.ServerStreamingClient[BlobResponse]
+
+func (c *sourceServiceClient) Diff(ctx context.Context, in *DiffRequest, opts ...grpc.CallOption) (*DiffResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DiffResponse)
+	err := c.cc.Invoke(ctx, SourceService_Diff_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
 
 func (c *sourceServiceClient) CheckAccess(ctx context.Context, in *CheckAccessRequest, opts ...grpc.CallOption) (*CheckAccessResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
@@ -135,8 +159,10 @@ func (c *sourceServiceClient) DeleteCredential(ctx context.Context, in *DeleteCr
 // for forward compatibility.
 type SourceServiceServer interface {
 	Resolve(context.Context, *ResolveRequest) (*ResolveResponse, error)
+	Invalidate(context.Context, *InvalidateRequest) (*InvalidateResponse, error)
 	Render(context.Context, *RenderRequest) (*RenderResponse, error)
 	Blob(*BlobRequest, grpc.ServerStreamingServer[BlobResponse]) error
+	Diff(context.Context, *DiffRequest) (*DiffResponse, error)
 	CheckAccess(context.Context, *CheckAccessRequest) (*CheckAccessResponse, error)
 	ListCredentials(context.Context, *ListCredentialsRequest) (*ListCredentialsResponse, error)
 	PutCredential(context.Context, *PutCredentialRequest) (*PutCredentialResponse, error)
@@ -154,11 +180,17 @@ type UnimplementedSourceServiceServer struct{}
 func (UnimplementedSourceServiceServer) Resolve(context.Context, *ResolveRequest) (*ResolveResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Resolve not implemented")
 }
+func (UnimplementedSourceServiceServer) Invalidate(context.Context, *InvalidateRequest) (*InvalidateResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Invalidate not implemented")
+}
 func (UnimplementedSourceServiceServer) Render(context.Context, *RenderRequest) (*RenderResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Render not implemented")
 }
 func (UnimplementedSourceServiceServer) Blob(*BlobRequest, grpc.ServerStreamingServer[BlobResponse]) error {
 	return status.Error(codes.Unimplemented, "method Blob not implemented")
+}
+func (UnimplementedSourceServiceServer) Diff(context.Context, *DiffRequest) (*DiffResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Diff not implemented")
 }
 func (UnimplementedSourceServiceServer) CheckAccess(context.Context, *CheckAccessRequest) (*CheckAccessResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CheckAccess not implemented")
@@ -211,6 +243,24 @@ func _SourceService_Resolve_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SourceService_Invalidate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InvalidateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SourceServiceServer).Invalidate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SourceService_Invalidate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SourceServiceServer).Invalidate(ctx, req.(*InvalidateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _SourceService_Render_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(RenderRequest)
 	if err := dec(in); err != nil {
@@ -239,6 +289,24 @@ func _SourceService_Blob_Handler(srv interface{}, stream grpc.ServerStream) erro
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type SourceService_BlobServer = grpc.ServerStreamingServer[BlobResponse]
+
+func _SourceService_Diff_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DiffRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SourceServiceServer).Diff(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SourceService_Diff_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SourceServiceServer).Diff(ctx, req.(*DiffRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
 
 func _SourceService_CheckAccess_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(CheckAccessRequest)
@@ -324,8 +392,16 @@ var SourceService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _SourceService_Resolve_Handler,
 		},
 		{
+			MethodName: "Invalidate",
+			Handler:    _SourceService_Invalidate_Handler,
+		},
+		{
 			MethodName: "Render",
 			Handler:    _SourceService_Render_Handler,
+		},
+		{
+			MethodName: "Diff",
+			Handler:    _SourceService_Diff_Handler,
 		},
 		{
 			MethodName: "CheckAccess",

@@ -1,14 +1,16 @@
 syntax = "proto3";
 
-// Control Plane → Source Server, gRPC over mTLS (Q45). Rules: proto/README.md.
+// Control Plane → Source Server, gRPC over mTLS (Q45). Mirrors domain.Source. Rules: proto/README.md.
 package omegacd.source.v1;
 
 option go_package = "github.com/obleey/omegacd/internal/proto/source/v1;sourcev1";
 
 service SourceService {
   rpc Resolve(ResolveRequest) returns (ResolveResponse);
+  rpc Invalidate(InvalidateRequest) returns (InvalidateResponse);
   rpc Render(RenderRequest) returns (RenderResponse);
   rpc Blob(BlobRequest) returns (stream BlobResponse);
+  rpc Diff(DiffRequest) returns (DiffResponse);
   rpc CheckAccess(CheckAccessRequest) returns (CheckAccessResponse);
   rpc ListCredentials(ListCredentialsRequest) returns (ListCredentialsResponse);
   rpc PutCredential(PutCredentialRequest) returns (PutCredentialResponse);
@@ -24,33 +26,69 @@ message ResolveResponse {
   string revision = 1;
 }
 
+message InvalidateRequest {
+  string repo_url = 1;
+}
+
+message InvalidateResponse {}
+
 message RenderRequest {
   string repo_url = 1;
   string revision = 2;
   string path = 3;
   repeated string compose_files = 4;
   repeated string profiles = 5;
+  bool apps = 6; // an App of Apps: read its definitions
 }
 
 message RenderResponse {
   repeated File files = 1;
-  repeated string compose_files = 2;
+  string checksum = 2;
   repeated string warnings = 3;
-  repeated string errors = 4;
+  string invalid = 4; // why it can't be deployed, empty if it can
+  repeated AppDefinition apps = 5;
 }
 
 message File {
   string path = 1;
-  uint32 mode = 2;
-  bytes sha256 = 3;
+  uint32 mode = 2; // Go fs.FileMode bits
+  string sha256 = 3; // hex
+}
+
+// AppDefinition is a Child Application as declared in Git.
+message AppDefinition {
+  string name = 1;
+  string kind = 2;
+  string repo_url = 3;
+  string path = 4;
+  string target_revision = 5;
+  repeated string compose_files = 6;
+  repeated string profiles = 7;
+  string host = 8;
+  bool auto_sync = 9;
+  bool self_heal = 10;
+  bool prune = 11;
+  bool prune_volumes = 12;
+  bool adopt = 13;
 }
 
 message BlobRequest {
-  bytes sha256 = 1;
+  string sha256 = 1;
 }
 
 message BlobResponse {
-  bytes data = 1;
+  bytes data = 1; // a chunk; the stream ends with the blob
+}
+
+message DiffRequest {
+  string repo_url = 1;
+  string from_revision = 2; // empty: from nothing
+  string to_revision = 3;
+  string path = 4;
+}
+
+message DiffResponse {
+  string diff = 1;
 }
 
 message CheckAccessRequest {

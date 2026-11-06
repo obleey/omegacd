@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,10 +17,14 @@ import (
 	"syscall"
 	"time"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+
 	"github.com/obleey/omegacd/internal/api"
 	"github.com/obleey/omegacd/internal/cli"
 	"github.com/obleey/omegacd/internal/controller"
 	"github.com/obleey/omegacd/internal/crypto"
+	"github.com/obleey/omegacd/internal/domain"
 	"github.com/obleey/omegacd/internal/engine"
 	"github.com/obleey/omegacd/internal/secrets"
 	"github.com/obleey/omegacd/internal/source"
@@ -28,8 +33,12 @@ import (
 )
 
 func main() {
-	// no args or "server" runs the server; anything else is a CLI command
-	if len(os.Args) > 1 && os.Args[1] != "server" {
+	// no args or "server" runs the server, "source-server" the standalone Source Server; anything else is a CLI command
+	run := run
+	switch {
+	case len(os.Args) > 1 && os.Args[1] == "source-server":
+		run = runSourceServer
+	case len(os.Args) > 1 && os.Args[1] != "server":
 		os.Exit(cli.Main(os.Args[1:]))
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -84,11 +93,23 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	defer eng.Close()
-	src, err := source.NewServer(dataDir, st.ListRepoCredentials)
-	if err != nil {
-		return err
+	var src domain.Source
+	if u := os.Getenv("OMEGACD_SOURCE_SERVER"); u != "" {
+		c, err := source.Dial(u, sourceTLSDir())
+		if err != nil {
+			return err
+		}
+		defer c.Close()
+		src = c
+		log.Info("using the standalone source server", "url", u)
+	} else {
+		s, err := source.NewServer(dataDir, st.ListRepoCredentials)
+		if err != nil {
+			return err
+		}
+		s.KnownHostsFile = knownHosts
+		src = s
 	}
-	src.KnownHostsFile = knownHosts
 
 	selfID, _ := os.Hostname() // inside a container this is the container ID prefix
 	ctl := controller.New(controller.Config{
@@ -136,6 +157,43 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	return nil
+}
+
+func sourceTLSDir() string {
+	return cmp.Or(os.Getenv("OMEGACD_SOURCE_TLS_DIR"), "/etc/omegacd/source-tls")
+}
+
+// runSourceServer serves the Source Server over gRPC with mutual TLS: only the Control Plane, holding the client
+// certificate from omegacd source-certs, gets in (Q15, Q45).
+func runSourceServer(log *slog.Logger) error {
+	var (
+		addr    = cmp.Or(os.Getenv("OMEGACD_SOURCE_ADDR"), ":9090")
+		dataDir = cmp.Or(os.Getenv("OMEGACD_DATA"), "/data")
+	)
+	cfg, err := source.ServerTLS(sourceTLSDir())
+	if err != nil {
+		return fmt.Errorf("source server certificates (omegacd source-certs makes them): %w", err)
+	}
+	// ponytail: no repository credentials until they move here (M1-06): public repositories only
+	src, err := source.NewServer(dataDir, nil)
+	if err != nil {
+		return err
+	}
+	src.KnownHostsFile = cmp.Or(os.Getenv("OMEGACD_SSH_KNOWN_HOSTS"), "/etc/omegacd/known_hosts")
+	g := grpc.NewServer(grpc.Creds(credentials.NewTLS(cfg)))
+	source.Serve(g, src)
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go func() {
+		<-ctx.Done()
+		g.GracefulStop()
+	}()
+	log.Info("omegacd source server listening", "addr", addr, "data", dataDir)
+	return g.Serve(l)
 }
 
 // localHostDisabled reads OMEGACD_LOCAL_HOST: "false" where no Docker engine runs next to OmegaCD (Kubernetes).

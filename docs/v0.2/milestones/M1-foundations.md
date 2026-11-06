@@ -51,7 +51,7 @@ collection by reference with a grace period. Used by the Control Plane (every de
 a referenced blob, and crash-safety (a killed write leaves no half file under its hash).
 
 ### M1-05 · Standalone Source Server over gRPC with mTLS
-**Status:** todo
+**Status:** in progress (feat/m1-05-grpc-source-server)
 **Depends on:** M1-03
 
 `omegacd source-server` serves the `source/v1` API over gRPC with **mutual TLS** (Q15, Q45, Q51); the Control Plane
