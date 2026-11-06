@@ -1,4 +1,4 @@
-.PHONY: build web test test-integration docker run stop up down clean
+.PHONY: build web test test-integration e2e docker run stop up down clean
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/obleey/omegacd/internal/version.Version=$(VERSION)
@@ -16,6 +16,10 @@ test:
 
 test-integration:
 	go test -tags integration ./...
+
+# end-to-end: throwaway OmegaCDs driven through the CLI against the local Docker engine (see test/e2e/run.sh)
+e2e: build
+	test/e2e/run.sh
 
 docker:
 	docker build --build-arg VERSION=$(VERSION) -t omegacd:$(VERSION) .

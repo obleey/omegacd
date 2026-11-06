@@ -592,6 +592,7 @@ Requires Go (version in `go.mod`), Node.js 24 and a running Docker engine.
 make build              # web UI, then bin/omegacd (VERSION from git describe)
 make test               # unit tests
 make test-integration   # integration tests against the local Docker engine (incl. docker:dind for remote Hosts)
+make e2e                # end-to-end: throwaway OmegaCDs driven through the CLI (test/e2e; needs age-keygen and sops)
 make stop               # stop a locally running omegacd (only the process listening on :8080)
 make run                # build and run with data in ./data (OMEGACD_WORKDIR=/some/dir to move the work dir)
 make docker             # build the container image
