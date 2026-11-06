@@ -139,9 +139,9 @@ func TestClaimDir(t *testing.T) {
 	}
 }
 
-// After the upgrade from <work dir>/apps/<name>: the startup restore writes the new folder and recreates the
-// containers once, then the old folder goes; folders of other apps stay, and a second start does nothing.
-func TestOldLayoutMovesOnce(t *testing.T) {
+// After the upgrade from <work dir>/apps/<name>: a start touches no containers; the app's next Sync moves it and
+// deletes its old folder, folders of other apps stay.
+func TestOldLayoutMovesOnSync(t *testing.T) {
 	r := newRig(t)
 	ctx := t.Context()
 	work := r.c.cfg.WorkDir
@@ -159,9 +159,14 @@ func TestOldLayoutMovesOnce(t *testing.T) {
 
 	r.c.restoreWorkDirs(ctx)
 	r.waitIdle(t, "web")
-	if op := r.waitOp(t, "web", triggerRestore); op.Phase != domain.OpSucceeded || !r.e.lastForce {
-		t.Fatalf("restore: %+v, force-recreate %v", op, r.e.lastForce)
+	if r.e.syncCount() != 0 {
+		t.Fatal("a start synced an app still in the old layout")
 	}
+	if _, err := os.Stat(filepath.Join(old, "web", "compose.yaml")); err != nil {
+		t.Fatalf("old folder gone before a Sync: %v", err)
+	}
+
+	r.mustSync(t, "web")
 	if got := readFile(t, filepath.Join(work, "web", "compose.yaml")); got != "services: {}\n" {
 		t.Fatalf("new folder: %q", got)
 	}
@@ -169,13 +174,6 @@ func TestOldLayoutMovesOnce(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(old, path)); (err == nil) != want {
 			t.Errorf("apps/%s: exists=%v, want %v", path, err == nil, want)
 		}
-	}
-
-	syncs := r.e.syncCount()
-	r.c.restoreWorkDirs(ctx)
-	r.waitIdle(t, "web")
-	if r.e.syncCount() != syncs {
-		t.Fatal("a second start restored again")
 	}
 
 	// once the last old folder is gone, so is apps/

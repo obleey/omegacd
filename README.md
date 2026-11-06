@@ -96,7 +96,7 @@ Open http://localhost:8080, log in as `admin` with the password from the log, an
 
 **Upgrade:** bump the image tag (or `docker compose pull` for `latest`) and run `docker compose up -d`. Data lives in the `omegacd-data` volume.
 
-**Upgrading from 0.1.0-rc.5 or earlier:** Application files used to live in `<work dir>/apps/<name>`; now they are in `<work dir>/<name>` (see [Where your data lives](#where-your-data-lives)). On its first start the new version finds no files at the new paths and restores every Application there — on remote Hosts too — as a `restore` Sync, recreating its containers once. After that Sync succeeds it deletes the Application's old `apps/<name>` folder, and `apps/` once it is empty; anything in `apps/` that isn't an Application's folder is left alone.
+**Upgrading from 0.1.0-rc.5 or earlier:** Application files used to live in `<work dir>/apps/<name>`; now they are in `<work dir>/<name>` (see [Where your data lives](#where-your-data-lives)). Nothing changes on start: each Application keeps running from its old folder until its next Sync, which writes the new folder (recreating containers whose bind mounts moved) and then deletes the Application's old `apps/<name>` folder, and `apps/` once it is empty; anything in `apps/` that isn't an Application's folder is left alone.
 
 ### Option 2: Binary + systemd
 
@@ -360,7 +360,7 @@ Applications deploy to the built-in `local` Host by default. Add more Docker eng
 
 Each remote Host gets its own [Host Key](#secrets) when it is added; nothing deploys to a Host without one.
 
-On Sync, the Application's files are copied to its folder in the Host's work dir (default `/var/lib/omegacd`, set per Host; same layout and the same [protection of other folders](#where-your-data-lives) as locally) so bind mounts, configs and secrets resolve there. Files synced by 0.1.0-rc.5 or earlier, in `<work dir>/apps/<name>`, move on the first start after the [upgrade](#option-1-docker-compose-recommended). It is on disk, so after the Host reboots its containers come back with their files; decrypted secret files are kept there too (mode 0600) — use disk encryption if that matters to you. Values from env files are stored by Docker in the container configuration in any case. To move an Application to another Host, delete and recreate it.
+On Sync, the Application's files are copied to its folder in the Host's work dir (default `/var/lib/omegacd`, set per Host; same layout and the same [protection of other folders](#where-your-data-lives) as locally) so bind mounts, configs and secrets resolve there. Files synced by 0.1.0-rc.5 or earlier, in `<work dir>/apps/<name>`, move on their next Sync after the [upgrade](#option-1-docker-compose-recommended). It is on disk, so after the Host reboots its containers come back with their files; decrypted secret files are kept there too (mode 0600) — use disk encryption if that matters to you. Values from env files are stored by Docker in the container configuration in any case. To move an Application to another Host, delete and recreate it.
 
 ![Settings → Hosts](assets/screenshots/settings-hosts.png)
 

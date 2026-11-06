@@ -149,9 +149,12 @@ func (c *Controller) restoreWorkDirs(ctx context.Context) {
 		}
 		// the compose files are the signal: after a reboot Docker may already have re-created
 		// missing bind-mount sources as empty directories, so the dir itself can be non-empty.
-		// After the upgrade from <work dir>/apps/<name> they are missing too: the restore moves the app.
 		if dir := c.appDir(a); composeFilesPresent(dir, a.ComposeFilesIn(dir)) {
 			c.dropSopsCopies(a)
+			continue
+		}
+		// upgraded from <work dir>/apps/<name>: it keeps running from there until its next Sync moves it
+		if old := filepath.Join(c.cfg.WorkDir, domain.LegacyDir, a.Name); composeFilesPresent(old, a.ComposeFilesIn(old)) {
 			continue
 		}
 		last, err := c.cfg.Store.LastSucceededOp(ctx, a.Name)
