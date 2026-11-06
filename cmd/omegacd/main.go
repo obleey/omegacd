@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
+	"github.com/obleey/omegacd/internal/agent"
 	"github.com/obleey/omegacd/internal/api"
 	"github.com/obleey/omegacd/internal/cli"
 	"github.com/obleey/omegacd/internal/controller"
@@ -33,11 +35,18 @@ import (
 )
 
 func main() {
-	// no args or "server" runs the server, "source-server" the standalone Source Server; anything else is a CLI command
+	// no args or "server" runs the server, "source-server" the standalone Source Server, "agent" the Agent;
+	// anything else is a CLI command
 	run := run
 	switch {
 	case len(os.Args) > 1 && os.Args[1] == "source-server":
 		run = runSourceServer
+	case len(os.Args) > 1 && os.Args[1] == "agent":
+		if len(os.Args) > 2 && slices.Contains([]string{"-h", "--help", "help"}, os.Args[2]) {
+			agent.Usage(os.Stdout)
+			return
+		}
+		run = runAgent
 	case len(os.Args) > 1 && os.Args[1] != "server":
 		os.Exit(cli.Main(os.Args[1:]))
 	}
@@ -221,6 +230,24 @@ func runSourceServer(log *slog.Logger) error {
 	}()
 	log.Info("omegacd source server listening", "addr", addr, "data", dataDir)
 	return g.Serve(l)
+}
+
+// runAgent runs the Agent on this Host (Q3, Q10).
+func runAgent(log *slog.Logger) error {
+	cfg, err := agent.LoadConfig(os.Getenv, os.Geteuid())
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(cfg.StateDir, 0o700); err != nil { // keys live here: owner-only
+		return fmt.Errorf("state dir: %w (set OMEGACD_AGENT_STATE_DIR to a folder the Agent's user owns)", err)
+	}
+	if err := os.MkdirAll(cfg.WorkDir, 0o750); err != nil {
+		return fmt.Errorf("work dir: %w (set OMEGACD_AGENT_WORKDIR to a folder the Agent's user owns, "+
+			"or give it this one, e.g. RuntimeDirectory=omegacd in its systemd unit)", err)
+	}
+	log.Info("omegacd agent", "state", cfg.StateDir, "workdir", cfg.WorkDir, "controlPlane", cfg.ControlPlane,
+		"cacheRevisions", cfg.CacheRevisions)
+	return nil
 }
 
 // localHostDisabled reads OMEGACD_LOCAL_HOST: "false" where no Docker engine runs next to OmegaCD (Kubernetes).
