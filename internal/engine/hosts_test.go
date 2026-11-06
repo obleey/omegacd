@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -122,5 +123,17 @@ secrets:
 		if !slices.Equal(got, want) {
 			t.Errorf("asDir %q: paths = %q, want %q", asDir, got, want)
 		}
+	}
+}
+
+func TestOnHostNamesHostPaths(t *testing.T) {
+	app := domain.Application{Name: "alloy", Parent: "helion"}
+	err := fmt.Errorf("%w: open /data/work/helion/alloy/compose.yml: no such file", domain.ErrInvalid)
+	got := onHost(domain.Host{Name: "helion", WorkDir: "/opt/services"}, app, "/data/work/helion/alloy", err)
+	if got.Error() != "invalid: open /opt/services/helion/alloy/compose.yml: no such file" || !errors.Is(got, domain.ErrInvalid) {
+		t.Fatalf("got %v", got)
+	}
+	if local := onHost(domain.Host{Name: domain.LocalHost}, app, "/data/work/helion/alloy", err); local != err {
+		t.Fatalf("local: %v", local)
 	}
 }

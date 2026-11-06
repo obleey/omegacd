@@ -92,6 +92,9 @@ func newCompose(c command.Cli, progress func(domain.ProgressEvent)) (api.Compose
 func (e *Engine) load(ctx context.Context, app domain.Application, dir string) (*types.Project, error) {
 	p, err := loadProject(ctx, app, dir, true)
 	if err != nil {
+		if hc, cerr := e.conn(ctx, app.Host); cerr == nil {
+			err = onHost(hc.host, app, dir, err)
+		}
 		return nil, err
 	}
 	// Same labels compose's own LoadProject sets, plus ours. CustomLabels are not hashed.
@@ -113,6 +116,22 @@ func (e *Engine) load(ctx context.Context, app domain.Application, dir string) (
 	}
 	return p, nil
 }
+
+// onHost names the app's folder on a remote Host h in err instead of dir, this machine's copy of its files.
+func onHost(h domain.Host, app domain.Application, dir string, err error) error {
+	if h.Name == domain.LocalHost {
+		return err
+	}
+	return pathErr{strings.ReplaceAll(err.Error(), dir, remoteAppDir(h, app)), err}
+}
+
+type pathErr struct {
+	msg string
+	err error
+}
+
+func (e pathErr) Error() string { return e.msg }
+func (e pathErr) Unwrap() error { return e.err }
 
 func loadProject(ctx context.Context, app domain.Application, dir string, resolvePaths bool) (*types.Project, error) {
 	files := app.ComposeFilesIn(dir)
