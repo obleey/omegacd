@@ -35,7 +35,7 @@ blobs shared across Revisions and apps.
 cache (test scans it), and a Rollback to a cached Revision needs no download.
 
 ### M2-04 · Work dir writer and ownership
-**Status:** in progress (feat/m2-04-workdir)
+**Status:** done (2026-11-06, PR #80)
 **Depends on:** M2-03
 
 Write an app's files into `<work dir>/<name>` (or `<work dir>/<parent>/<name>`) **in place** (keep inodes for
