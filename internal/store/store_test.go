@@ -64,7 +64,7 @@ func TestApps(t *testing.T) {
 		ComposeFiles: []string{"compose.yaml", "override.yaml"}, Profiles: []string{"prod"},
 		Host: domain.LocalHost, AutoSync: true, Prune: true, PruneVolumes: true, RolledBack: true,
 		Kind: domain.KindCompose, Parent: "root", NotInGit: true,
-		CreatedAt: time.Unix(1700000000, 0).UTC(),
+		CreatedAt: time.Unix(1700000000, 0).UTC(), Dirs: []string{},
 	}
 	must(t, s.CreateApp(ctx, a))
 	wantErr(t, s.CreateApp(ctx, a), domain.ErrAlreadyExists)
@@ -82,6 +82,14 @@ func TestApps(t *testing.T) {
 		t.Fatalf("update not applied: %+v", got)
 	}
 	wantErr(t, s.UpdateApp(ctx, domain.Application{Name: "nope"}), domain.ErrNotFound)
+
+	dirs := []string{"local:/work/web", "prod:/srv/omegacd/root/web"}
+	must(t, s.SetAppDirs(ctx, "web", dirs))
+	must(t, s.UpdateApp(ctx, a)) // keeps them
+	if got, _ = s.GetApp(ctx, "web"); !reflect.DeepEqual(got.Dirs, dirs) {
+		t.Fatalf("dirs = %v", got.Dirs)
+	}
+	wantErr(t, s.SetAppDirs(ctx, "nope", dirs), domain.ErrNotFound)
 
 	must(t, s.CreateApp(ctx, domain.Application{Name: "api"}))
 	apps, err := s.ListApps(ctx)

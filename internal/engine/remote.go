@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
@@ -23,38 +24,51 @@ import (
 const helperImage = "busybox:1.38"
 
 // filesLib starts the file helper's scripts. Their arguments: the Host's work dir (mounted at /work, for messages),
-// the app's folder in it (Application.Dir, "" when removing the app), the app's name and its App of Apps (or "").
+// the app's folder in it (Application.Dir, "" when removing the app), the app's name, its App of Apps (or ""), 1 if
+// the engine found the app's folder to be the app's (ownedDir), its App of Apps' children (space-separated), and the
+// folders the store says the app wrote to (relative to /work).
 const filesLib = `set -eu
-root=$1 dst="/work/$2" name=$3 parent=$4
-# claim DIR APP LEGACY, the controller's claimDir: refuse DIR unless it is missing, holds nothing but directories,
-# carries APP's marker, or is APP's unmarked folder from the old layout (LEGACY); then mark it as APP's
+root=$1 dst="/work/$2" name=$3 parent=$4 owned=$5 kids=" $6 "
+shift 6
+formers=" $* "
+# claim DIR APP, the controller's claimDir: refuse DIR unless it carries APP's marker from before (deleted now), or
+# carries no marker and is missing, holds nothing but directories, is the app's (owned), or is APP's App of Apps'
+# folder holding nothing but its children's folders (re-checked as entries go: siblings sync concurrently)
 claim() {
-  if [ -f "$1/.omegacd" ]; then
-    [ "$(cat "$1/.omegacd")" = "$2" ] && return
-  elif [ "$1" = "$3" ] || [ ! -e "$1" ] || [ -z "$(find "$1" ! -type d ! -name '.omegacd.*' 2>&1 | head -n 1)" ]; then
+  m=$(cat "$1/.omegacd" 2>/dev/null || true)
+  if [ "$m" = "$2" ] || { [ -z "$m" ] && { [ "$owned" = 1 ] || [ ! -e "$1" ] ||
+    [ -z "$(find "$1" ! -type d 2>&1 | head -n 1)" ] || { [ "$2" = "$parent" ] && kidsonly "$1"; }; }; }; then
     mkdir -p "$1"
-    printf %s "$2" > "$1/.omegacd.$$" && mv "$1/.omegacd.$$" "$1/.omegacd"
+    [ -z "$m" ] || rm -f "$1/.omegacd"
     return
   fi
-  # a Sync of a sibling Child Application may have claimed it meanwhile
-  [ "$(cat "$1/.omegacd" 2>/dev/null)" = "$2" ] && return
   echo "refusing to sync into $root${1#/work}: the folder exists and OmegaCD did not create it for Application \"$2\"; rename the Application, pick another work dir, or move the folder away" >&2
   exit 1
 }
-# stale DIR: DIR is a folder of this app other than dst: marked for it, or its unmarked one from the old layout
+# kidsonly DIR: DIR holds nothing but folders named after the App of Apps' children (or a marker removed meanwhile)
+kidsonly() {
+  [ "$kids" != "  " ] || return 1
+  for e in "$1"/* "$1"/.[!.]* "$1"/..?*; do
+    [ -e "$e" ] || [ -L "$e" ] || continue
+    case "$kids" in *" ${e##*/} "*) [ -d "$e" ] && [ ! -L "$e" ] || return 1 ;; *) return 1 ;; esac
+  done
+}
+# stale DIR: DIR is a folder of this app other than dst: one it wrote to (formers), one carrying its marker from
+# before, or its folder from the old layout
 stale() {
-  [ "$1" != "$dst" ] || return 1
-  if [ -f "$1/.omegacd" ]; then [ "$(cat "$1/.omegacd")" = "$name" ]; else [ "$1" = "/work/apps/$name" ] && [ -d "$1" ]; fi
+  [ "$1" != "$dst" ] && [ -d "$1" ] && [ ! -L "$1" ] || return 1
+  case "$formers" in *" ${1#/work/} "*) return ;; esac
+  [ "$1" = "/work/apps/$name" ] || [ "$(cat "$1/.omegacd" 2>/dev/null)" = "$name" ]
 }
 `
 
 // syncScript claims the app's folder (and its App of Apps' folder) and mirrors /tmp/stage into it. Unchanged files
 // are left alone and changed regular files are rewritten in place, so single-file bind mounts keep their inode;
-// files not in the stage are deleted, the marker excepted. It prints "stale" when the app has another folder
-// (old layout, former App of Apps) for the engine to remove once the containers no longer use it.
+// files not in the stage are deleted. It prints "stale" when the app has another folder (old layout, former App of
+// Apps) for the engine to remove once the containers no longer use it.
 // shortcut: file names containing newlines are not supported; the whole dir is sent each Sync, fine for compose-sized dirs.
-const syncScript = filesLib + `[ -z "$parent" ] || claim "/work/$parent" "$parent" /work/apps
-claim "$dst" "$name" "/work/apps/$name"
+const syncScript = filesLib + `[ -z "$parent" ] || claim "/work/$parent" "$parent"
+claim "$dst" "$name"
 src=/tmp/stage
 cd "$src"
 find . -mindepth 1 -type d | while IFS= read -r f; do
@@ -71,7 +85,7 @@ find . ! -type d | while IFS= read -r f; do
 done
 cd "$dst"
 find . -depth -mindepth 1 | while IFS= read -r f; do
-  [ "$f" = ./.omegacd ] || [ -e "$src/$f" ] || [ -L "$src/$f" ] || rm -rf "$f"
+  [ -e "$src/$f" ] || [ -L "$src/$f" ] || rm -rf "$f"
 done
 for d in /work/"$name" /work/*/"$name"; do
   if stale "$d"; then echo stale; fi
@@ -79,7 +93,7 @@ done
 `
 
 // cleanScript removes the app's folders other than dst, and the old layout's apps folder once it is empty.
-// Folders without the app's marker are never touched, the app's own one from the old layout excepted.
+// Only folders stale proves the app's are touched.
 const cleanScript = filesLib + `for d in /work/"$name" /work/*/"$name"; do
   if stale "$d"; then
     rm -rf "$d"
@@ -89,17 +103,49 @@ done
 `
 
 // pushFiles copies dir's contents to the app dir on hc's Host through the Docker API, so it works over ssh and tls
-// alike. stale reports that the app has another folder there, for removeFiles once the containers moved.
-func (e *Engine) pushFiles(ctx context.Context, hc *hostConn, app domain.Application, dir string) (stale bool, err error) {
+// alike. children is its App of Apps' children. stale reports that the app has another folder there, for
+// removeFiles once the containers moved.
+func (e *Engine) pushFiles(ctx context.Context, hc *hostConn, app domain.Application, dir string, children []string) (stale bool, err error) {
 	if err := checkAppName(app); err != nil {
+		return false, err
+	}
+	owned, err := ownedDir(ctx, hc, app)
+	if err != nil {
 		return false, err
 	}
 	var buf bytes.Buffer
 	if err := tarDir(&buf, dir, "stage"); err != nil {
 		return false, fmt.Errorf("pack %s: %w", dir, err)
 	}
-	out, err := runHelper(ctx, hc, []string{"sh", "-c", syncScript, "sh", remoteWorkDir(hc.host), app.Dir(), app.Name, app.Parent}, &buf)
+	args := append([]string{"sh", "-c", syncScript, "sh", remoteWorkDir(hc.host), app.Dir(), app.Name, app.Parent, owned,
+		strings.Join(children, " ")}, formerDirs(hc, app)...)
+	out, err := runHelper(ctx, hc, args, &buf)
 	return strings.Contains(out, "stale"), err
+}
+
+// ownedDir is "1" if the app's folder on hc's Host is provably the app's: the store says a Sync wrote to it, or a
+// container OmegaCD created for the app runs from it. Containers of other tools never count.
+func ownedDir(ctx context.Context, hc *hostConn, app domain.Application) (string, error) {
+	dst := remoteAppDir(hc.host, app)
+	if slices.Contains(app.Dirs, domain.HostDir(hc.host.Name, dst)) {
+		return "1", nil
+	}
+	wds, err := workingDirs(ctx, hc.cli.Client(), app.Name)
+	if err != nil || !slices.Contains(wds, dst) {
+		return "", err
+	}
+	return "1", nil
+}
+
+// formerDirs is the app's Dirs on hc's Host, relative to its work dir.
+func formerDirs(hc *hostConn, app domain.Application) []string {
+	var dirs []string
+	for _, d := range app.Dirs {
+		if p, ok := strings.CutPrefix(d, domain.HostDir(hc.host.Name, remoteWorkDir(hc.host)+"/")); ok {
+			dirs = append(dirs, p)
+		}
+	}
+	return dirs
 }
 
 // removeFiles deletes the app's folders on hc's Host, except keep (an Application.Dir; "" removes them all).
@@ -107,7 +153,8 @@ func (e *Engine) removeFiles(ctx context.Context, hc *hostConn, app domain.Appli
 	if err := checkAppName(app); err != nil {
 		return err
 	}
-	_, err := runHelper(ctx, hc, []string{"sh", "-c", cleanScript, "sh", remoteWorkDir(hc.host), keep, app.Name, app.Parent}, nil)
+	args := append([]string{"sh", "-c", cleanScript, "sh", remoteWorkDir(hc.host), keep, app.Name, app.Parent, "", ""}, formerDirs(hc, app)...)
+	_, err := runHelper(ctx, hc, args, nil)
 	return err
 }
 

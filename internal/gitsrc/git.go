@@ -357,10 +357,10 @@ func (g *Git) Export(ctx context.Context, repoURL, sha, p, dest string) error {
 	if err := os.MkdirAll(dest, 0o755); err != nil {
 		return err
 	}
-	keep := map[string]bool{domain.MarkerFile: true} // OmegaCD's, never Git's
+	keep := map[string]bool{}
 	err = t.Files().ForEach(func(f *object.File) error {
 		if f.Name == domain.MarkerFile {
-			return nil
+			return nil // never taken from Git: a Sync reads it as an old marker
 		}
 		keep[f.Name] = true
 		if base := path.Base(f.Name); strings.Contains(base, ".sops.") {

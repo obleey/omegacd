@@ -594,7 +594,20 @@ func (c *Controller) apply(ctx context.Context, a domain.Application, op domain.
 	if err != nil {
 		return err
 	}
-	if err := c.claim(a); err != nil {
+	if fresh, err := c.cfg.Store.GetApp(ctx, a.Name); err == nil {
+		a.Dirs = fresh.Dirs // a may have been read before the last Sync
+	}
+	var kids []string // its App of Apps' children
+	if a.Parent != "" {
+		children, err := c.children(ctx, a.Parent)
+		if err != nil {
+			return err
+		}
+		for _, ch := range children {
+			kids = append(kids, ch.Name)
+		}
+	}
+	if err := c.claim(ctx, &a, kids); err != nil {
 		return err
 	}
 	dir := c.appDir(a)
@@ -617,6 +630,7 @@ func (c *Controller) apply(ctx context.Context, a domain.Application, op domain.
 	if err != nil {
 		return err
 	}
+	dirs := []string{domain.HostDir(domain.LocalHost, dir)}
 	err = c.cfg.Engine.Sync(ctx, a, dir, domain.SyncOptions{
 		Prune:         a.Prune,
 		PruneVolumes:  a.Prune && a.PruneVolumes,
@@ -626,11 +640,19 @@ func (c *Controller) apply(ctx context.Context, a domain.Application, op domain.
 			p.OpID = op.ID
 			c.emit(domain.Event{Type: "progress", App: a.Name, Data: p})
 		},
+		Children: kids,
+		Wrote: func(hostDir string) error {
+			dirs = append(dirs, hostDir)
+			return c.addDir(ctx, &a, hostDir)
+		},
 	})
 	if err == nil {
 		// the containers use dir now: an older folder of the app (old layout, former App of Apps) can go
 		if rerr := c.removeFiles(a, dir); rerr != nil {
 			c.cfg.Log.Warn("remove old application files", "app", a.Name, "err", rerr)
+		}
+		if rerr := c.cfg.Store.SetAppDirs(ctx, a.Name, dirs); rerr != nil {
+			c.cfg.Log.Warn("record application folders", "app", a.Name, "err", rerr)
 		}
 	}
 	return err
@@ -840,7 +862,11 @@ func (c *Controller) deleteAppLocked(ctx context.Context, a domain.Application, 
 				old := c.appDir(ch)
 				ch.Parent, ch.NotInGit = "", false
 				// its files leave the App of Apps' folder with it; the next Sync recreates its containers there
-				if rerr := os.Rename(old, c.appDir(ch)); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
+				rerr := os.Rename(old, c.appDir(ch))
+				if rerr == nil {
+					rerr = c.addDir(ctx, &ch, domain.HostDir(domain.LocalHost, c.appDir(ch)))
+				}
+				if rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
 					c.cfg.Log.Warn("move application files", "app", ch.Name, "err", rerr)
 				}
 				if err = c.cfg.Store.UpdateApp(ctx, ch); err == nil {

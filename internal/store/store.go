@@ -108,6 +108,8 @@ CREATE TABLE host_keys (
 	created_at INTEGER NOT NULL,
 	PRIMARY KEY (host, recipient)
 );
+`, `
+ALTER TABLE apps ADD COLUMN dirs TEXT NOT NULL DEFAULT '[]';
 `}
 
 type Store struct {
@@ -206,16 +208,22 @@ type scanner interface{ Scan(...any) error }
 
 const appCols = `name, repo_url, path, target_revision, compose_files, profiles, host, auto_sync, self_heal, prune, adopt, rolled_back, kind, parent, not_in_git, prune_volumes, created_at`
 
+// appRead is appCols plus what only SetAppDirs writes.
+const appRead = appCols + `, dirs`
+
 func scanApp(r scanner) (domain.Application, error) {
 	var a domain.Application
-	var files, profiles string
+	var files, profiles, dirs string
 	var created int64
 	if err := r.Scan(&a.Name, &a.RepoURL, &a.Path, &a.TargetRevision, &files, &profiles, &a.Host,
-		&a.AutoSync, &a.SelfHeal, &a.Prune, &a.Adopt, &a.RolledBack, &a.Kind, &a.Parent, &a.NotInGit, &a.PruneVolumes, &created); err != nil {
+		&a.AutoSync, &a.SelfHeal, &a.Prune, &a.Adopt, &a.RolledBack, &a.Kind, &a.Parent, &a.NotInGit, &a.PruneVolumes, &created, &dirs); err != nil {
 		return a, mapErr(err)
 	}
 	a.CreatedAt = fromUnix(created)
 	if err := json.Unmarshal([]byte(files), &a.ComposeFiles); err != nil {
+		return a, err
+	}
+	if err := json.Unmarshal([]byte(dirs), &a.Dirs); err != nil {
 		return a, err
 	}
 	return a, json.Unmarshal([]byte(profiles), &a.Profiles)
@@ -229,7 +237,7 @@ func appArgs(a domain.Application) []any {
 }
 
 func (s *Store) ListApps(ctx context.Context) ([]domain.Application, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+appCols+` FROM apps ORDER BY name`)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+appRead+` FROM apps ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +254,7 @@ func (s *Store) ListApps(ctx context.Context) ([]domain.Application, error) {
 }
 
 func (s *Store) GetApp(ctx context.Context, name string) (domain.Application, error) {
-	return scanApp(s.db.QueryRowContext(ctx, `SELECT `+appCols+` FROM apps WHERE name = ?`, name))
+	return scanApp(s.db.QueryRowContext(ctx, `SELECT `+appRead+` FROM apps WHERE name = ?`, name))
 }
 
 func (s *Store) CreateApp(ctx context.Context, a domain.Application) error {
@@ -263,6 +271,11 @@ func (s *Store) UpdateApp(ctx context.Context, a domain.Application) error {
 	args := appArgs(a)
 	return affected(s.db.ExecContext(ctx, `UPDATE apps SET repo_url=?, path=?, target_revision=?, compose_files=?,
 		profiles=?, host=?, auto_sync=?, self_heal=?, prune=?, adopt=?, rolled_back=?, kind=?, parent=?, not_in_git=?, prune_volumes=? WHERE name=?`, append(args[1:], a.Name)...))
+}
+
+func (s *Store) SetAppDirs(ctx context.Context, name string, dirs []string) error {
+	b, _ := json.Marshal(dirs)
+	return affected(s.db.ExecContext(ctx, `UPDATE apps SET dirs=? WHERE name=?`, string(b), name))
 }
 
 func (s *Store) DeleteApp(ctx context.Context, name string) error {

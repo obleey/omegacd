@@ -114,7 +114,19 @@ func (s *fakeStore) CreateApp(_ context.Context, a domain.Application) error {
 func (s *fakeStore) UpdateApp(_ context.Context, a domain.Application) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	a.Dirs = s.apps[a.Name].Dirs
 	s.apps[a.Name] = a
+	return nil
+}
+func (s *fakeStore) SetAppDirs(_ context.Context, n string, dirs []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.apps[n]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	a.Dirs = slices.Clone(dirs)
+	s.apps[n] = a
 	return nil
 }
 func (s *fakeStore) DeleteApp(_ context.Context, n string) error {
@@ -281,6 +293,7 @@ type fakeEngine struct {
 	removedVols  []bool // volumes flag per Remove call
 	lastForce    bool
 	onRemove     func(domain.Application) // runs after Remove, outside the lock: simulates Docker events mid-delete
+	workingDirs  map[string][]string      // per app: working_dir labels of its OmegaCD-managed containers
 }
 
 func (e *fakeEngine) Validate(context.Context, domain.Application, string) error { return nil }
@@ -322,6 +335,11 @@ func (e *fakeEngine) Status(_ context.Context, a domain.Application) (domain.Liv
 		live.Health = h
 	}
 	return live, nil
+}
+func (e *fakeEngine) WorkingDirs(_ context.Context, a domain.Application) ([]string, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.workingDirs[a.Name], nil
 }
 func (e *fakeEngine) ProjectExists(context.Context, string, string) (bool, bool, error) {
 	return e.exists, e.managed, nil

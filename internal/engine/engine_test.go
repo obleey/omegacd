@@ -5,12 +5,16 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/distribution/reference"
+	"github.com/docker/compose/v5/pkg/api"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 
 	"github.com/obleey/omegacd/internal/domain"
 )
@@ -188,5 +192,34 @@ func TestNoLocalHost(t *testing.T) {
 	}
 	if _, err := e.Status(context.Background(), domain.Application{Name: "web"}); !errors.Is(err, domain.ErrLocalHostDisabled) {
 		t.Fatalf("Status on local = %v", err)
+	}
+}
+
+type listClient struct {
+	client.APIClient
+	items []container.Summary
+}
+
+func (c listClient) ContainerList(context.Context, client.ContainerListOptions) (client.ContainerListResult, error) {
+	return client.ContainerListResult{Items: c.items}, nil
+}
+
+// Only containers OmegaCD created for the app vouch for their folder: not an adopted project's (doco-cd's alloy).
+func TestWorkingDirs(t *testing.T) {
+	ctr := func(dir string, labels ...string) container.Summary {
+		l := map[string]string{api.WorkingDirLabel: dir}
+		for i := 0; i < len(labels); i += 2 {
+			l[labels[i]] = labels[i+1]
+		}
+		return container.Summary{Labels: l}
+	}
+	c := listClient{items: []container.Summary{
+		ctr("/opt/services/alloy"),
+		ctr("/opt/other", domain.ManagedLabel, "alloy"),
+		ctr("/opt/older", domain.ManagedByLabel, domain.ManagedByValue, domain.ManagedLabel, "other"),
+		ctr("/opt/omegacd/alloy", domain.ManagedByLabel, domain.ManagedByValue, domain.ManagedLabel, "alloy"),
+	}}
+	if got, err := workingDirs(t.Context(), c, "alloy"); err != nil || !slices.Equal(got, []string{"/opt/omegacd/alloy"}) {
+		t.Fatalf("workingDirs = %v, %v", got, err)
 	}
 }
