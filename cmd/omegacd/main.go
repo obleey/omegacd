@@ -250,6 +250,9 @@ func runAgent(log *slog.Logger) error {
 		return err
 	}
 	defer db.Close()
+	if _, err := agent.OpenCache(db, filepath.Join(cfg.StateDir, "cache"), cfg.CacheRevisions); err != nil {
+		return err
+	}
 	apps, err := db.ListApps(context.Background())
 	if err != nil {
 		return err

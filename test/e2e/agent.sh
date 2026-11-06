@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end: omegacd agent, through the real binary (M2-01, M2-02; M2 tickets extend it as the Agent learns to deploy).
+# End-to-end: omegacd agent, through the real binary (M2-01 to M2-03; M2 tickets extend it as the Agent learns to deploy).
 set -u
 BIN=${OMEGACD_BIN:-$(cd "$(dirname "$0")/../.." && pwd)/bin/omegacd}
 T=$(mktemp -d "${TMPDIR:-/tmp}/omegacd-e2ea.XXXX")
@@ -19,6 +19,7 @@ check "starts as a user, with the user defaults" '[ $rc -eq 0 ] && echo "$out" |
 check "state dir created owner-only" '[ "$(ls -ld "$T/home/.local/share/omegacd-agent" | cut -c1-10)" = drwx------ ]'
 check "work dir in the user's runtime dir" '[ -d "$T/run/omegacd" ]'
 check "its database is created in the state dir (M2-02)" '[ -s "$T/home/.local/share/omegacd-agent/agent.db" ]'
+check "and its Revision cache (M2-03)" '[ -d "$T/home/.local/share/omegacd-agent/cache/tmp" ]'
 out=$(agent XDG_RUNTIME_DIR="$T/run"); rc=$?
 check "and opened again on the next start" '[ $rc -eq 0 ] && echo "$out" | grep -q "apps=0"'
 

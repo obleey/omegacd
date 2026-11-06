@@ -44,6 +44,10 @@ CREATE TABLE outbox (
 	recorded_at INTEGER NOT NULL,
 	entry BLOB NOT NULL            -- an agentv1.OutboxEntry
 );
+`, `
+-- recency without clock ties: each add (or re-add, a Rollback) takes the next number
+ALTER TABLE revisions ADD COLUMN used INTEGER NOT NULL DEFAULT 0;
+UPDATE revisions SET used = rowid;
 `}
 
 // DB is the Agent's own small database in its state dir (Q48).
@@ -174,17 +178,18 @@ func (d *DB) AddRevision(ctx context.Context, r Revision) error {
 	}
 	cf, _ := json.Marshal(r.ComposeFiles)
 	pr, _ := json.Marshal(r.Profiles)
-	_, err = d.db.ExecContext(ctx, `INSERT INTO revisions (app, revision, checksum, files, compose_files, profiles, added_at)
-		VALUES (?,?,?,?,?,?,?) ON CONFLICT(app, revision) DO UPDATE SET checksum=excluded.checksum, files=excluded.files,
-		compose_files=excluded.compose_files, profiles=excluded.profiles, added_at=excluded.added_at`,
+	_, err = d.db.ExecContext(ctx, `INSERT INTO revisions (app, revision, checksum, files, compose_files, profiles, added_at, used)
+		VALUES (?,?,?,?,?,?,?, (SELECT COALESCE(MAX(used), 0) + 1 FROM revisions))
+		ON CONFLICT(app, revision) DO UPDATE SET checksum=excluded.checksum, files=excluded.files,
+		compose_files=excluded.compose_files, profiles=excluded.profiles, added_at=excluded.added_at, used=excluded.used`,
 		r.App, r.Revision, r.Checksum, files, cf, pr, time.Now().UnixMilli())
 	return err
 }
 
-// Revisions is app's cached Revisions, newest first.
+// Revisions is app's cached Revisions, most recently added first.
 func (d *DB) Revisions(ctx context.Context, app string) ([]Revision, error) {
 	rows, err := d.db.QueryContext(ctx, `SELECT app, revision, checksum, files, compose_files, profiles, added_at
-		FROM revisions WHERE app = ? ORDER BY added_at DESC, rowid DESC`, app)
+		FROM revisions WHERE app = ? ORDER BY used DESC`, app)
 	if err != nil {
 		return nil, err
 	}
@@ -205,6 +210,30 @@ func (d *DB) Revisions(ctx context.Context, app string) ([]Revision, error) {
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// files is the hash of every file a cached Revision uses.
+func (d *DB) files(ctx context.Context) (map[string]bool, error) {
+	rows, err := d.db.QueryContext(ctx, `SELECT files FROM revisions`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	used := map[string]bool{}
+	for rows.Next() {
+		var js string
+		var files []domain.File
+		if err := rows.Scan(&js); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(js), &files); err != nil {
+			return nil, err
+		}
+		for _, f := range files {
+			used[f.SHA256] = true
+		}
+	}
+	return used, rows.Err()
 }
 
 func (d *DB) DeleteRevision(ctx context.Context, app, revision string) error {
