@@ -41,7 +41,9 @@ type fakeSource struct {
 	creds         []domain.RepoCredential
 }
 
-func (s *fakeSource) ListCredentials(context.Context) ([]domain.RepoCredential, error) { return s.creds, nil }
+func (s *fakeSource) ListCredentials(context.Context) ([]domain.RepoCredential, error) {
+	return s.creds, nil
+}
 
 func (s *fakeStore) CreateSession(_ context.Context, h string, exp time.Time) error {
 	s.mu.Lock()

@@ -4,7 +4,7 @@
 work dir, offline autonomy. See [architecture](../architecture.md#agent-q3-q4-q10-q19-q21-q24-q25-q29-q32-q34-q48-q52).
 
 ### M2-01 · `omegacd agent` command and configuration
-**Status:** todo
+**Status:** in progress (feat/m2-01-agent-command)
 **Depends on:** —
 
 The `agent` persona (Q10): configuration from environment variables (Control Plane URL, invite, state dir, work

@@ -106,7 +106,7 @@ var order = []string{"login", "logout", "version", "keygen", "source-certs", "im
 	"host key show", "host key generate", "host key import", "host key remove"}
 
 func (c *CLI) usage() {
-	fmt.Fprintln(c.Stderr, "Usage: omegacd [server]        run the server\n       omegacd source-server  run a standalone Source Server\n       omegacd COMMAND        talk to a server\n\nCommands:")
+	fmt.Fprintln(c.Stderr, "Usage: omegacd [server]        run the server\n       omegacd source-server  run a standalone Source Server\n       omegacd agent          run the Agent on this Host (omegacd agent --help: its settings)\n       omegacd COMMAND        talk to a server\n\nCommands:")
 	for _, k := range order {
 		fmt.Fprintln(c.Stderr, "  "+commands[k].usage)
 	}
