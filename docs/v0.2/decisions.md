@@ -68,6 +68,11 @@ change it here first.
 - **Q25** Offline rollback `omegacd agent rollback` to cached Revisions, reported on reconnect, Auto-Sync turned off.
 - **Q32** Cache keeps the last 10 Revisions per app (configurable); online Rollback reaches all of History.
 - **Q48** The Agent keeps a small SQLite database; the work-dir ownership rules move to it.
+- **Q57** (2026-11-06) An Application may name its own work dir (`workDir:`, absolute); empty means the Host's
+  (`OMEGACD_AGENT_WORKDIR`), as before. The Agent writes only under roots its own configuration allows
+  (`OMEGACD_AGENT_WORKDIR_ALLOW`, plus the Host's work dir), so Git or a breached Control Plane can't aim it at
+  `/etc`; ownership rules and path parity hold in every root. A Child Application sets its own, like `host:`; an App
+  of Apps deploys nothing and passes no defaults to its children.
 - **Q47** `import` goes only through the Agent (`--host NAME`); no SSH path.
 - **Q34/Q52** Talks to any Docker-compatible socket; Podman rootless is in v0.2's test matrix; engine badges everywhere.
 

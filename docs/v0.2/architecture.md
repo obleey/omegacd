@@ -109,7 +109,8 @@ only the Control Plane, never Agents or users. A reverse proxy in between must p
 - **Work dir**: each Application's folder, plaintext; on RAM (`/run`, `$XDG_RUNTIME_DIR`) or disk
   (`/opt/services`) as configured. Files are written **in place** (single-file bind mounts keep their inode) and
   everything not in the Desired State is pruned; the ownership rules (never sync into a folder OmegaCD didn't
-  create) live here (Q11, Q48).
+  create) live here (Q11, Q48). An Application may name its own work dir instead, under a root the Agent's
+  configuration allows (Q57).
 - **Decryption in memory only**: ciphertext from the cache → plaintext straight into the app's folder; no
   temporary plaintext anywhere (Q19). Secret sources plug in behind one interface: SOPS+age in the open-source
   Agent; 1Password, LastPass, Vault, OpenBao, Ansible Vault later (paid). Their credentials live in the Agent's
