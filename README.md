@@ -549,7 +549,7 @@ All server settings are environment variables:
 | Variable | Default | |
 | --- | --- | --- |
 | `OMEGACD_ADDR` | `:8080` | Listen address |
-| `OMEGACD_DATA` | `/data` | Database (`omegacd.db`), Git cache and keys |
+| `OMEGACD_DATA` | `/data` | Database (`omegacd.db`), Git cache, rendered files and keys |
 | `OMEGACD_WORKDIR` | `/run/omegacd` | Where Application files are written on Sync; same path on host and container |
 | `OMEGACD_AGE_KEY_FILE` | `/etc/omegacd/age.key` | age identity: seals stored credentials and decrypts SOPS files. Required |
 | `OMEGACD_SSH_KNOWN_HOSTS` | `/etc/omegacd/known_hosts` | Host keys for Git over SSH and `ssh://` Hosts |
@@ -605,7 +605,8 @@ make up / make down     # run that image with deploy/compose.yaml, same data and
 | `internal/api` | HTTP API, auth, webhooks, metrics |
 | `internal/controller` | reconcile loop, Sync Operations, Sync Policy, App of Apps |
 | `internal/engine` | Docker Compose (as a library), Hosts, diff, health |
-| `internal/gitsrc` | Git fetch, diffs, webhook parsing |
+| `internal/source` | Source Server: Git fetch, rendering and validating Desired States, diffs, webhook parsing |
+| `internal/blob`, `internal/workdir` | content-addressed file store; writing an Application's files |
 | `internal/secrets`, `internal/crypto` | SOPS decryption, sealing with age |
 | `internal/store` | SQLite storage |
 | `internal/cli` | the CLI client |

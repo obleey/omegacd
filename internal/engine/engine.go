@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"log/slog"
 	"maps"
 	"os"
@@ -231,15 +230,13 @@ func (e *Engine) remember(app domain.Application, p *types.Project) {
 	e.mu.Unlock()
 }
 
+// Validate loads the project as Sync would: the final render, with secrets decrypted. What can be refused
+// without them, the Source Server's Render refuses.
 func (e *Engine) Validate(ctx context.Context, app domain.Application, dir string) error {
-	p, err := e.load(ctx, app, dir)
-	if err != nil {
+	if _, err := e.load(ctx, app, dir); err != nil {
 		return fmt.Errorf("%w: %v", domain.ErrInvalid, err)
 	}
-	if err := checkNoBuild(p); err != nil {
-		return err
-	}
-	return checkBindSources(ctx, app, dir)
+	return nil
 }
 
 // rebase rewrites path fields of a project loaded from dir from as if it had been loaded from dir to:
@@ -295,37 +292,11 @@ func placeFor(p *types.Project, hc *hostConn, app domain.Application, dir, asDir
 	}
 }
 
+// checkNoBuild guards Sync: the Source Server's Render refuses build: already, but nothing may build on a Host.
 func checkNoBuild(p *types.Project) error {
 	for _, name := range slices.Sorted(maps.Keys(p.Services)) {
 		if p.Services[name].Build != nil {
 			return fmt.Errorf("%w: service %q uses build:, only pre-built images are supported", domain.ErrInvalid, name)
-		}
-	}
-	return nil
-}
-
-// checkBindSources refuses relative bind mounts that are not in Git: every Sync makes the app dir match Git
-// exactly, so files a container writes there would be deleted on the next Sync (and on reboot, with the
-// work dir in /run). Only named volumes and absolute paths keep data.
-func checkBindSources(ctx context.Context, app domain.Application, dir string) error {
-	p, err := loadProject(ctx, app, dir, false) // paths as written, to tell ./data from /data
-	if err != nil {
-		return fmt.Errorf("%w: %v", domain.ErrInvalid, err)
-	}
-	for _, name := range slices.Sorted(maps.Keys(p.Services)) {
-		for _, v := range p.Services[name].Volumes {
-			if v.Type != types.VolumeTypeBind || filepath.IsAbs(v.Source) || strings.HasPrefix(v.Source, "~") {
-				continue
-			}
-			src := filepath.Join(dir, v.Source)
-			if !insideDir(dir, src) {
-				return fmt.Errorf("%w: service %q mounts %s, outside the Application's files; "+
-					"use a named volume or an absolute path", domain.ErrInvalid, name, v.Source)
-			}
-			if _, err := os.Stat(src); errors.Is(err, fs.ErrNotExist) {
-				return fmt.Errorf("%w: service %q mounts %s, which is not in Git: OmegaCD deletes files that are not in Git on every Sync, "+
-					"so data written there would be lost; use a named volume or an absolute path", domain.ErrInvalid, name, v.Source)
-			}
 		}
 	}
 	return nil

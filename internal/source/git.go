@@ -1,8 +1,8 @@
-// Package gitsrc implements domain.Git with go-git, keeping one bare clone per Repository.
-package gitsrc
+// Package source is the Source Server (Q5, Q12): it reads Repositories with go-git, keeping one bare clone per
+// Repository, and renders Desired States from them.
+package source
 
 import (
-	"bytes"
 	"cmp"
 	"context"
 	"crypto/sha256"
@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io/fs"
 	neturl "net/url"
-	"os"
 	"path"
 	"path/filepath"
 	"slices"
@@ -31,8 +30,6 @@ import (
 
 	"github.com/obleey/omegacd/internal/domain"
 )
-
-var _ domain.Git = (*Git)(nil)
 
 type Git struct {
 	// FetchCooldown: Resolve skips fetching a Repository fetched successfully less than this long ago.
@@ -320,142 +317,47 @@ func subtree(c *object.Commit, p string) (*object.Tree, error) {
 	return t, err
 }
 
-func (g *Git) TreeHash(ctx context.Context, repoURL, sha, p string) (string, error) {
+// tree is every file under p at sha, nil if p does not exist there.
+func (g *Git) tree(ctx context.Context, repoURL, sha, p string) ([]treeFile, error) {
 	e, unlock, err := g.open(repoURL)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer unlock()
 	c, err := g.commit(ctx, e, repoURL, sha)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	t, err := subtree(c, cleanPath(p))
 	if err != nil || t == nil {
-		return "", err
+		return nil, err
 	}
-	return t.Hash.String(), nil
-}
-
-func (g *Git) Export(ctx context.Context, repoURL, sha, p, dest string) error {
-	e, unlock, err := g.open(repoURL)
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	c, err := g.commit(ctx, e, repoURL, sha)
-	if err != nil {
-		return err
-	}
-	t, err := subtree(c, cleanPath(p))
-	if err != nil {
-		return err
-	}
-	if t == nil {
-		return fmt.Errorf("path %q at %s: %w", p, sha, domain.ErrNotFound)
-	}
-	if err := os.MkdirAll(dest, 0o755); err != nil {
-		return err
-	}
-	keep := map[string]bool{}
+	var files []treeFile
 	err = t.Files().ForEach(func(f *object.File) error {
-		if f.Name == domain.MarkerFile {
-			return nil // never taken from Git: a Sync reads it as an old marker
-		}
-		keep[f.Name] = true
-		if base := path.Base(f.Name); strings.Contains(base, ".sops.") {
-			keep[path.Join(path.Dir(f.Name), strings.Replace(base, ".sops.", ".", 1))] = true
-		}
 		content, err := f.Contents()
 		if err != nil {
 			return err
 		}
-		return writeEntry(filepath.Join(dest, filepath.FromSlash(f.Name)), f.Name, f.Mode, []byte(content))
-	})
-	if err != nil {
-		return fmt.Errorf("export %s@%s:%s: %w", repoURL, sha, p, err)
-	}
-	return prune(dest, keep)
-}
-
-func writeEntry(target, name string, mode filemode.FileMode, content []byte) error {
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return err
-	}
-	fi, statErr := os.Lstat(target)
-	if mode == filemode.Symlink {
-		link := string(content)
-		if path.IsAbs(link) || strings.HasPrefix(path.Join(path.Dir(name), link), "..") {
-			return fmt.Errorf("symlink %s -> %s points outside the app path: %w", name, link, domain.ErrInvalid)
+		mode := fs.FileMode(0o644)
+		switch f.Mode {
+		case filemode.Executable:
+			mode = 0o755
+		case filemode.Symlink:
+			mode = fs.ModeSymlink | 0o777
 		}
-		if statErr == nil {
-			if cur, _ := os.Readlink(target); fi.Mode()&fs.ModeSymlink != 0 && cur == link {
-				return nil
-			}
-			if err := os.RemoveAll(target); err != nil {
-				return err
-			}
-		}
-		return os.Symlink(link, target)
-	}
-	perm := fs.FileMode(0o644)
-	if mode == filemode.Executable {
-		perm = 0o755
-	}
-	if statErr == nil && !fi.Mode().IsRegular() {
-		if err := os.RemoveAll(target); err != nil {
-			return err
-		}
-	} else if statErr == nil {
-		if cur, err := os.ReadFile(target); err == nil && bytes.Equal(cur, content) {
-			if fi.Mode().Perm() == perm {
-				return nil
-			}
-			return os.Chmod(target, perm)
-		}
-	}
-	// Truncate in place instead of rename so the inode stays the same for Docker bind mounts.
-	f, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
-	if err != nil {
-		return err
-	}
-	_, err = f.Write(content)
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
-	if err != nil {
-		return err
-	}
-	return os.Chmod(target, perm)
-}
-
-// prune deletes files under dest not in keep, then empty directories.
-func prune(dest string, keep map[string]bool) error {
-	var dirs []string
-	err := filepath.WalkDir(dest, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, _ := filepath.Rel(dest, p)
-		if d.IsDir() {
-			if rel != "." {
-				dirs = append(dirs, p)
-			}
-			return nil
-		}
-		if !keep[filepath.ToSlash(rel)] {
-			return os.Remove(p)
-		}
+		files = append(files, treeFile{f.Name, mode, []byte(content)})
 		return nil
 	})
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("read %s@%s:%s: %w", repoURL, sha, p, err)
 	}
-	slices.Reverse(dirs)
-	for _, d := range dirs {
-		_ = os.Remove(d) // fails while non-empty, which is what we want
-	}
-	return nil
+	return files, nil
+}
+
+type treeFile struct {
+	path    string
+	mode    fs.FileMode
+	content []byte
 }
 
 func (g *Git) Diff(ctx context.Context, repoURL, fromSHA, toSHA, p string) (string, error) {

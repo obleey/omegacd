@@ -15,7 +15,7 @@ import (
 
 	"github.com/obleey/omegacd/internal/appdef"
 	"github.com/obleey/omegacd/internal/domain"
-	"github.com/obleey/omegacd/internal/gitsrc"
+	"github.com/obleey/omegacd/internal/source"
 )
 
 func (s *server) listApps(w http.ResponseWriter, r *http.Request) {
@@ -278,7 +278,7 @@ func (s *server) listRepoCreds(w http.ResponseWriter, r *http.Request) {
 		out[i] = repoCredView{RepoCredential: c, UsedBy: []string{}}
 	}
 	for _, a := range apps {
-		if c := gitsrc.MatchCredential(cs, a.RepoURL); c != nil {
+		if c := source.MatchCredential(cs, a.RepoURL); c != nil {
 			i := slices.IndexFunc(cs, func(x domain.RepoCredential) bool { return x.ID == c.ID })
 			out[i].UsedBy = append(out[i].UsedBy, a.Name)
 		}

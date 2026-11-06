@@ -417,10 +417,11 @@ func TestAppOfAppsPendingMessage(t *testing.T) {
 	if v, _ := r.c.Refresh(ctx, "root"); v.SyncStatus != domain.OutOfSync || v.SyncMessage != want {
 		t.Fatalf("got %s %q, want %q", v.SyncStatus, v.SyncMessage, want)
 	}
-	exports := func() int { r.g.mu.Lock(); defer r.g.mu.Unlock(); return r.g.exports }
-	before := exports()
-	if v, _ := r.c.Refresh(ctx, "root"); v.SyncMessage != want || exports() != before {
-		t.Fatalf("second reconcile: %q, %d exports; want the same message, computed once per tree", v.SyncMessage, exports()-before)
+	renders := func() int { r.g.mu.Lock(); defer r.g.mu.Unlock(); return r.g.renders }
+	before := renders()
+	// the Source Server caches renders; the pending children are computed once per tree on top
+	if v, _ := r.c.Refresh(ctx, "root"); v.SyncMessage != want || renders() != before+1 {
+		t.Fatalf("second reconcile: %q, %d renders; want the same message, only target's render", v.SyncMessage, renders()-before)
 	}
 
 	r.g.define("cccccccc", defs) // a commit that doesn't change the children

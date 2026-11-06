@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -389,21 +390,47 @@ type Store interface {
 }
 
 // Git reads Repositories. Credentials are looked up by the implementation via RepoCredentials.
-type Git interface {
+// Source is the Source Server (Q5, Q12): the only part that reads Git. It renders Desired States with secrets
+// still encrypted and serves their files by hash.
+type Source interface {
 	// Resolve fetches the Repository and resolves rev (branch, tag or SHA) to a commit SHA.
 	Resolve(ctx context.Context, repoURL, rev string) (string, error)
 	// Invalidate makes the next Resolve of repoURL fetch even within the fetch cooldown
 	// (used for explicit Refresh, manual Sync and webhooks).
 	Invalidate(repoURL string)
-	// TreeHash is the git tree hash of path at sha ("" if the path does not exist).
-	TreeHash(ctx context.Context, repoURL, sha, path string) (string, error)
-	// Export writes the files under path at sha into dest, overwriting files in place (same inode)
-	// and deleting files in dest that are not in the tree.
-	Export(ctx context.Context, repoURL, sha, path, dest string) error
+	// Render reads the files under spec.Path at spec.Revision and validates them. The same spec always renders
+	// the same result.
+	Render(ctx context.Context, spec RenderSpec) (Rendered, error)
+	// Blob is the content of a rendered file, by its sha256.
+	Blob(ctx context.Context, hash string) ([]byte, error)
 	// Diff is a unified diff of path between two commits.
 	Diff(ctx context.Context, repoURL, fromSHA, toSHA, path string) (string, error)
 	// CheckAccess tells whether repoURL is readable, and with which credential, without cloning it.
 	CheckAccess(ctx context.Context, repoURL string) (RepoAccess, error)
+}
+
+type RenderSpec struct {
+	RepoURL, Revision, Path string
+	ComposeFiles, Profiles  []string
+	Apps                    bool // an App of Apps: read its definitions instead of compose files
+}
+
+// Rendered is an Application's Desired State at a Revision.
+type Rendered struct {
+	Files []File // sorted by Path
+	// Checksum is the sha256 of Files: it changes exactly when a file under the path does.
+	Checksum string
+	Apps     []Application // an App of Apps' definitions
+	Warnings []string
+	// Invalid is why the files can't be deployed (ErrInvalid); a Sync fails with it.
+	Invalid error
+}
+
+// File is one file of a Rendered Desired State; its content is the blob named SHA256.
+type File struct {
+	Path   string      // slash-separated, relative to the Application's path
+	Mode   fs.FileMode // 0644, 0755, or fs.ModeSymlink (content is the link target)
+	SHA256 string
 }
 
 // Secrets decrypts Encrypted Secrets (*.sops.* files) in a directory.
