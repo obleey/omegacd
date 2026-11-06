@@ -34,7 +34,7 @@ var settings = []struct{ name, def, help string }{
 	{"DOCKER_HOST", "the engine's default socket", "Docker or Podman socket, e.g. unix:///run/user/1000/docker.sock for rootless Docker"},
 	{"OMEGACD_AGENT_CACHE_REVISIONS", "10", "Revisions kept per Application for offline restore and rollback"},
 	{"OMEGACD_AGENT_SECRET_GROUP", "", "a group (name or gid) decrypted files belong to, mode 0640, for containers that read them " +
-		"as a non-root user and join it with group_add:; without it they are 0600, readable by containers running as root " +
+		"as a non-root user and join it with group_add: (the gid; with rootless Docker or Podman \"0\"); without it they are 0600, readable by containers running as root " +
 		"(rootful) or as the Agent's user (rootless). (On macOS, Docker Desktop and OrbStack ignore owner and mode of shared folders.)"},
 	{"OMEGACD_AGENT_ALLOW_ROOT", "false", "true runs the Agent as root; use a docker-group user or rootless Docker instead"},
 }

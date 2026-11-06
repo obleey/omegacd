@@ -62,7 +62,7 @@ decrypt, a second (dummy) source can be registered without changing callers, and
 refused a `0600` secret file and reading it with `OMEGACD_AGENT_SECRET_GROUP` and `group_add:`.
 
 ### M2-06 · Compose on the Agent
-**Status:** todo
+**Status:** done (2026-11-06, PR #84)
 **Depends on:** M2-04, M2-05
 
 Reuse `internal/engine` locally: Sync, Diff, Status, Health, events/drift, logs, delete (with and without volumes),

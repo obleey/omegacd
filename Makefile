@@ -1,4 +1,4 @@
-.PHONY: build web proto test test-integration e2e docker run stop up down clean
+.PHONY: build web proto test test-integration test-engines e2e docker run stop up down clean
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/obleey/omegacd/internal/version.Version=$(VERSION)
@@ -22,6 +22,14 @@ test:
 
 test-integration:
 	go test -tags integration ./...
+
+# the Agent's integration tests against each engine it supports (test/engines.sh starts the rootless ones)
+ENGINES_ROOT ?= $(abspath $(or $(TMPDIR),/tmp))/omegacd-engines
+test-engines:
+	test/engines.sh up $(ENGINES_ROOT)
+	go test -tags integration -count=1 -run TestAgent ./internal/agent
+	DOCKER_HOST=tcp://127.0.0.1:23750 OMEGACD_IT_ROOT=$(ENGINES_ROOT) go test -tags integration -count=1 -run TestAgent ./internal/agent
+	DOCKER_HOST=tcp://127.0.0.1:23751 OMEGACD_IT_ROOT=$(ENGINES_ROOT) go test -tags integration -count=1 -run TestAgent ./internal/agent
 
 # end-to-end: throwaway OmegaCDs driven through the CLI against the local Docker engine (see test/e2e/run.sh)
 e2e: build

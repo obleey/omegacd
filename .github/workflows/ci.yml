@@ -96,3 +96,16 @@ jobs:
       - run: docker compose -f test/e2e/forgejo.yaml up -d --wait
       - run: CGO_ENABLED=0 go build -o bin/omegacd ./cmd/omegacd
       - run: test/e2e/run.sh
+
+  engines:
+    name: Agent engines
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+      # rootless engines need unprivileged user namespaces, which Ubuntu 24.04 restricts with AppArmor by default
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      # the Agent's deploy path against rootful Docker, rootless Docker and rootless Podman (Q34, Q52)
+      - run: make test-engines ENGINES_ROOT=/tmp/omegacd-engines
