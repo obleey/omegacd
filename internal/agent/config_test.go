@@ -54,6 +54,9 @@ func TestConfigDefaults(t *testing.T) {
 		"bad control plane": {
 			env: map[string]string{"HOME": "/h", "OMEGACD_AGENT_CONTROL_PLANE": "omegacd.example.com"}, euid: 1000, err: "https://",
 		},
+		"bad secret group": {
+			env: map[string]string{"HOME": "/h", "OMEGACD_AGENT_SECRET_GROUP": "no-such-group-xyz"}, euid: 1000, err: "no such group",
+		},
 		"bad cache size": {
 			env: map[string]string{"HOME": "/h", "OMEGACD_AGENT_CACHE_REVISIONS": "0"}, euid: 1000, err: "at least 1",
 		},
@@ -76,7 +79,7 @@ func TestConfigDefaults(t *testing.T) {
 func TestConfigSettings(t *testing.T) {
 	c, err := LoadConfig(env(map[string]string{"HOME": "/h", "OMEGACD_AGENT_CONTROL_PLANE": "https://cp.example.com",
 		"OMEGACD_AGENT_INVITE": " inv-123 ", "DOCKER_HOST": "unix:///run/user/1000/docker.sock", "OMEGACD_AGENT_CACHE_REVISIONS": "25"}), 1000)
-	if err != nil || c.ControlPlane != "https://cp.example.com" || c.Invite != "inv-123" ||
+	if err != nil || c.SecretGroup != -1 || c.ControlPlane != "https://cp.example.com" || c.Invite != "inv-123" ||
 		c.DockerHost != "unix:///run/user/1000/docker.sock" || c.CacheRevisions != 25 {
 		t.Fatalf("got %+v, %v", c, err)
 	}
@@ -95,5 +98,14 @@ func TestUsageDocumentsEverySetting(t *testing.T) {
 	}
 	if !read["OMEGACD_AGENT_CACHE_REVISIONS"] {
 		t.Fatal("the probe missed settings")
+	}
+}
+
+func TestConfigSecretGroup(t *testing.T) {
+	for v, want := range map[string]int{"1234": 1234, " 0 ": 0} {
+		c, err := LoadConfig(env(map[string]string{"HOME": "/h", "OMEGACD_AGENT_SECRET_GROUP": v}), 1000)
+		if err != nil || c.SecretGroup != want {
+			t.Errorf("%q: %d, %v; want %d", v, c.SecretGroup, err, want)
+		}
 	}
 }

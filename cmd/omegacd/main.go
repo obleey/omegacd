@@ -256,12 +256,16 @@ func runAgent(log *slog.Logger) error {
 	if _, err := agent.OpenCache(db, filepath.Join(cfg.StateDir, "cache"), cfg.CacheRevisions); err != nil {
 		return err
 	}
+	hostKey, err := agent.HostKey(cfg.StateDir)
+	if err != nil {
+		return err
+	}
 	apps, err := db.ListApps(context.Background())
 	if err != nil {
 		return err
 	}
 	log.Info("omegacd agent", "state", cfg.StateDir, "workdir", cfg.WorkDir, "controlPlane", cfg.ControlPlane,
-		"cacheRevisions", cfg.CacheRevisions, "apps", len(apps))
+		"cacheRevisions", cfg.CacheRevisions, "apps", len(apps), "hostKey", hostKey.Recipient().String())
 	return nil
 }
 

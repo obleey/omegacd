@@ -22,7 +22,9 @@ type WorkDir struct {
 	cache *Cache
 }
 
-func NewWorkDir(root string, db *DB, cache *Cache) *WorkDir { return &WorkDir{Root: root, db: db, cache: cache} }
+func NewWorkDir(root string, db *DB, cache *Cache) *WorkDir {
+	return &WorkDir{Root: root, db: db, cache: cache}
+}
 
 // Dir is a's folder: <root>/<name>, or <root>/<parent>/<name> for a Child Application.
 func (w *WorkDir) Dir(a App) string { return filepath.Join(w.Root, a.Parent, a.Name) }

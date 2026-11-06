@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"os/user"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -18,6 +19,7 @@ type Config struct {
 	WorkDir        string // the Applications' folders
 	DockerHost     string // empty: the engine's default socket
 	CacheRevisions int    // per Application, besides the deployed one
+	SecretGroup    int    // gid decrypted files belong to (mode 0640); -1: none, they are 0600
 	AllowRoot      bool
 }
 
@@ -31,6 +33,9 @@ var settings = []struct{ name, def, help string }{
 		"where Applications' files are written (RAM by default; a disk path keeps them across reboots)"},
 	{"DOCKER_HOST", "the engine's default socket", "Docker or Podman socket, e.g. unix:///run/user/1000/docker.sock for rootless Docker"},
 	{"OMEGACD_AGENT_CACHE_REVISIONS", "10", "Revisions kept per Application for offline restore and rollback"},
+	{"OMEGACD_AGENT_SECRET_GROUP", "", "a group (name or gid) decrypted files belong to, mode 0640, for containers that read them " +
+		"as a non-root user and join it with group_add:; without it they are 0600, readable by containers running as root " +
+		"(rootful) or as the Agent's user (rootless). (On macOS, Docker Desktop and OrbStack ignore owner and mode of shared folders.)"},
 	{"OMEGACD_AGENT_ALLOW_ROOT", "false", "true runs the Agent as root; use a docker-group user or rootless Docker instead"},
 }
 
@@ -40,7 +45,7 @@ func Usage(w io.Writer) {
 	for _, s := range settings {
 		fmt.Fprintf(w, "\n  %s\n      %s\n      default: %s\n", s.name, s.help, cmp.Or(s.def, "(none)"))
 	}
-	fmt.Fprintln(w, "\nSecrets: SOPS with age, decrypted with the Host Key the Agent creates in its state dir; nothing to configure.")
+	fmt.Fprintln(w, "\nSecrets: SOPS with age, decrypted with the Host Key the Agent creates in its state dir (host.key).")
 }
 
 // LoadConfig reads the settings from getenv for a process running as euid.
@@ -96,6 +101,21 @@ func LoadConfig(getenv func(string) string, euid int) (Config, error) {
 			return c, fmt.Errorf("OMEGACD_AGENT_CACHE_REVISIONS=%q: want a number of Revisions, at least 1", v)
 		}
 		c.CacheRevisions = n
+	}
+	c.SecretGroup = -1
+	if g := strings.TrimSpace(getenv("OMEGACD_AGENT_SECRET_GROUP")); g != "" {
+		gid, err := strconv.Atoi(g)
+		if err != nil {
+			grp, lerr := user.LookupGroup(g)
+			if lerr != nil {
+				return c, fmt.Errorf("OMEGACD_AGENT_SECRET_GROUP=%q: no such group", g)
+			}
+			gid, _ = strconv.Atoi(grp.Gid)
+		}
+		if gid < 0 {
+			return c, fmt.Errorf("OMEGACD_AGENT_SECRET_GROUP=%q: want a group name or gid", g)
+		}
+		c.SecretGroup = gid
 	}
 	return c, nil
 }
