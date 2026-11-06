@@ -3,6 +3,7 @@ package workdir
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -117,4 +118,47 @@ func prune(dest string, keep map[string]bool) error {
 		_ = os.Remove(d) // fails while non-empty, which is what we want
 	}
 	return nil
+}
+
+// Claim creates dir if needed when it may be written for Application name, and refuses a folder someone else
+// owns (Q48): dir may be written if it it carries name's marker from before Dirs (deleted
+// now), or no marker and it is owned (the caller knows it wrote there or runs containers from it), holds nothing but directories (Docker re-creates missing bind-mount sources as
+// empty directories, which hold no one's data), or holds nothing but folders named in kids.
+func Claim(dir, name string, owned bool, kids []string) error {
+	marker := filepath.Join(dir, domain.MarkerFile)
+	b, err := os.ReadFile(marker)
+	if err == nil && string(b) == name || err != nil && (owned || !hasFiles(dir) || onlyDirs(dir, kids)) {
+		if err == nil {
+			os.Remove(marker)
+		}
+		return os.MkdirAll(dir, 0o750)
+	}
+	return fmt.Errorf("refusing to sync into %s: the folder exists and OmegaCD did not create it for Application %q; "+
+		"rename the Application, pick another work dir, or move the folder away", dir, name)
+}
+
+// hasFiles reports whether dir holds anything but directories; a missing dir holds nothing, an unreadable one may.
+func hasFiles(dir string) bool {
+	errFound := errors.New("found")
+	err := filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			return errFound
+		}
+		return err
+	})
+	return err != nil && !errors.Is(err, fs.ErrNotExist)
+}
+
+// onlyDirs reports whether dir holds nothing but folders named in names.
+func onlyDirs(dir string, names []string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(names) == 0 {
+		return false
+	}
+	for _, e := range entries {
+		if !e.IsDir() || !slices.Contains(names, e.Name()) {
+			return false
+		}
+	}
+	return true
 }

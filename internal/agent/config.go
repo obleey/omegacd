@@ -86,6 +86,8 @@ func LoadConfig(getenv func(string) string, euid int) (Config, error) {
 			return c, fmt.Errorf("the %s dir %q must be an absolute path", d.name, d.path)
 		}
 	}
+	// cleaned, so they compare with paths Docker reports (path parity) whatever the spelling: /opt/services/, //opt/…
+	c.StateDir, c.WorkDir = filepath.Clean(c.StateDir), filepath.Clean(c.WorkDir)
 
 	c.CacheRevisions = 10
 	if v := strings.TrimSpace(getenv("OMEGACD_AGENT_CACHE_REVISIONS")); v != "" {

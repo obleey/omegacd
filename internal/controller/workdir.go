@@ -4,8 +4,6 @@ import (
 	"cmp"
 	"context"
 	"errors"
-	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -47,11 +45,11 @@ func (c *Controller) claim(ctx context.Context, a *domain.Application, kids []st
 	c.claimMu.Lock()
 	defer c.claimMu.Unlock()
 	if a.Parent != "" {
-		if err := claimDir(filepath.Join(c.cfg.WorkDir, a.Parent), a.Parent, owned || a.Parent == domain.LegacyDir, kids); err != nil {
+		if err := workdir.Claim(filepath.Join(c.cfg.WorkDir, a.Parent), a.Parent, owned || a.Parent == domain.LegacyDir, kids); err != nil {
 			return err
 		}
 	}
-	if err := claimDir(dir, a.Name, owned || dir == filepath.Join(legacy, a.Name), nil); err != nil {
+	if err := workdir.Claim(dir, a.Name, owned || dir == filepath.Join(legacy, a.Name), nil); err != nil {
 		return err
 	}
 	return c.addDir(ctx, a, domain.HostDir(domain.LocalHost, dir))
@@ -64,48 +62,6 @@ func (c *Controller) addDir(ctx context.Context, a *domain.Application, dir stri
 	}
 	a.Dirs = append(slices.Clone(a.Dirs), dir)
 	return c.cfg.Store.SetAppDirs(ctx, a.Name, a.Dirs)
-}
-
-// claimDir creates dir if needed when it may be written for name: it carries name's marker from before Dirs (deleted
-// now), or no marker and it is owned, holds nothing but directories (Docker re-creates missing bind-mount sources as
-// empty directories, which hold no one's data), or holds nothing but folders named in kids.
-func claimDir(dir, name string, owned bool, kids []string) error {
-	marker := filepath.Join(dir, domain.MarkerFile)
-	b, err := os.ReadFile(marker)
-	if err == nil && string(b) == name || err != nil && (owned || !hasFiles(dir) || onlyDirs(dir, kids)) {
-		if err == nil {
-			os.Remove(marker)
-		}
-		return os.MkdirAll(dir, 0o750)
-	}
-	return fmt.Errorf("refusing to sync into %s: the folder exists and OmegaCD did not create it for Application %q; "+
-		"rename the Application, pick another work dir, or move the folder away", dir, name)
-}
-
-// hasFiles reports whether dir holds anything but directories; a missing dir holds nothing, an unreadable one may.
-func hasFiles(dir string) bool {
-	errFound := errors.New("found")
-	err := filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
-		if err == nil && !d.IsDir() {
-			return errFound
-		}
-		return err
-	})
-	return err != nil && !errors.Is(err, fs.ErrNotExist)
-}
-
-// onlyDirs reports whether dir holds nothing but folders named in names.
-func onlyDirs(dir string, names []string) bool {
-	entries, err := os.ReadDir(dir)
-	if err != nil || len(names) == 0 {
-		return false
-	}
-	for _, e := range entries {
-		if !e.IsDir() || !slices.Contains(names, e.Name()) {
-			return false
-		}
-	}
-	return true
 }
 
 // removeFiles deletes a's folders in the work dir other than keep ("" deletes them all): those in a.Dirs or marked
