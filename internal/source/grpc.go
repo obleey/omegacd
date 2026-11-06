@@ -19,7 +19,7 @@ import (
 	sourcev1 "github.com/obleey/omegacd/internal/proto/source/v1"
 )
 
-// Serve registers s as the source/v1 service on g. Credentials are M1-06; until then they're Unimplemented.
+// Serve registers s as the source/v1 service on g.
 func Serve(g *grpc.Server, s domain.Source) {
 	sourcev1.RegisterSourceServiceServer(g, &grpcServer{s: s})
 }
@@ -38,6 +38,8 @@ func toStatus(err error) error {
 		return status.Error(codes.NotFound, err.Error())
 	case errors.Is(err, domain.ErrInvalid):
 		return status.Error(codes.InvalidArgument, err.Error())
+	case errors.Is(err, domain.ErrAlreadyExists):
+		return status.Error(codes.AlreadyExists, err.Error())
 	}
 	return status.Error(codes.Unknown, err.Error())
 }
@@ -101,6 +103,38 @@ func (g *grpcServer) CheckAccess(ctx context.Context, r *sourcev1.CheckAccessReq
 		DefaultBranch: a.DefaultBranch, Message: a.Message}, toStatus(err)
 }
 
+func (g *grpcServer) ListCredentials(ctx context.Context, _ *sourcev1.ListCredentialsRequest) (*sourcev1.ListCredentialsResponse, error) {
+	cs, err := g.s.ListCredentials(ctx)
+	resp := &sourcev1.ListCredentialsResponse{}
+	for _, c := range cs {
+		resp.Credentials = append(resp.Credentials, toCredential(c))
+	}
+	return resp, toStatus(err)
+}
+
+func (g *grpcServer) PutCredential(ctx context.Context, r *sourcev1.PutCredentialRequest) (*sourcev1.PutCredentialResponse, error) {
+	c := r.GetCredential()
+	saved, err := g.s.SaveCredential(ctx, domain.RepoCredential{ID: c.GetId(), URLPrefix: c.GetUrlPrefix(),
+		Username: c.GetUsername(), Password: c.GetPassword(), SSHPrivateKey: c.GetSshPrivateKey()})
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &sourcev1.PutCredentialResponse{Credential: toCredential(saved)}, nil
+}
+
+func (g *grpcServer) DeleteCredential(ctx context.Context, r *sourcev1.DeleteCredentialRequest) (*sourcev1.DeleteCredentialResponse, error) {
+	return &sourcev1.DeleteCredentialResponse{}, toStatus(g.s.DeleteCredential(ctx, r.Id))
+}
+
+// toCredential never carries secrets: they only go to the Source Server.
+func toCredential(c domain.RepoCredential) *sourcev1.Credential {
+	return &sourcev1.Credential{Id: c.ID, UrlPrefix: c.URLPrefix, Username: c.Username, HasPassword: c.HasPassword, HasSshKey: c.HasSSHKey}
+}
+
+func fromCredential(c *sourcev1.Credential) domain.RepoCredential {
+	return domain.RepoCredential{ID: c.Id, URLPrefix: c.UrlPrefix, Username: c.Username, HasPassword: c.HasPassword, HasSSHKey: c.HasSshKey}
+}
+
 // Client is a standalone Source Server, over gRPC with mTLS.
 type Client struct {
 	conn *grpc.ClientConn
@@ -128,7 +162,7 @@ func Dial(rawURL, tlsDir string) (*Client, error) {
 
 func (c *Client) Close() error { return c.conn.Close() }
 
-// remoteErr is an error from the Source Server, still matching ErrNotFound or ErrInvalid.
+// remoteErr is an error from the Source Server, still matching ErrNotFound, ErrInvalid or ErrAlreadyExists.
 type remoteErr struct {
 	msg string
 	is  error
@@ -148,6 +182,8 @@ func fromStatus(err error) error {
 		return remoteErr{st.Message(), domain.ErrNotFound}
 	case st.Code() == codes.InvalidArgument:
 		return remoteErr{st.Message(), domain.ErrInvalid}
+	case st.Code() == codes.AlreadyExists:
+		return remoteErr{st.Message(), domain.ErrAlreadyExists}
 	}
 	return fmt.Errorf("source server: %s", st.Message())
 }
@@ -216,4 +252,30 @@ func (c *Client) CheckAccess(ctx context.Context, repoURL string) (domain.RepoAc
 		return domain.RepoAccess{}, fromStatus(err)
 	}
 	return domain.RepoAccess{Access: r.Access, CredentialPrefix: r.CredentialPrefix, DefaultBranch: r.DefaultBranch, Message: r.Message}, nil
+}
+
+func (c *Client) ListCredentials(ctx context.Context) ([]domain.RepoCredential, error) {
+	r, err := c.c.ListCredentials(ctx, &sourcev1.ListCredentialsRequest{})
+	if err != nil {
+		return nil, fromStatus(err)
+	}
+	out := []domain.RepoCredential{}
+	for _, cr := range r.Credentials {
+		out = append(out, fromCredential(cr))
+	}
+	return out, nil
+}
+
+func (c *Client) SaveCredential(ctx context.Context, cred domain.RepoCredential) (domain.RepoCredential, error) {
+	r, err := c.c.PutCredential(ctx, &sourcev1.PutCredentialRequest{Credential: &sourcev1.Credential{Id: cred.ID,
+		UrlPrefix: cred.URLPrefix, Username: cred.Username, Password: cred.Password, SshPrivateKey: cred.SSHPrivateKey}})
+	if err != nil {
+		return domain.RepoCredential{}, fromStatus(err)
+	}
+	return fromCredential(r.Credential), nil
+}
+
+func (c *Client) DeleteCredential(ctx context.Context, id int64) error {
+	_, err := c.c.DeleteCredential(ctx, &sourcev1.DeleteCredentialRequest{Id: id})
+	return fromStatus(err)
 }

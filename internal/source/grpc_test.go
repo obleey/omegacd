@@ -120,3 +120,34 @@ func TestGRPCRefusesClientsWithoutCertificate(t *testing.T) {
 		t.Error("GenerateCerts overwrote existing certificates")
 	}
 }
+
+func TestGRPCCredentials(t *testing.T) {
+	url, dir := standalone(t, server(t))
+	remote, err := Dial(url, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer remote.Close()
+	ctx := t.Context()
+	repo := privateRepo(t)
+	c, err := remote.SaveCredential(ctx, domain.RepoCredential{URLPrefix: repo + "/owner/", Username: "owner", Password: token})
+	if err != nil || c.ID == 0 || !c.HasPassword || c.Password != "" {
+		t.Fatalf("Save = %+v, %v", c, err)
+	}
+	if _, err := remote.SaveCredential(ctx, domain.RepoCredential{URLPrefix: repo + "/owner/"}); !errors.Is(err, domain.ErrAlreadyExists) {
+		t.Errorf("duplicate: %v", err)
+	}
+	if a, _ := remote.CheckAccess(ctx, repo+"/owner/repo.git"); a.Access != "error" {
+		t.Errorf("the access check did not use the credential: %+v", a)
+	}
+	list, err := remote.ListCredentials(ctx)
+	if err != nil || len(list) != 1 || list[0].Password != "" || !list[0].HasPassword || list[0].Username != "owner" {
+		t.Fatalf("List = %+v, %v", list, err)
+	}
+	if err := remote.DeleteCredential(ctx, c.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := remote.DeleteCredential(ctx, c.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("delete twice: %v", err)
+	}
+}

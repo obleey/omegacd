@@ -268,7 +268,7 @@ type repoCredView struct {
 }
 
 func (s *server) listRepoCreds(w http.ResponseWriter, r *http.Request) {
-	cs, err := s.Store.ListRepoCredentials(r.Context())
+	cs, err := s.Source.ListCredentials(r.Context())
 	var apps []domain.AppView
 	if err == nil {
 		apps, err = s.Controller.ListApps(r.Context())
@@ -315,16 +315,11 @@ func (s *server) saveRepoCred(w http.ResponseWriter, r *http.Request) {
 	if err == nil && req.URLPrefix == "" {
 		err = fmt.Errorf("%w: urlPrefix is required", domain.ErrInvalid)
 	}
-	if err == nil {
-		id, err = s.Store.SaveRepoCredential(r.Context(), domain.RepoCredential{
-			ID: id, URLPrefix: req.URLPrefix, Username: req.Username, Password: req.Password, SSHPrivateKey: req.SSHPrivateKey,
-		})
-	}
 	var saved domain.RepoCredential
 	if err == nil {
-		var cs []domain.RepoCredential
-		cs, err = s.Store.ListRepoCredentials(r.Context())
-		saved, err = find(cs, err, id, func(c domain.RepoCredential) int64 { return c.ID })
+		saved, err = s.Source.SaveCredential(r.Context(), domain.RepoCredential{
+			ID: id, URLPrefix: req.URLPrefix, Username: req.Username, Password: req.Password, SSHPrivateKey: req.SSHPrivateKey,
+		})
 	}
 	respond(w, saveStatus(r), saved, err)
 }
@@ -332,7 +327,7 @@ func (s *server) saveRepoCred(w http.ResponseWriter, r *http.Request) {
 func (s *server) deleteRepoCred(w http.ResponseWriter, r *http.Request) {
 	id, err := pathID(r)
 	if err == nil {
-		err = s.Store.DeleteRepoCredential(r.Context(), id)
+		err = s.Source.DeleteCredential(r.Context(), id)
 	}
 	respond(w, http.StatusNoContent, nil, err)
 }

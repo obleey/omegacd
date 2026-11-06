@@ -49,6 +49,16 @@ check "the file from Git is mounted" 'docker logs $(docker ps -q --filter label=
 check "the Source Server cloned the repository, the Control Plane did not" '[ -d "$T/src-data/repos" ] && [ ! -d "$T/data/repos" ]'
 check "diff works through it" '"$BIN" app diff e2e-src >/dev/null 2>&1'
 
+# Repository credentials go through the Control Plane to the Source Server, which keeps them (M1-06)
+H=(-H "Authorization: Bearer $OMEGACD_TOKEN" -H 'X-Requested-With: omegacd' -H 'Content-Type: application/json')
+code=$(curl -s -o "$T/cred.json" -w '%{http_code}' "${H[@]}" -d '{"urlPrefix":"https://git.example.com/","username":"me","password":"e2e-git-token-123"}' \
+  http://127.0.0.1:18080/api/settings/repo-credentials)
+check "a credential is saved through the Control Plane ($code)" '[ "$code" = 201 ]'
+list=$(curl -sf "${H[@]}" http://127.0.0.1:18080/api/settings/repo-credentials)
+check "it is listed, without its secret" 'echo "$list" | grep -q "\"hasPassword\":true" && ! echo "$list" | grep -q e2e-git-token'
+check "the Source Server keeps it, encrypted" '[ -s "$T/src-data/credentials.age" ] && ! grep -q e2e-git-token "$T/src-data/credentials.age"'
+check "the Control Plane keeps no credential" '[ ! -e "$T/data/credentials.age" ] && ! grep -rq "git.example.com" "$T/data"'
+
 # mutual TLS: without the client certificate the handshake fails; with it, gRPC answers
 check "a client without the certificate is refused" '! curl -s --http2 --cacert "$T/tls/ca.pem" -o /dev/null https://127.0.0.1:19090/'
 check "a client with the certificate gets in" 'curl -s --http2 --cacert "$T/tls/ca.pem" --cert "$T/tls/client.pem" --key "$T/tls/client.key" -o /dev/null -w "%{http_code}" https://127.0.0.1:19090/ | grep -q "^[0-9]"'

@@ -25,6 +25,7 @@ import (
 type Config struct {
 	Controller    domain.Controller
 	Store         domain.Store
+	Source        domain.Source // holds the Repository credentials; the Control Plane keeps none (Q40)
 	WebhookSecret string
 	WebhookParse  func(provider string, h http.Header, body []byte, secret string) ([]string, error)
 	UI            fs.FS

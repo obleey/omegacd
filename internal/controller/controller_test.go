@@ -183,13 +183,14 @@ func (s *fakeStore) ListRegistryCredentials(context.Context) ([]domain.RegistryC
 }
 
 type fakeSource struct {
-	mu       sync.Mutex
-	sha      string
-	err      error
-	resolves int
-	renders  int               // of App of Apps definitions
-	files    map[string]string // an App of Apps' files when set; every other app gets a compose.yaml
-	blobs    map[string][]byte
+	domain.Source // credentials: unused here, panic
+	mu            sync.Mutex
+	sha           string
+	err           error
+	resolves      int
+	renders       int               // of App of Apps definitions
+	files         map[string]string // an App of Apps' files when set; every other app gets a compose.yaml
+	blobs         map[string][]byte
 }
 
 func (g *fakeSource) Invalidate(string) {}

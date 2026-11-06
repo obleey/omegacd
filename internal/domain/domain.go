@@ -350,10 +350,8 @@ type Store interface {
 	// SetAppDirs replaces the Application's Dirs; UpdateApp never changes them.
 	SetAppDirs(ctx context.Context, name string, dirs []string) error
 
-	// Secrets in credentials are encrypted at rest and decrypted on read.
-	ListRepoCredentials(ctx context.Context) ([]RepoCredential, error)
-	SaveRepoCredential(ctx context.Context, c RepoCredential) (int64, error) // ID 0 = create; empty secret fields keep the old value
-	DeleteRepoCredential(ctx context.Context, id int64) error
+	// Secrets in credentials are encrypted at rest and decrypted on read. Repository credentials are the
+	// Source Server's (domain.Source).
 	ListRegistryCredentials(ctx context.Context) ([]RegistryCredential, error)
 	SaveRegistryCredential(ctx context.Context, c RegistryCredential) (int64, error)
 	DeleteRegistryCredential(ctx context.Context, id int64) error
@@ -407,6 +405,12 @@ type Source interface {
 	Diff(ctx context.Context, repoURL, fromSHA, toSHA, path string) (string, error)
 	// CheckAccess tells whether repoURL is readable, and with which credential, without cloning it.
 	CheckAccess(ctx context.Context, repoURL string) (RepoAccess, error)
+
+	// Repository credentials live only here (Q13, Q40): secrets go in, never out.
+	ListCredentials(ctx context.Context) ([]RepoCredential, error)
+	// SaveCredential creates (ID 0) or updates c; empty secret fields keep the old value.
+	SaveCredential(ctx context.Context, c RepoCredential) (RepoCredential, error)
+	DeleteCredential(ctx context.Context, id int64) error
 }
 
 type RenderSpec struct {

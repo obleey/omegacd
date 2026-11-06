@@ -34,12 +34,14 @@ type fakeStore struct {
 	mustChange   bool
 	tokens       map[string]domain.APIToken
 	sessions     map[string]time.Time
-	repoCreds    []domain.RepoCredential
 }
 
-func (s *fakeStore) ListRepoCredentials(context.Context) ([]domain.RepoCredential, error) {
-	return s.repoCreds, nil
+type fakeSource struct {
+	domain.Source // unimplemented methods panic
+	creds         []domain.RepoCredential
 }
+
+func (s *fakeSource) ListCredentials(context.Context) ([]domain.RepoCredential, error) { return s.creds, nil }
 
 func (s *fakeStore) CreateSession(_ context.Context, h string, exp time.Time) error {
 	s.mu.Lock()
@@ -281,6 +283,7 @@ type env struct {
 	t     *testing.T
 	srv   *httptest.Server
 	store *fakeStore
+	src   *fakeSource
 	ctrl  *fakeController
 	c     *http.Client
 }
@@ -290,8 +293,9 @@ func newEnv(t *testing.T, mustChange bool) *env {
 	hash, _ := bcrypt.GenerateFromPassword([]byte("secret123"), bcrypt.MinCost)
 	store.hash, store.mustChange = string(hash), mustChange
 	ctrl := &fakeController{apps: map[string]domain.AppView{}, events: make(chan domain.Event, 1), changed: make(chan string, 4), hosts: map[string]domain.Host{}}
+	src := &fakeSource{}
 	h := New(Config{
-		Controller: ctrl, Store: store, WebhookSecret: "s3",
+		Controller: ctrl, Store: store, Source: src, WebhookSecret: "s3",
 		WebhookParse: func(provider string, h http.Header, body []byte, secret string) ([]string, error) {
 			if h.Get("X-Sig") != secret {
 				return nil, errors.New("bad signature")
@@ -309,7 +313,7 @@ func newEnv(t *testing.T, mustChange bool) *env {
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 	jar, _ := cookiejar.New(nil)
-	return &env{t: t, srv: srv, store: store, ctrl: ctrl, c: &http.Client{Jar: jar}}
+	return &env{t: t, srv: srv, store: store, src: src, ctrl: ctrl, c: &http.Client{Jar: jar}}
 }
 
 // do sends a request; hdr pairs are header key/values. Returns status and body.
@@ -724,7 +728,7 @@ func TestCheckRepo(t *testing.T) {
 
 func TestRepoCredentialsUsedBy(t *testing.T) {
 	e := newEnv(t, false)
-	e.store.repoCreds = []domain.RepoCredential{{ID: 1, URLPrefix: "https://github.com/"}, {ID: 2, URLPrefix: "https://github.com/obleey/"}}
+	e.src.creds = []domain.RepoCredential{{ID: 1, URLPrefix: "https://github.com/"}, {ID: 2, URLPrefix: "https://github.com/obleey/"}}
 	for name, url := range map[string]string{"b": "https://github.com/obleey/b.git", "a": "https://github.com/obleey/a.git", "c": "https://github.com/other/c.git", "d": "https://gitlab.com/d.git"} {
 		e.ctrl.apps[name] = domain.AppView{Application: domain.Application{Name: name, RepoURL: url}}
 	}

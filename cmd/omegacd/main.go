@@ -103,12 +103,16 @@ func run(log *slog.Logger) error {
 		src = c
 		log.Info("using the standalone source server", "url", u)
 	} else {
-		s, err := source.NewServer(dataDir, st.ListRepoCredentials)
+		s, err := source.NewServer(dataDir)
 		if err != nil {
 			return err
 		}
 		s.KnownHostsFile = knownHosts
 		src = s
+	}
+
+	if err := moveRepoCredentials(ctx, st, src); err != nil {
+		return err
 	}
 
 	selfID, _ := os.Hostname() // inside a container this is the container ID prefix
@@ -137,6 +141,7 @@ func run(log *slog.Logger) error {
 		Handler: api.New(api.Config{
 			Controller:     ctl,
 			Store:          st,
+			Source:         src,
 			WebhookSecret:  os.Getenv("OMEGACD_WEBHOOK_SECRET"),
 			WebhookParse:   source.ParseWebhook,
 			TrustedProxies: proxies,
@@ -159,6 +164,27 @@ func run(log *slog.Logger) error {
 	return nil
 }
 
+// moveRepoCredentials hands Repository credentials an older version stored in the Control Plane's database to the
+// Source Server, which owns them now (Q40), and deletes them here: one at a time, each deleted only once saved.
+func moveRepoCredentials(ctx context.Context, st *store.Store, src domain.Source) error {
+	cs, err := st.ListRepoCredentials(ctx)
+	if err != nil {
+		return err
+	}
+	for _, c := range cs {
+		id := c.ID
+		c.ID = 0
+		// already there: a move that stopped before deleting here; the Source Server's copy stays
+		if _, err := src.SaveCredential(ctx, c); err != nil && !errors.Is(err, domain.ErrAlreadyExists) {
+			return fmt.Errorf("move repository credential %s to the source server: %w", c.URLPrefix, err)
+		}
+		if err := st.DeleteRepoCredential(ctx, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func sourceTLSDir() string {
 	return cmp.Or(os.Getenv("OMEGACD_SOURCE_TLS_DIR"), "/etc/omegacd/source-tls")
 }
@@ -174,8 +200,7 @@ func runSourceServer(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("source server certificates (omegacd source-certs makes them): %w", err)
 	}
-	// ponytail: no repository credentials until they move here (M1-06): public repositories only
-	src, err := source.NewServer(dataDir, nil)
+	src, err := source.NewServer(dataDir)
 	if err != nil {
 		return err
 	}

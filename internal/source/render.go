@@ -31,6 +31,7 @@ var _ domain.Source = (*Server)(nil)
 // Server is the Source Server, in-process: Git (Resolve, Diff, CheckAccess, …) plus rendering.
 type Server struct {
 	*Git
+	creds   *creds
 	blobs   *blob.Store
 	staging string
 	mu      sync.Mutex
@@ -40,8 +41,9 @@ type Server struct {
 
 const maxRendered = 1000
 
-// NewServer keeps clones in dir/repos and rendered files in dir/blobs.
-func NewServer(dir string, creds func(ctx context.Context) ([]domain.RepoCredential, error)) (*Server, error) {
+// NewServer keeps clones in dir/repos, rendered files in dir/blobs, and the Repository credentials in
+// dir/credentials.age, sealed with dir/source.key.
+func NewServer(dir string) (*Server, error) {
 	// ponytail: blobs are never collected; GC them by the Revisions in use once the Source Server runs standalone (M1-05)
 	blobs, err := blob.Open(filepath.Join(dir, "blobs"))
 	if err != nil {
@@ -51,7 +53,12 @@ func NewServer(dir string, creds func(ctx context.Context) ([]domain.RepoCredent
 	if err := os.MkdirAll(staging, 0o700); err != nil {
 		return nil, err
 	}
-	return &Server{Git: New(filepath.Join(dir, "repos"), creds), blobs: blobs, staging: staging, rendered: map[string]domain.Rendered{}}, nil
+	creds, err := openCreds(dir)
+	if err != nil {
+		return nil, err
+	}
+	return &Server{Git: New(filepath.Join(dir, "repos"), creds.all), creds: creds, blobs: blobs, staging: staging,
+		rendered: map[string]domain.Rendered{}}, nil
 }
 
 func (s *Server) Blob(_ context.Context, hash string) ([]byte, error) { return s.blobs.Get(hash) }
