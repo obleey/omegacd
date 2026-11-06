@@ -70,3 +70,27 @@ jobs:
       # Needs Docker (available on ubuntu-latest); the remote Host tests run docker:dind --privileged.
       - run: go test -tags integration ./...
 
+
+  e2e:
+    name: End to end
+    needs: web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: web-build
+          path: web/build
+      - name: age and sops (pinned, sops at the version in go.mod)
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q age
+          curl -fsSLo sops https://github.com/getsops/sops/releases/download/v3.13.3/sops-v3.13.3.linux.amd64
+          echo "e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b  sops" | sha256sum -c
+          sudo install sops /usr/local/bin/sops && rm sops
+      # the webhook test needs it; without it the test is skipped
+      - run: docker compose -f test/e2e/forgejo.yaml up -d --wait
+      - run: CGO_ENABLED=0 go build -o bin/omegacd ./cmd/omegacd
+      - run: test/e2e/run.sh

@@ -49,7 +49,7 @@ D=$(diffjson)
 check "after Sync: Live equals Desired" '[ "$(echo "$D" | field live)" = "$(echo "$D" | field desired)" ] && [ -n "$(echo "$D" | field live)" ]'
 check "Live is the deployed file as written, no secret" '! echo "$D" | grep -q sup3r && [ "$(echo "$D" | field live)" = "$(cat "$REPO/sec/compose.yaml")" ]'
 
-sed -i '' 's/busybox:1.36/busybox:1.37/' "$REPO/sec/compose.yaml"; gitc commit -qam bump
+sed -i.bak 's/busybox:1.36/busybox:1.37/' "$REPO/sec/compose.yaml" && rm "$REPO/sec/compose.yaml.bak"; gitc commit -qam bump
 "$BIN" app refresh e2e-sec >/dev/null 2>&1
 D=$(diffjson)
 check "after a push: Live still the deployed image" 'echo "$D" | field live | grep -q "image: busybox:1.36"'

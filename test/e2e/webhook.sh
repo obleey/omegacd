@@ -34,7 +34,8 @@ gitc add -A && gitc commit -qm "hook-test app" && gitc push -q origin main
 # --- throwaway OmegaCD (only the webhook can make it notice a push: poll 1h)
 age-keygen -o "$T/age.key" 2>/dev/null
 mkdir -p "$T/data" "$T/work"
-OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_WORKDIR=$T/work OMEGACD_AGE_KEY_FILE=$T/age.key \
+# all interfaces: Forgejo reaches it via host.docker.internal, on Linux the Docker bridge, not loopback
+OMEGACD_ADDR=:18080 OMEGACD_DATA=$T/data OMEGACD_WORKDIR=$T/work OMEGACD_AGE_KEY_FILE=$T/age.key \
   OMEGACD_ADMIN_PASSWORD=e2e-password-123 OMEGACD_POLL_INTERVAL=1h OMEGACD_WEBHOOK_SECRET=$SECRET "$BIN" > "$T/server.log" 2>&1 &
 SRV=$!
 cleanup() {
@@ -66,7 +67,7 @@ HOOK=$(fapi -X POST -d "{\"type\":\"forgejo\",\"active\":true,\"events\":[\"push
 check "webhook created in Forgejo" '[ -n "$HOOK" ]'
 
 # --- push a change and time the deploy
-sed -i '' 's/busybox:1.36/busybox:1.37/' "$T/wt/compose.yaml"; gitc commit -qam "bump busybox"
+sed -i.bak 's/busybox:1.36/busybox:1.37/' "$T/wt/compose.yaml" && rm "$T/wt/compose.yaml.bak"; gitc commit -qam "bump busybox"
 start=$(date +%s); gitc push -q origin main; second=$(git -C "$T/wt" rev-parse HEAD)
 deployed=""
 for _ in $(seq 60); do

@@ -16,7 +16,7 @@ done
 
 out=$(agent XDG_RUNTIME_DIR="$T/run"); rc=$?
 check "starts as a user, with the user defaults" '[ $rc -eq 0 ] && echo "$out" | grep -q "state=.*/home/.local/share/omegacd-agent "'
-check "state dir created owner-only" '[ "$(stat -f %Lp "$T/home/.local/share/omegacd-agent" 2>/dev/null || stat -c %a "$T/home/.local/share/omegacd-agent")" = 700 ]'
+check "state dir created owner-only" '[ "$(ls -ld "$T/home/.local/share/omegacd-agent" | cut -c1-10)" = drwx------ ]'
 check "work dir in the user's runtime dir" '[ -d "$T/run/omegacd" ]'
 
 out=$(agent STATE_DIRECTORY="$T/var-lib" OMEGACD_AGENT_WORKDIR="$T/services"); rc=$?

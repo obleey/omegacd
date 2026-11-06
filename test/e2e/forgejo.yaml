@@ -10,6 +10,12 @@ services:
       FORGEJO__server__ROOT_URL: http://git.localhost/
       # webhooks go to OmegaCD on the host (host.docker.internal), a private address Forgejo blocks by default
       FORGEJO__webhook__ALLOWED_HOST_LIST: "*"
+    # Linux Docker provides host.docker.internal only on request (Docker Desktop and OrbStack always do)
+    extra_hosts: ["host.docker.internal:host-gateway"]
     volumes: [forgejo:/data]
+    healthcheck: # docker compose up --wait returns once the API answers
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/v1/version"]
+      interval: 2s
+      retries: 60
 volumes:
   forgejo:

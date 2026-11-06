@@ -65,14 +65,14 @@ check "Sync is refused with the reason" 'echo "$syncout$("$BIN" app get e2e-bad 
 check "no container created for the bad app" '[ -z "$(docker ps -aq --filter label=dev.omegacd.application=e2e-bad)" ]'
 
 # --- ../ escapes the app folder
-sed -i '' 's#./data:/data#../shared:/shared#' "$REPO/bad/compose.yaml"
+sed -i.bak 's#./data:/data#../shared:/shared#' "$REPO/bad/compose.yaml" && rm "$REPO/bad/compose.yaml.bak"
 git -C "$REPO" -c user.name=e2e -c user.email=e2e@local commit -qam up
 "$BIN" app refresh e2e-bad >/dev/null 2>&1
 syncout=$("$BIN" app sync e2e-bad --wait --timeout 2m 2>&1)
 check "../ mount is refused" 'echo "$syncout$("$BIN" app get e2e-bad -o json)" | grep -q "mounts ../shared, outside"'
 
 # --- fixed in Git: named volume -> syncs
-sed -i '' 's#\["../shared:/shared"\]#["data:/data"]\nvolumes:\n  data: {}#' "$REPO/bad/compose.yaml"
+sed -i.bak 's#\["../shared:/shared"\]#["data:/data"]\nvolumes:\n  data: {}#' "$REPO/bad/compose.yaml" && rm "$REPO/bad/compose.yaml.bak"
 git -C "$REPO" -c user.name=e2e -c user.email=e2e@local commit -qam fix
 "$BIN" app refresh e2e-bad >/dev/null 2>&1
 "$BIN" app sync e2e-bad --wait --timeout 2m >/dev/null 2>&1
