@@ -172,6 +172,9 @@ func TestOldLayoutMovesOnSync(t *testing.T) {
 	if !r.c.readDecrypted("web")["db.env"] {
 		t.Fatal("old layout's decrypted list not read")
 	}
+	if v, _ := r.c.Refresh(ctx, "web"); v.SyncStatus != domain.OutOfSync || !strings.Contains(v.SyncMessage, "on the next Sync") {
+		t.Fatalf("before the move: %s %q", v.SyncStatus, v.SyncMessage)
+	}
 
 	r.mustSync(t, "web")
 	if got := r.c.liveDir(app("web")); got != filepath.Join(work, "web") {

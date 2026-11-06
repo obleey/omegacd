@@ -289,10 +289,13 @@ func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fe
 				}
 				return true
 			})
-			if len(diffs) > 0 {
+			switch {
+			case len(diffs) > 0:
 				drift = true
 				v.SyncStatus, v.SyncMessage = domain.OutOfSync, "live state drifted: "+describe(diffs)
-			} else {
+			case c.liveDir(a) != c.appDir(a):
+				v.SyncStatus, v.SyncMessage = domain.OutOfSync, "files move to "+a.Dir()+" in the work dir on the next Sync"
+			default:
 				v.SyncStatus = domain.Synced
 			}
 		}
@@ -543,8 +546,8 @@ func (c *Controller) runSync(a domain.Application, op domain.SyncOperation) {
 const triggerParent = "app-of-apps"
 
 // syncPendingChildren is what a manual Sync of an App of Apps means to a person: deploy what isn't
-// deployed. Children that are OutOfSync or whose last Sync failed get a Sync with a fresh retry
-// budget (e.g. after they gave up waiting for a dependency); Synced ones are left alone.
+// deployed. Children that are OutOfSync, Unknown (say, their files are missing) or whose last Sync failed get a
+// Sync with a fresh retry budget (e.g. after they gave up waiting for a dependency); Synced ones are left alone.
 func (c *Controller) syncPendingChildren(ctx context.Context, parent string) {
 	children, err := c.children(ctx, parent)
 	if err != nil {
@@ -557,7 +560,7 @@ func (c *Controller) syncPendingChildren(ctx context.Context, parent string) {
 		}
 		v := c.reconcile(ctx, ch)
 		failed := v.LastOperation != nil && v.LastOperation.Phase == domain.OpFailed
-		if (v.SyncStatus != domain.OutOfSync && !failed) || v.SyncStatus == domain.Unknown || v.TargetSHA == "" {
+		if (v.SyncStatus == domain.Synced && !failed) || v.TargetSHA == "" {
 			continue
 		}
 		c.mu.Lock()
