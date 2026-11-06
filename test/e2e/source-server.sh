@@ -50,13 +50,14 @@ check "the Source Server cloned the repository, the Control Plane did not" '[ -d
 check "diff works through it" '"$BIN" app diff e2e-src >/dev/null 2>&1'
 
 # Repository credentials go through the Control Plane to the Source Server, which keeps them (M1-06)
+GITPW=$(openssl rand -hex 12) # a throwaway value, made up per run
 H=(-H "Authorization: Bearer $OMEGACD_TOKEN" -H 'X-Requested-With: omegacd' -H 'Content-Type: application/json')
-code=$(curl -s -o "$T/cred.json" -w '%{http_code}' "${H[@]}" -d '{"urlPrefix":"https://git.example.com/","username":"me","password":"e2e-git-token-123"}' \
+code=$(curl -s -o "$T/cred.json" -w '%{http_code}' "${H[@]}" -d '{"urlPrefix":"https://git.example.com/","username":"me","password":"'"$GITPW"'"}' \
   http://127.0.0.1:18080/api/settings/repo-credentials)
 check "a credential is saved through the Control Plane ($code)" '[ "$code" = 201 ]'
 list=$(curl -sf "${H[@]}" http://127.0.0.1:18080/api/settings/repo-credentials)
-check "it is listed, without its secret" 'echo "$list" | grep -q "\"hasPassword\":true" && ! echo "$list" | grep -q e2e-git-token'
-check "the Source Server keeps it, encrypted" '[ -s "$T/src-data/credentials.age" ] && ! grep -q e2e-git-token "$T/src-data/credentials.age"'
+check "it is listed, without its secret" 'echo "$list" | grep -q "\"hasPassword\":true" && ! echo "$list" | grep -q "$GITPW"'
+check "the Source Server keeps it, encrypted" '[ -s "$T/src-data/credentials.age" ] && ! grep -q "$GITPW" "$T/src-data/credentials.age"'
 check "the Control Plane keeps no credential" '[ ! -e "$T/data/credentials.age" ] && ! grep -rq "git.example.com" "$T/data"'
 
 # mutual TLS: without the client certificate the handshake fails; with it, gRPC answers
