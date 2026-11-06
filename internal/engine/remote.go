@@ -31,11 +31,13 @@ root=$1 dst="/work/$2" name=$3 parent=$4
 claim() {
   if [ -f "$1/.omegacd" ]; then
     [ "$(cat "$1/.omegacd")" = "$2" ] && return
-  elif [ "$1" = "$3" ] || [ ! -e "$1" ] || [ -z "$(find "$1" ! -type d 2>&1 | head -n 1)" ]; then
+  elif [ "$1" = "$3" ] || [ ! -e "$1" ] || [ -z "$(find "$1" ! -type d ! -name '.omegacd.*' 2>&1 | head -n 1)" ]; then
     mkdir -p "$1"
-    printf %s "$2" > "$1/.omegacd"
+    printf %s "$2" > "$1/.omegacd.$$" && mv "$1/.omegacd.$$" "$1/.omegacd"
     return
   fi
+  # a Sync of a sibling Child Application may have claimed it meanwhile
+  [ "$(cat "$1/.omegacd" 2>/dev/null)" = "$2" ] && return
   echo "refusing to sync into $root${1#/work}: the folder exists and OmegaCD did not create it for Application \"$2\"; rename the Application, pick another work dir, or move the folder away" >&2
   exit 1
 }

@@ -437,3 +437,26 @@ func TestDescribeChildren(t *testing.T) {
 		t.Fatalf("nothing pending: %q", got)
 	}
 }
+
+// A child whose status can't be told (here its deployed files can't be read) is synced by a Sync of its App of Apps.
+func TestAppOfAppsSyncsUnknownChildren(t *testing.T) {
+	r := newRig(t)
+	ctx := t.Context()
+	r.c.CreateApp(ctx, parentApp("root"))
+	r.g.define("aaaaaaaa", "name: web\nrepoURL: x\nhost: local\n")
+	r.mustSync(t, "root")
+	r.childrenSynced(t, "web")
+
+	r.e.mu.Lock()
+	r.e.diffErr = errors.New("compose file is invalid")
+	r.e.mu.Unlock()
+	if v, _ := r.c.Refresh(ctx, "web"); v.SyncStatus != domain.Unknown {
+		t.Fatalf("web: %s", v.SyncStatus)
+	}
+	syncs := r.e.syncCount()
+	r.mustSync(t, "root")
+	r.waitIdle(t, "web")
+	if r.e.syncCount() != syncs+1 {
+		t.Fatalf("syncs: %d, want the Unknown child synced", r.e.syncCount()-syncs)
+	}
+}

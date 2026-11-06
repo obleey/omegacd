@@ -276,6 +276,7 @@ type fakeEngine struct {
 	hostsChanged []string
 	lastPrune    bool
 	statusErr    error
+	diffErr      error
 	lastPruneVol bool
 	removedVols  []bool // volumes flag per Remove call
 	lastForce    bool
@@ -286,7 +287,7 @@ func (e *fakeEngine) Validate(context.Context, domain.Application, string) error
 func (e *fakeEngine) Diff(context.Context, domain.Application, string, string) ([]domain.ServiceDiff, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.drift, nil
+	return e.drift, e.diffErr
 }
 func (e *fakeEngine) Sync(_ context.Context, _ domain.Application, _ string, opts domain.SyncOptions) error {
 	e.mu.Lock()

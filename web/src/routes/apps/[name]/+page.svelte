@@ -244,7 +244,7 @@
 			<section class="panel" aria-label="Last Sync">
 				<span class="plabel">Last Sync</span>
 				{#if op}
-					<Badge status={op.phase} size="lg" label="Last Sync Operation" text={op.phase === 'Running' ? 'Syncing' : op.phase === 'Succeeded' ? 'Sync OK' : 'Sync failed'} />
+					<Badge status={op.phase} size="lg" label="Last Sync Operation" text={op.phase === 'Running' ? 'Syncing' : op.phase} />
 					<span class="muted small">{op.trigger} · {ago(op.finishedAt || op.startedAt)} · <span class="mono"><GitLink href={op.revision && web?.commit(op.revision)} title="Open commit {op.revision}">{short(op.revision)}</GitLink></span></span>
 				{:else}
 					<Badge status="Unknown" size="lg" text="Never synced" />
