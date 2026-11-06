@@ -47,7 +47,7 @@ container, check path parity at start (Q21).
 is refused, and a container without path parity refuses to start with an explanation.
 
 ### M2-05 · Secret sources and decryption in memory
-**Status:** in progress (feat/m2-05-secrets)
+**Status:** done (2026-11-06, PR #83)
 **Depends on:** M2-04
 
 A `SecretSource` interface on the Agent (Q29) with SOPS+age as the only v0.2 implementation. The Agent generates its
