@@ -1,18 +1,21 @@
 package source
 
 import (
+	"container/list"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/compose-spec/compose-go/v2/cli"
 	"github.com/compose-spec/compose-go/v2/loader"
@@ -34,17 +37,21 @@ type Server struct {
 	creds   *creds
 	blobs   *blob.Store
 	staging string
-	mu      sync.Mutex
-	// ponytail: renders are kept until there are maxRendered, then all dropped; an LRU if that ever thrashes
-	rendered map[string]domain.Rendered
+
+	mu          sync.Mutex
+	rendered    map[string]*list.Element // of *cached, most recently used first in recent
+	recent      *list.List
+	maxRendered int
 }
 
-const maxRendered = 1000
+type cached struct {
+	key string
+	r   domain.Rendered
+}
 
 // NewServer keeps clones in dir/repos, rendered files in dir/blobs, and the Repository credentials in
 // dir/credentials.age, sealed with dir/source.key.
 func NewServer(dir string) (*Server, error) {
-	// ponytail: blobs are never collected; GC them by the Revisions in use once the Source Server runs standalone (M1-05)
 	blobs, err := blob.Open(filepath.Join(dir, "blobs"))
 	if err != nil {
 		return nil, err
@@ -58,7 +65,42 @@ func NewServer(dir string) (*Server, error) {
 		return nil, err
 	}
 	return &Server{Git: New(filepath.Join(dir, "repos"), creds.all), creds: creds, blobs: blobs, staging: staging,
-		rendered: map[string]domain.Rendered{}}, nil
+		rendered: map[string]*list.Element{}, recent: list.New(), maxRendered: 1000}, nil
+}
+
+// blobGrace is how long a blob outlives the last render that put it: the Control Plane fetches a render's blobs
+// right after rendering, well within it.
+const blobGrace = time.Hour
+
+// CollectBlobs removes, every hour until ctx ends, the blobs no cached render uses that weren't put within the
+// last hour. They are only a cache: a later Render of their commit puts them again.
+func (s *Server) CollectBlobs(ctx context.Context, log *slog.Logger) {
+	t := time.NewTicker(blobGrace)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		if n, err := s.collectBlobs(); err != nil {
+			log.Warn("collect source server blobs", "err", err)
+		} else if n > 0 {
+			log.Info("collected source server blobs", "removed", n)
+		}
+	}
+}
+
+func (s *Server) collectBlobs() (int, error) {
+	used := map[string]bool{}
+	s.mu.Lock()
+	for e := s.recent.Front(); e != nil; e = e.Next() {
+		for _, f := range e.Value.(*cached).r.Files {
+			used[f.SHA256] = true
+		}
+	}
+	s.mu.Unlock()
+	return s.blobs.GC(func(hash string) bool { return used[hash] }, blobGrace)
 }
 
 func (s *Server) Blob(_ context.Context, hash string) ([]byte, error) { return s.blobs.Get(hash) }
@@ -67,8 +109,13 @@ func (s *Server) Render(ctx context.Context, spec domain.RenderSpec) (domain.Ren
 	// a commit never changes, so neither does its render
 	key := strings.Join([]string{NormalizeURL(spec.RepoURL), spec.Revision, cleanPath(spec.Path),
 		strings.Join(spec.ComposeFiles, ","), strings.Join(spec.Profiles, ","), fmt.Sprint(spec.Apps)}, "\x00")
+	var r domain.Rendered
 	s.mu.Lock()
-	r, ok := s.rendered[key]
+	e, ok := s.rendered[key]
+	if ok {
+		s.recent.MoveToFront(e)
+		r = e.Value.(*cached).r
+	}
 	s.mu.Unlock()
 	if ok {
 		return r, nil
@@ -114,10 +161,12 @@ func (s *Server) Render(ctx context.Context, spec domain.RenderSpec) (domain.Ren
 	}
 
 	s.mu.Lock()
-	if len(s.rendered) >= maxRendered {
-		clear(s.rendered)
+	if _, ok := s.rendered[key]; !ok { // a concurrent Render of the same spec may have been first
+		s.rendered[key] = s.recent.PushFront(&cached{key, r})
+		if s.recent.Len() > s.maxRendered {
+			delete(s.rendered, s.recent.Remove(s.recent.Back()).(*cached).key)
+		}
 	}
-	s.rendered[key] = r
 	s.mu.Unlock()
 	return r, nil
 }
