@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/obleey/omegacd/internal/importer"
+	"github.com/obleey/omegacd/internal/source"
 	"github.com/obleey/omegacd/internal/version"
 	"io"
 	"net/http"
@@ -77,6 +78,7 @@ func init() { // init breaks the cycle commands → run funcs → flags → comm
 		"logout":            {"logout", (*CLI).logout},
 		"version":           {"version", (*CLI).version},
 		"keygen":            {"keygen [--out FILE]   (a new age key like age-keygen; the public key also goes to stderr)", (*CLI).keygen},
+		"source-certs":      {"source-certs [--out DIR] [--host NAME]...   (mTLS certificates for a standalone Source Server; --host: the names the Control Plane dials it by)", (*CLI).sourceCerts},
 		"import":            {"import [STACK]... [--ssh user@host --host NAME] [--recipient age1…] [--apps-dir apps] [--definitions platform/apps.yaml] [--dry-run] [--force]\n    (run in your repository checkout: writes the Compose stacks running on a Docker host into it as Applications)", (*CLI).importStacks},
 		"app list":          {"app list", (*CLI).appList},
 		"app get":           {"app get NAME", (*CLI).appGet},
@@ -99,12 +101,12 @@ func init() { // init breaks the cycle commands → run funcs → flags → comm
 	}
 }
 
-var order = []string{"login", "logout", "version", "keygen", "import", "app list", "app get", "app create", "app delete", "app sync", "app refresh",
+var order = []string{"login", "logout", "version", "keygen", "source-certs", "import", "app list", "app get", "app create", "app delete", "app sync", "app refresh",
 	"app diff", "app history", "app rollback", "app wait", "app logs", "app export", "host list", "host test",
 	"host key show", "host key generate", "host key import", "host key remove"}
 
 func (c *CLI) usage() {
-	fmt.Fprintln(c.Stderr, "Usage: omegacd [server]   run the server\n       omegacd COMMAND   talk to a server\n\nCommands:")
+	fmt.Fprintln(c.Stderr, "Usage: omegacd [server]        run the server\n       omegacd source-server  run a standalone Source Server\n       omegacd COMMAND        talk to a server\n\nCommands:")
 	for _, k := range order {
 		fmt.Fprintln(c.Stderr, "  "+commands[k].usage)
 	}
@@ -330,6 +332,26 @@ func (c *CLI) keygen(ctx context.Context, args []string) error {
 		return err
 	}
 	fmt.Fprintln(c.Stderr, "Public key: "+id.Recipient().String())
+	return nil
+}
+
+// sourceCerts writes the CA, server and client certificates for omegacd source-server and the Control Plane.
+func (c *CLI) sourceCerts(ctx context.Context, args []string) error {
+	var o opts
+	var hosts multiFlag
+	fs := c.flags("source-certs", &o)
+	out := fs.String("out", ".", "directory to write ca.pem, server.pem/.key and client.pem/.key into")
+	fs.Var(&hosts, "host", "a name or address the Source Server is reached by (repeatable; default localhost and 127.0.0.1)")
+	if _, err := parse(fs, args, 0, 0); err != nil {
+		return err
+	}
+	if len(hosts) == 0 {
+		hosts = multiFlag{"localhost", "127.0.0.1"}
+	}
+	if err := source.GenerateCerts(*out, hosts); err != nil {
+		return err
+	}
+	fmt.Fprintf(c.Stderr, "Wrote %s: give the Source Server ca.pem, server.pem and server.key; the Control Plane ca.pem, client.pem and client.key (OMEGACD_SOURCE_TLS_DIR on both)\n", *out)
 	return nil
 }
 

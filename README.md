@@ -558,6 +558,30 @@ All server settings are environment variables:
 | `OMEGACD_ADMIN_PASSWORD` | *(generated)* | Initial `admin` password, used only on first start. If unset, a random one is logged and must be changed on first login |
 | `OMEGACD_WEBHOOK_SECRET` | *(none)* | Shared secret for webhooks |
 | `OMEGACD_TRUSTED_PROXIES` | *(none)* | Comma-separated IPs/CIDRs of reverse proxies whose `X-Forwarded-For` is trusted |
+| `OMEGACD_SOURCE_SERVER` | *(in-process)* | `https://host:port` of a standalone Source Server (see below) |
+| `OMEGACD_SOURCE_TLS_DIR` | `/etc/omegacd/source-tls` | Certificates from `omegacd source-certs`: the Control Plane reads `ca.pem`, `client.pem`, `client.key`; the Source Server `ca.pem`, `server.pem`, `server.key` |
+| `OMEGACD_SOURCE_ADDR` | `:9090` | `omegacd source-server` only: its listen address |
+
+### Standalone Source Server
+
+The Source Server is the only part that reads Git. It runs inside the server by default; for production, run it
+on its own (`omegacd source-server`) so that a breach of one doesn't hand over the other. They talk gRPC with
+mutual TLS: the Source Server accepts nothing without the Control Plane's client certificate.
+
+```sh
+omegacd source-certs --out source-tls --host source-server   # --host: every name the Control Plane uses for it
+# the Source Server (OMEGACD_DATA holds its Git cache): ca.pem, server.pem, server.key
+OMEGACD_SOURCE_TLS_DIR=./source-tls omegacd source-server
+# the Control Plane: ca.pem, client.pem, client.key
+OMEGACD_SOURCE_SERVER=https://source-server:9090 OMEGACD_SOURCE_TLS_DIR=./source-tls omegacd server
+```
+
+`source-certs` keeps no CA key: nobody can issue another certificate the pair trusts; to replace them, delete the
+directory and run it again on both sides. Keep the Source Server on an internal network. A reverse proxy or load
+balancer between the two must pass TLS through untouched (TCP mode: Traefik `HostSNI` TCP router with
+`tls.passthrough`, nginx `stream` with `ssl_preread`, HAProxy `mode tcp`): terminating TLS there would drop the
+client certificate and the Source Server refuses the connection. Repository credentials move to the Source Server
+next (v0.2 M1-06); until then a standalone one reads public repositories only.
 
 CLI: `OMEGACD_SERVER`, `OMEGACD_TOKEN`, `NO_COLOR`.
 
