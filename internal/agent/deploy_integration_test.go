@@ -33,6 +33,11 @@ func testAgent(t *testing.T) (*Agent, *source, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// in the matrix the rootless engine runs as another user than this test (a real rootless Agent is the engine's
+	// own user): it must be able to traverse to the work dir
+	if err := os.Chmod(base, 0o711); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { os.RemoveAll(base) })
 	state := filepath.Join(base, "state")
 	os.MkdirAll(state, 0o700)
