@@ -37,7 +37,11 @@ check "and its Revision cache (M2-03)" '[ -d "$T/home/.local/share/omegacd-agent
 out=$(agent XDG_RUNTIME_DIR="$T/run"); rc=$?
 check "and opened again on the next start" '[ $rc -eq 0 ] && echo "$out" | grep -q "apps=0"'
 check "the container engine is detected and reported (M2-06)" 'echo "$out" | grep -q "msg=\"container engine\" engine=docker version=[0-9]"'
-check "a work dir on disk is warned about: decrypted secrets would stay there (M2-07)" 'echo "$out" | grep -q "the work dir is not in RAM"'
+# the warning follows the filesystem: /tmp is a tmpfs on some Linux systems, disk on others and on macOS
+case $(stat -f -c %T "$T/run/omegacd" 2>/dev/null || echo disk) in
+tmpfs | ramfs) check "a work dir in RAM isn't warned about (M2-07)" '! echo "$out" | grep -q "the work dir is not in RAM"' ;;
+*) check "a work dir on disk is warned about: decrypted secrets would stay there (M2-07)" 'echo "$out" | grep -q "the work dir is not in RAM"' ;;
+esac
 out=$(env -i PATH="$PATH" HOME="$T/home" XDG_RUNTIME_DIR="$T/run" "$BIN" agent restore --files 2>&1); rc=$?
 check "omegacd agent restore --files runs without an engine and exits" '[ $rc -eq 0 ]'
 out=$(env -i PATH="$PATH" HOME="$T/home" "$BIN" agent restore 2>&1); rc=$?

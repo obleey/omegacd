@@ -38,7 +38,8 @@ https://github.com/obleey/omegacd.
   with user-visible changes.
 - **Testing, for every feature and fix:** unit tests for its logic, an end-to-end test in `test/e2e` that drives it
   through the real binary (a feature with nothing to drive yet, like an internal package, gets its e2e with the first
-  ticket that exposes it, and that ticket's PR says so), and before the PR the **whole** suite green locally:
+  ticket that exposes it, and that ticket's PR says so), and before **every push** (fixes to an open PR too), after
+  the last change, the **whole** suite green on Linux (`make test-linux`; macOS hides permission bugs):
   `go test -race ./...`, `make test-integration`, `make test-engines` for Agent changes, and `make e2e` (start Forgejo first:
   `docker compose -f test/e2e/forgejo.yaml up -d`, so the webhook test runs instead of skipping). The PR says what ran.
 
@@ -50,6 +51,8 @@ make proto              # protobuf → internal/proto (commit the result; rules 
 make test               # unit tests (go test ./...); cd web && npm run check && npm test for the UI
 make test-integration   # against the local Docker engine (docker:dind for remote Hosts; ~6 min)
 make test-engines       # the Agent against rootful Docker, rootless Docker and rootless Podman (test/engines.sh)
+make test-all           # the whole suite: vet, unit -race, integration, test-engines, e2e with Forgejo
+make test-linux         # test-all on real Linux, arm64 and amd64 in parallel (OrbStack machines, test/linux.sh)
 make e2e                # end-to-end: throwaway OmegaCDs driven through the CLI (needs age-keygen, sops)
 make run                # run locally with data in ./data (OMEGACD_WORKDIR=… to move the work dir)
 make stop               # stop it (only the listener)

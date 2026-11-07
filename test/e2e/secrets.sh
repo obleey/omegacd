@@ -42,7 +42,7 @@ ctr() { docker ps -q --filter label=dev.omegacd.application=e2e-sec; }
 "$BIN" app sync e2e-sec --wait --timeout 2m >/dev/null 2>&1
 check "work dir has the decrypted files" '[ -f "$W/.env" ] && [ -f "$W/app.env" ]'
 check "and no *.sops.* copies" '[ -z "$(ls -A "$W" | grep "\.sops\.")" ]'
-check "decrypted list in the work dir" '[ "$(sort "$T/work/.decrypted/e2e-sec" | tr "\n" " ")" = ".env app.env " ]'
+check "decrypted list in the work dir" '[ "$(LC_ALL=C sort "$T/work/.decrypted/e2e-sec" | tr "\n" " ")" = ".env app.env " ]'
 check "container got both secrets" '[ "$(docker exec $(ctr) printenv DB_PASSWORD)" = first-db-pw ] && [ "$(docker exec $(ctr) printenv API_TOKEN)" = first-token ]'
 R=$(api resources)
 check "Resources marks app.env as secret" 'echo "$R" | python3 -c "import json,sys; r=[x for x in json.load(sys.stdin)[\"resources\"] if x[\"name\"]==\"app.env\"]; sys.exit(0 if r and r[0].get(\"secret\") else 1)"'
