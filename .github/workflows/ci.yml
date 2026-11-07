@@ -50,9 +50,13 @@ jobs:
           retention-days: 1
 
   go:
-    name: Go
+    name: Go (${{ matrix.runner }})
     needs: web
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: # Hosts are amd64 and arm64 Linux
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
@@ -74,9 +78,13 @@ jobs:
 
 
   e2e:
-    name: End to end
+    name: End to end (${{ matrix.runner }})
     needs: web
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: # Hosts are amd64 and arm64 Linux
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
@@ -89,8 +97,12 @@ jobs:
       - name: age and sops (pinned, sops at the version in go.mod)
         run: |
           sudo apt-get update -q && sudo apt-get install -y -q age
-          curl -fsSLo sops https://github.com/getsops/sops/releases/download/v3.13.3/sops-v3.13.3.linux.amd64
-          echo "e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b  sops" | sha256sum -c
+          arch=$(dpkg --print-architecture)
+          curl -fsSLo sops https://github.com/getsops/sops/releases/download/v3.13.3/sops-v3.13.3.linux.$arch
+          case $arch in
+            amd64) echo "e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b  sops" | sha256sum -c ;;
+            arm64) echo "53b0abacd38ef1b12a66d6c100956691b9cefce018d91f81e73ddf7438b94d77  sops" | sha256sum -c ;;
+          esac
           sudo install sops /usr/local/bin/sops && rm sops
       # the webhook test needs it; without it the test is skipped
       - run: docker compose -f test/e2e/forgejo.yaml up -d --wait
@@ -98,8 +110,12 @@ jobs:
       - run: test/e2e/run.sh
 
   engines:
-    name: Agent engines
-    runs-on: ubuntu-latest
+    name: Agent engines (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix: # Hosts are amd64 and arm64 Linux
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7

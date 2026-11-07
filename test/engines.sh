@@ -15,6 +15,8 @@ up)
     command -v setfacl >/dev/null || sudo apt-get install -y -q acl >/dev/null
     setfacl -m u:1000:rx "$root" && setfacl -d -m u:1000:rx "$root"
   fi
+  # existing ones are reused, and started if a reboot stopped them
+  docker start omegacd-it-rootless omegacd-it-podman >/dev/null 2>&1 || true
   docker inspect omegacd-it-rootless >/dev/null 2>&1 ||
     docker run -d --name omegacd-it-rootless --privileged -p 127.0.0.1:23750:2375 -e DOCKER_TLS_CERTDIR= \
       -v "$root:$root" docker:29-dind-rootless >/dev/null

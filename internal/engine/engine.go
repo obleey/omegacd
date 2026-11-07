@@ -461,15 +461,30 @@ func (e *Engine) Sync(ctx context.Context, app domain.Application, dir string, o
 	}
 	// Up pulls by each service's pull_policy (default: only missing images), so a registry outage
 	// doesn't fail Syncs and Self-Heals whose images are already present.
-	recreate := api.RecreateDiverged
+	create := api.CreateOptions{RemoveOrphans: opts.Prune, Recreate: api.RecreateDiverged, RecreateDependencies: api.RecreateDiverged}
 	if opts.ForceRecreate {
-		recreate = api.RecreateForce
+		create.Recreate = api.RecreateForce
+	} else {
+		// containers Compose would recreate only for an image label written another way are kept: the services left out
+		// of the targets follow RecreateDependencies
+		keep, err := unchanged(ctx, hc.cli.Client(), p)
+		if err != nil {
+			return err
+		}
+		if len(keep) > 0 {
+			create.RecreateDependencies = api.RecreateNever
+			for name := range p.Services {
+				if !slices.Contains(keep, name) {
+					create.Services = append(create.Services, name)
+				}
+			}
+			if len(create.Services) == 0 {
+				create.Recreate = api.RecreateNever
+			}
+			slices.Sort(create.Services)
+		}
 	}
-	err = svc.Up(ctx, p, api.UpOptions{Create: api.CreateOptions{
-		RemoveOrphans:        opts.Prune,
-		Recreate:             recreate,
-		RecreateDependencies: api.RecreateDiverged,
-	}})
+	err = svc.Up(ctx, p, api.UpOptions{Create: create})
 	if err != nil {
 		return fmt.Errorf("compose up: %w", err)
 	}

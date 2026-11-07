@@ -1,4 +1,4 @@
-.PHONY: build web proto test test-integration test-engines e2e docker run stop up down clean
+.PHONY: build web proto test test-integration test-engines test-all test-linux e2e docker run stop up down clean
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/obleey/omegacd/internal/version.Version=$(VERSION)
@@ -25,11 +25,29 @@ test-integration:
 
 # the Agent's integration tests against each engine it supports (test/engines.sh starts the rootless ones)
 ENGINES_ROOT ?= $(abspath $(or $(TMPDIR),/tmp))/omegacd-engines
+# ENGINES picks some: test/linux.sh leaves podman out under Rosetta, where rootless Podman's networking can't run
+ENGINES ?= rootful rootless podman
 test-engines:
 	test/engines.sh up $(ENGINES_ROOT)
-	go test -tags integration -count=1 -run TestAgent ./internal/agent
-	DOCKER_HOST=tcp://127.0.0.1:23750 OMEGACD_IT_ROOT=$(ENGINES_ROOT) go test -tags integration -count=1 -run TestAgent ./internal/agent
-	DOCKER_HOST=tcp://127.0.0.1:23751 OMEGACD_IT_ROOT=$(ENGINES_ROOT) go test -tags integration -count=1 -run TestAgent ./internal/agent
+	$(if $(filter rootful,$(ENGINES)),go test -tags integration -count=1 -run TestAgent ./internal/agent)
+	$(if $(filter rootless,$(ENGINES)),DOCKER_HOST=tcp://127.0.0.1:23750 OMEGACD_IT_ROOT=$(ENGINES_ROOT) go test -tags integration -count=1 -run TestAgent ./internal/agent)
+	$(if $(filter podman,$(ENGINES)),DOCKER_HOST=tcp://127.0.0.1:23751 OMEGACD_IT_ROOT=$(ENGINES_ROOT) go test -tags integration -count=1 -run TestAgent ./internal/agent)
+	@echo "engines tested: $(ENGINES)"
+
+# the whole suite, as before every PR (web/build must exist: make web): vet, unit with -race, integration, the Agent on
+# every engine, end-to-end with Forgejo
+test-all:
+	go vet ./... && go vet -tags integration ./...
+	go test -race -count=1 ./...
+	go test -count=1 -tags integration ./...
+	$(MAKE) test-engines
+	docker compose -f test/e2e/forgejo.yaml up -d --wait
+	CGO_ENABLED=0 go build -o bin/omegacd-$$(go env GOARCH) ./cmd/omegacd
+	OMEGACD_BIN=$(CURDIR)/bin/omegacd-$$(go env GOARCH) test/e2e/run.sh
+
+# test-all on real Linux, arm64 and amd64, in OrbStack machines (test/linux.sh)
+test-linux:
+	test/linux.sh all
 
 # end-to-end: throwaway OmegaCDs driven through the CLI against the local Docker engine (see test/e2e/run.sh)
 e2e: build
