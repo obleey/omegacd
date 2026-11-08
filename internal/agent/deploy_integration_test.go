@@ -219,3 +219,39 @@ func TestAgentDeploys(t *testing.T) {
 		t.Fatalf("%d volumes after Remove with volumes", n)
 	}
 }
+
+// Q57: an Application in a second allowed root deploys there: the engine resolves its bind mounts in that root, the
+// secret is decrypted there, and moving back to the Host's work dir leaves nothing behind.
+func TestAgentDeploysInItsOwnWorkDir(t *testing.T) {
+	ag, src, recipient := testAgent(t)
+	ctx := t.Context()
+	other := filepath.Join(filepath.Dir(ag.work.Root), "other") // where the matrix's engines see it too
+	ag.work.Allow = []string{other}
+	name := appName(t)
+	a := App{Name: name, WorkDir: filepath.Join(other, "apps")}
+	t.Cleanup(func() { ag.Remove(context.Background(), name, true) })
+	files := map[string]string{"compose.yaml": strings.Replace(compose, "%s", "", 1), "conf.txt": "in its own root",
+		".sops.env": encrypted(t, "SECRET=there-too\n", ".sops.env", recipient)}
+	if err := ag.Deploy(ctx, a, src.revision(name, "r1", files), src.fetch, nil); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the logs", func() bool {
+		l := logs(t, ag, name)
+		return strings.Contains(l, "in its own root") && strings.Contains(l, "secret=there-too")
+	})
+	if _, err := os.Stat(filepath.Join(other, "apps", name, ".env")); err != nil {
+		t.Fatalf("not decrypted in its own root: %v", err)
+	}
+
+	a.WorkDir = ""
+	if err := ag.Deploy(ctx, a, src.revision(name, "r2", files), src.fetch, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(other, "apps", name)); err == nil {
+		t.Fatal("the folder in the other root was left behind")
+	}
+	live, err := ag.Status(ctx, name)
+	if err != nil || !running(live) {
+		t.Fatalf("after moving: %+v %v", live, err)
+	}
+}

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -106,6 +107,19 @@ func TestConfigSecretGroup(t *testing.T) {
 		c, err := LoadConfig(env(map[string]string{"HOME": "/h", "OMEGACD_AGENT_SECRET_GROUP": v}), 1000)
 		if err != nil || c.SecretGroup != want {
 			t.Errorf("%q: %d, %v; want %d", v, c.SecretGroup, err, want)
+		}
+	}
+}
+
+func TestConfigWorkDirAllow(t *testing.T) {
+	c, err := LoadConfig(env(map[string]string{"HOME": "/h", "OMEGACD_AGENT_WORKDIR_ALLOW": " /srv/apps/ ,, /opt/data"}), 1000)
+	if err != nil || !slices.Equal(c.WorkDirAllow, []string{"/srv/apps", "/opt/data"}) {
+		t.Fatalf("got %q, %v", c.WorkDirAllow, err)
+	}
+	for _, bad := range []string{"srv/apps", "/srv,data", "/"} {
+		if _, err := LoadConfig(env(map[string]string{"HOME": "/h", "OMEGACD_AGENT_WORKDIR_ALLOW": bad}), 1000); err == nil ||
+			!strings.Contains(err.Error(), "OMEGACD_AGENT_WORKDIR_ALLOW") {
+			t.Errorf("%q accepted: %v", bad, err)
 		}
 	}
 }

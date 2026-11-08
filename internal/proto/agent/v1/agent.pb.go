@@ -495,12 +495,15 @@ func (x *ChallengeResponse) GetSignature() []byte {
 }
 
 type DesiredState struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	App           string                 `protobuf:"bytes,1,opt,name=app,proto3" json:"app,omitempty"`
-	Revision      string                 `protobuf:"bytes,2,opt,name=revision,proto3" json:"revision,omitempty"`
-	Files         []*File                `protobuf:"bytes,3,rep,name=files,proto3" json:"files,omitempty"`
-	ComposeFiles  []string               `protobuf:"bytes,4,rep,name=compose_files,json=composeFiles,proto3" json:"compose_files,omitempty"`
-	Profiles      []string               `protobuf:"bytes,5,rep,name=profiles,proto3" json:"profiles,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	App          string                 `protobuf:"bytes,1,opt,name=app,proto3" json:"app,omitempty"`
+	Revision     string                 `protobuf:"bytes,2,opt,name=revision,proto3" json:"revision,omitempty"`
+	Files        []*File                `protobuf:"bytes,3,rep,name=files,proto3" json:"files,omitempty"`
+	ComposeFiles []string               `protobuf:"bytes,4,rep,name=compose_files,json=composeFiles,proto3" json:"compose_files,omitempty"`
+	Profiles     []string               `protobuf:"bytes,5,rep,name=profiles,proto3" json:"profiles,omitempty"`
+	// the Application's own root for its folder (Q57), absolute; empty: the Agent's work dir. The Agent writes only under
+	// roots its own configuration allows (OMEGACD_AGENT_WORKDIR_ALLOW), whatever this says
+	WorkDir       string `protobuf:"bytes,6,opt,name=work_dir,json=workDir,proto3" json:"work_dir,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -568,6 +571,13 @@ func (x *DesiredState) GetProfiles() []string {
 		return x.Profiles
 	}
 	return nil
+}
+
+func (x *DesiredState) GetWorkDir() string {
+	if x != nil {
+		return x.WorkDir
+	}
+	return ""
 }
 
 type File struct {
@@ -1226,13 +1236,14 @@ const file_omegacd_agent_v1_agent_proto_rawDesc = "" +
 	"\x11ChallengeResponse\x12\x1d\n" +
 	"\n" +
 	"public_key\x18\x01 \x01(\fR\tpublicKey\x12\x1c\n" +
-	"\tsignature\x18\x02 \x01(\fR\tsignature\"\xab\x01\n" +
+	"\tsignature\x18\x02 \x01(\fR\tsignature\"\xc6\x01\n" +
 	"\fDesiredState\x12\x10\n" +
 	"\x03app\x18\x01 \x01(\tR\x03app\x12\x1a\n" +
 	"\brevision\x18\x02 \x01(\tR\brevision\x12,\n" +
 	"\x05files\x18\x03 \x03(\v2\x16.omegacd.agent.v1.FileR\x05files\x12#\n" +
 	"\rcompose_files\x18\x04 \x03(\tR\fcomposeFiles\x12\x1a\n" +
-	"\bprofiles\x18\x05 \x03(\tR\bprofiles\"F\n" +
+	"\bprofiles\x18\x05 \x03(\tR\bprofiles\x12\x19\n" +
+	"\bwork_dir\x18\x06 \x01(\tR\aworkDir\"F\n" +
 	"\x04File\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x12\n" +
 	"\x04mode\x18\x02 \x01(\rR\x04mode\x12\x16\n" +

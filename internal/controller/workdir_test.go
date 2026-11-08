@@ -173,8 +173,10 @@ func TestOldLayoutMovesOnSync(t *testing.T) {
 		os.MkdirAll(filepath.Dir(filepath.Join(old, path)), 0o750)
 		os.WriteFile(filepath.Join(old, path), []byte(content), 0o644)
 	}
+	r.st.mu.Lock() // background Syncs read and write the fake store too
 	r.st.apps["web"], r.st.apps["root"] = app("web"), parentApp("root")
 	r.st.ops = append(r.st.ops, domain.SyncOperation{App: "web", Phase: domain.OpSucceeded, Revision: "aaaaaaaa", TreeHash: "tree-aaaaaaaa"})
+	r.st.mu.Unlock()
 
 	r.c.restoreWorkDirs(ctx)
 	r.waitIdle(t, "web")

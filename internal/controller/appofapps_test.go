@@ -369,7 +369,9 @@ func TestAppOfAppsWithoutLocalHost(t *testing.T) {
 	// an App of Apps stored with "local" before it had no Host still updates, and shows no Host
 	old := parentApp("legacy")
 	old.Host = domain.LocalHost
+	r.st.mu.Lock() // background Syncs read and write the fake store too
 	r.st.apps["legacy"] = old
+	r.st.mu.Unlock()
 	upd := parentApp("legacy")
 	upd.AutoSync = true
 	if v, err := r.c.UpdateApp(ctx, upd); err != nil || v.Host != "" {

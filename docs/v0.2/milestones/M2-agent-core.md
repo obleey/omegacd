@@ -128,7 +128,7 @@ failing migration fails the Sync with its reason and leaves the running app unto
 leaves a completed one-shot alone; plus an e2e with a real migration step.
 
 ### M2-09 · Per-Application work dir
-**Status:** todo
+**Status:** done (2026-11-08, PR #97)
 **Depends on:** M2-04
 
 An Application may name its own work dir (Q57): `workDir:` (absolute) in its definition; empty means the Host's

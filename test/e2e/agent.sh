@@ -24,7 +24,8 @@ agent() {
 
 help=$("$BIN" agent --help)
 for v in OMEGACD_AGENT_CONTROL_PLANE OMEGACD_AGENT_INVITE OMEGACD_AGENT_STATE_DIR OMEGACD_AGENT_WORKDIR DOCKER_HOST \
-  OMEGACD_AGENT_CACHE_REVISIONS OMEGACD_AGENT_SECRET_GROUP OMEGACD_AGENT_ALLOW_ROOT OMEGACD_LOG_LEVEL OMEGACD_LOG_FORMAT; do
+  OMEGACD_AGENT_CACHE_REVISIONS OMEGACD_AGENT_SECRET_GROUP OMEGACD_AGENT_ALLOW_ROOT OMEGACD_LOG_LEVEL OMEGACD_LOG_FORMAT \
+  OMEGACD_AGENT_WORKDIR_ALLOW; do
   check "--help documents $v" 'echo "$help" | grep -q "^  $v$"'
 done
 
@@ -45,13 +46,23 @@ else
 fi
 # the warning follows the filesystem: /tmp is a tmpfs on some Linux systems, disk on others and on macOS
 case $(stat -f -c %T "$T/run/omegacd" 2>/dev/null || echo disk) in
-tmpfs | ramfs) check "a work dir in RAM isn't warned about (M2-07)" '! echo "$out" | grep -q "the work dir is not in RAM"' ;;
-*) check "a work dir on disk is warned about: decrypted secrets would stay there (M2-07)" 'echo "$out" | grep -q "the work dir is not in RAM"' ;;
+tmpfs | ramfs) check "a work dir in RAM isn't warned about (M2-07)" '! echo "$out" | grep -q "a work dir is not in RAM"' ;;
+*) check "a work dir on disk is warned about: decrypted secrets would stay there (M2-07)" 'echo "$out" | grep -q "a work dir is not in RAM"' ;;
 esac
 out=$(env -i PATH="$PATH" HOME="$T/home" XDG_RUNTIME_DIR="$T/run" "$BIN" agent restore --files 2>&1); rc=$?
 check "omegacd agent restore --files runs without an engine and exits" '[ $rc -eq 0 ]'
 out=$(env -i PATH="$PATH" HOME="$T/home" "$BIN" agent restore 2>&1); rc=$?
 check "an unknown agent command is refused with its usage" '[ $rc -ne 0 ] && echo "$out" | grep -q "usage: omegacd agent"'
+# per-Application work dirs (M2-09): the roots the Agent allows besides its own; deploying into them is in the
+# Agent's integration tests on every engine (the binary has no Control Plane to deploy from until M4-01)
+out=$(agent XDG_RUNTIME_DIR="$T/run" OMEGACD_AGENT_WORKDIR_ALLOW=srv/apps); rc=$?
+check "a relative OMEGACD_AGENT_WORKDIR_ALLOW is refused, named" '[ $rc -ne 0 ] && echo "$out" | grep -q "OMEGACD_AGENT_WORKDIR_ALLOW"'
+mkdir -p "$T/disk-root"
+out=$(agent XDG_RUNTIME_DIR="$T/run" OMEGACD_AGENT_WORKDIR_ALLOW="$T/disk-root"); rc=$?
+case $(stat -f -c %T "$T/disk-root" 2>/dev/null || echo disk) in
+tmpfs | ramfs) check "an allowed root in RAM starts without a warning" '[ $rc -eq 0 ] && ! echo "$out" | grep -q "workdir=[^ ]*/disk-root"' ;;
+*) check "an allowed root on disk is warned about, like the work dir" '[ $rc -eq 0 ] && echo "$out" | grep -q "a work dir is not in RAM.*workdir=[^ ]*/disk-root"' ;;
+esac
 # offline rollback (M2-08): what the binary reaches without a Control Plane to deploy from (that comes with M4-01); the
 # rollback itself, beside a running Agent with Self-Heal, is in the Agent's integration tests on every engine
 ra() { env -i PATH="$PATH" HOME="$T/home" XDG_RUNTIME_DIR="$T/run" ${DOCKER_HOST:+DOCKER_HOST=$DOCKER_HOST} "$BIN" agent rollback "$@" 2>&1; }
@@ -89,6 +100,8 @@ out=$(incontainer -v "$T/host-work:/srv/work"); rc=$?
 check "in a container, a work dir at another host path is refused" '[ $rc -ne 0 ] && echo "$out" | grep -q "paths must match"'
 out=$(incontainer); rc=$?
 check "and one not mounted from the host" '[ $rc -ne 0 ] && echo "$out" | grep -q "not mounted from the host"'
+out=$(incontainer -v "$T/host-work:$T/host-work" -e OMEGACD_AGENT_WORKDIR="$T/host-work" -e OMEGACD_AGENT_WORKDIR_ALLOW=/srv/apps); rc=$?
+check "an allowed root needs path parity too (M2-09)" '[ $rc -ne 0 ] && echo "$out" | grep -q "the work dir /srv/apps is not mounted from the host"'
 cid=$(docker run -d -v /var/run/docker.sock:/var/run/docker.sock -v "$T/omegacd-linux:/omegacd:ro" -v "$T/host-work:$T/host-work" \
   -e OMEGACD_AGENT_ALLOW_ROOT=true -e OMEGACD_AGENT_STATE_DIR=/state -e OMEGACD_AGENT_WORKDIR="$T/host-work" alpine:3 /omegacd agent)
 for _ in $(seq 100); do docker logs "$cid" 2>&1 | grep -q "omegacd agent running" && break; sleep 0.1; done

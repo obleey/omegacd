@@ -52,6 +52,9 @@ message DesiredState {
   repeated File files = 3;
   repeated string compose_files = 4;
   repeated string profiles = 5;
+  // the Application's own root for its folder (Q57), absolute; empty: the Agent's work dir. The Agent writes only under
+  // roots its own configuration allows (OMEGACD_AGENT_WORKDIR_ALLOW), whatever this says
+  string work_dir = 6;
 }
 
 message File {

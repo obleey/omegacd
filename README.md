@@ -290,6 +290,8 @@ autoSync: true
 selfHeal: true
 prune: true
 pruneVolumes: false            # with prune: also delete volumes no longer declared (data is lost)
+workDir: /srv/apps             # optional, for Agents (v0.2): the Host's folder for its files, under a root the Agent
+                               # allows (OMEGACD_AGENT_WORKDIR_ALLOW); default the Agent's work dir. Not inherited
 ---
 name: cache
 repoURL: https://github.com/acme/deploy.git

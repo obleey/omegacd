@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/user"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/moby/moby/api/types/container"
@@ -20,7 +23,8 @@ import (
 
 // WorkDir is where the Agent writes each Application's files (Q11, Q48): plaintext, on RAM or disk as configured.
 type WorkDir struct {
-	Root  string
+	Root  string   // the Host's work dir: an Application's folder is here unless it names its own root
+	Allow []string // further roots an Application may name (OMEGACD_AGENT_WORKDIR_ALLOW, Q57)
 	db    *DB
 	cache *Cache
 	log   *slog.Logger
@@ -31,13 +35,51 @@ func NewWorkDir(root string, db *DB, cache *Cache, log *slog.Logger) *WorkDir {
 	return &WorkDir{Root: root, db: db, cache: cache, log: cmp.Or(log, logging.Discard)}
 }
 
-// Dir is a's folder: <root>/<name>, or <root>/<parent>/<name> for a Child Application.
-func (w *WorkDir) Dir(a App) string { return filepath.Join(w.Root, a.Parent, a.Name) }
+// Dir is a's folder: <root>/<name>, or <root>/<parent>/<name> for a Child Application, in the root it names or the
+// Host's work dir.
+func (w *WorkDir) Dir(a App) string { return filepath.Join(w.root(a), a.Parent, a.Name) }
+
+func (w *WorkDir) root(a App) string { return cmp.Or(a.WorkDir, w.Root) }
+
+// allowed checks the root a names (Q57): under the Host's work dir or a root OMEGACD_AGENT_WORKDIR_ALLOW lists, so
+// neither Git nor the Control Plane can aim the Agent at /etc. It creates the root when missing, as the Agent's own.
+func (w *WorkDir) allowed(a App) error {
+	root := w.root(a)
+	if !filepath.IsAbs(root) || filepath.Clean(root) != root {
+		return fmt.Errorf("%w: work dir %q of %s: want an absolute, clean path", domain.ErrInvalid, root, a.Name)
+	}
+	if !slices.ContainsFunc(append([]string{w.Root}, w.Allow...), func(r string) bool { return insideOrAt(r, root) }) {
+		return fmt.Errorf("%w: work dir %s of %s is not under a root this Agent allows (its own %s, and "+
+			"OMEGACD_AGENT_WORKDIR_ALLOW: %s): add it there, or change the Application's workDir",
+			domain.ErrInvalid, root, a.Name, w.Root, cmp.Or(strings.Join(w.Allow, ","), "none"))
+	}
+	if err := os.MkdirAll(root, 0o750); err != nil {
+		u, _ := user.Current()
+		g, _ := user.LookupGroupId(strconv.Itoa(os.Getgid()))
+		var name, group string
+		if u != nil {
+			name = u.Username
+		}
+		if g != nil {
+			group = g.Name
+		}
+		return fmt.Errorf("work dir %s of %s: %w; create it once for the Agent's user: sudo install -d -o %s -g %s %s",
+			root, a.Name, err, name, group, root)
+	}
+	return nil
+}
+
+func insideOrAt(root, path string) bool {
+	return path == root || strings.HasPrefix(path, root+string(filepath.Separator))
+}
 
 // Write makes a's folder hold exactly r's files, from the cache, in place (single-file bind mounts keep their
 // inode). The folder must be a's (workdir.Claim): one the Agent wrote for it before, or one holding no one's files.
 // Once written, it is recorded as a's, and the folder a used before (another App of Apps) is removed.
 func (w *WorkDir) Write(ctx context.Context, a App, r Revision) error {
+	if err := w.allowed(a); err != nil {
+		return err // before anything is written
+	}
 	dir := w.Dir(a)
 	prev, err := w.db.GetApp(ctx, a.Name)
 	if err != nil && !errors.Is(err, domain.ErrNotFound) {
@@ -56,7 +98,7 @@ func (w *WorkDir) Write(ctx context.Context, a App, r Revision) error {
 				kids = append(kids, x.Name)
 			}
 		}
-		if err := workdir.Claim(filepath.Join(w.Root, a.Parent), a.Parent, owned, append(kids, a.Name)); err != nil {
+		if err := workdir.Claim(filepath.Join(w.root(a), a.Parent), a.Parent, owned, append(kids, a.Name)); err != nil {
 			return err
 		}
 	}
@@ -75,8 +117,8 @@ func (w *WorkDir) Write(ctx context.Context, a App, r Revision) error {
 	if prev.Dir != "" && prev.Dir != dir {
 		w.log.DebugContext(ctx, "remove the folder it used before", "dir", prev.Dir)
 		os.RemoveAll(prev.Dir)
-		if filepath.Dir(prev.Dir) != w.Root {
-			os.Remove(filepath.Dir(prev.Dir)) // its old App of Apps' folder, once empty
+		if filepath.Dir(prev.Dir) != w.root(prev) {
+			os.Remove(filepath.Dir(prev.Dir)) // its old App of Apps' folder, once empty; never a root
 		}
 	}
 	return nil

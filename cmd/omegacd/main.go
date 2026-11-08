@@ -266,8 +266,10 @@ func runAgent(log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if !filesOnly && !(rollback && len(args) < 3) { // listing touches no container
-		if err := agent.CheckPathParity(ctx, cfg.WorkDir); err != nil {
-			return err
+		for _, root := range append([]string{cfg.WorkDir}, cfg.WorkDirAllow...) { // every root: Docker resolves binds there (Q57)
+			if err := agent.CheckPathParity(ctx, root); err != nil {
+				return err
+			}
 		}
 	}
 	db, err := agent.OpenDB(filepath.Join(cfg.StateDir, "agent.db"))
@@ -285,6 +287,7 @@ func runAgent(log *slog.Logger) error {
 	}
 	secrets := agent.NewSecrets(cfg.SecretGroup, agent.SOPS{HostKey: hostKey})
 	work := agent.NewWorkDir(cfg.WorkDir, db, cache, log.With("component", "agent"))
+	work.Allow = cfg.WorkDirAllow
 	if filesOnly {
 		return agent.New(db, cache, work, secrets, nil, log.With("component", "agent")).RestoreFiles(ctx)
 	}
@@ -307,9 +310,11 @@ func runAgent(log *slog.Logger) error {
 		log.Warn("macOS is for development only (Q61): Docker Desktop and OrbStack share folders ignoring owners and " +
 			"modes, so any container can read decrypted secrets, and there is no systemd; run Agents on Linux")
 	}
-	if agent.WorkDirOnDisk(cfg.WorkDir) {
-		log.Warn("the work dir is not in RAM: decrypted secrets written there stay on disk, also across reboots; "+
-			"point OMEGACD_AGENT_WORKDIR at a tmpfs (such as /run/omegacd) to keep them off disk", "workdir", cfg.WorkDir)
+	for _, root := range append([]string{cfg.WorkDir}, cfg.WorkDirAllow...) {
+		if agent.WorkDirOnDisk(root) {
+			log.Warn("a work dir is not in RAM: decrypted secrets written there stay on disk, also across reboots; "+
+				"keep work dirs on a tmpfs (such as /run/omegacd) to keep them off disk", "workdir", root)
+		}
 	}
 	apps, err := db.ListApps(ctx)
 	if err != nil {
