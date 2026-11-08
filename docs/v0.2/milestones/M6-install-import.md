@@ -89,3 +89,17 @@ changed. Built per secret source (Q29): later sources (KeePass, 1Password, Ansib
 **Done when:** a repository prepared with it deploys a SOPS secret to that Host; rekeying after a Host Key rotation
 keeps it deployable and editable with the user's key; tested end to end; and the helper's interface has a second
 (dummy) source.
+
+### M6-09 · .deb packages
+**Status:** todo
+**Depends on:** M6-03
+
+Every release builds `.deb` packages for amd64 and arm64 (nfpm, in the release workflow) and attaches them to the
+GitHub Release, next to the binaries. The package holds the binary and the systemd units (M6-03, the files restore
+before Docker included); its scripts create the Agent's user and folders and enable the units, and remove them
+cleanly. `install.sh` (M6-01) installs the package where apt is there, so there is one install path. `.rpm` comes
+with the RHEL family and a signed apt/dnf repository (`apt upgrade`) later, both after v0.2 (ROADMAP).
+
+**Done when:** on the test servers (Ubuntu 24.04 and Debian 13, amd64 and arm64) the package installs, the Agent runs and survives a
+reboot with its apps restored, an upgrade to a newer package keeps the state and the apps running, and uninstalling
+leaves no unit, user or folder but the state the admin chose to keep.

@@ -63,5 +63,9 @@ check "app is Synced again" '"$BIN" app get e2e-sec -o json | grep -q "\"Synced\
 "$BIN" app delete e2e-sec --yes >/dev/null 2>&1
 check "delete removes the list" '[ ! -e "$T/work/.decrypted/e2e-sec" ] && [ ! -e "$W" ]'
 
+op=$(grep -o 'msg="sync started" .* op=[0-9]*' "$T/server.log" | head -1 | grep -o '[0-9]*$')
+check "a Sync is followed by its op from the controller into the engine (Q62)" '[ -n "$op" ] && grep -q "msg=\"compose up\" component=engine .* app=e2e-sec op=$op " "$T/server.log"'
+check "the log is at debug and holds no secret (Q62)" 'grep -q level=DEBUG "$T/server.log" && ! grep -qF -e first-db-pw -e first-token -e second-token -e e2e-password-123 -e "$OMEGACD_TOKEN" -e "$(grep AGE-SECRET-KEY "$T/age.key")" -e AGE-SECRET-KEY "$T/server.log"'
+
 [ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- server log"; tail -15 "$T/server.log"; }
 exit $fail

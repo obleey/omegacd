@@ -14,7 +14,7 @@ import (
 
 func newWorkDir(t *testing.T) (*WorkDir, *source, string) {
 	c, db, state := openCache(t, 10)
-	return NewWorkDir(filepath.Join(t.TempDir(), "work"), db, c), &source{}, state
+	return NewWorkDir(filepath.Join(t.TempDir(), "work"), db, c, nil), &source{}, state
 }
 
 func (w *WorkDir) deploy(t *testing.T, src *source, a App, rev string, files map[string]string) error {

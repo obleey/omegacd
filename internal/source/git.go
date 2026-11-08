@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	neturl "net/url"
 	"path"
 	"path/filepath"
@@ -29,6 +30,7 @@ import (
 	"github.com/go-git/go-git/v5/storage/memory"
 
 	"github.com/obleey/omegacd/internal/domain"
+	"github.com/obleey/omegacd/internal/logging"
 )
 
 type Git struct {
@@ -36,6 +38,7 @@ type Git struct {
 	FetchCooldown time.Duration
 	// KnownHostsFile verifies SSH host keys (OpenSSH known_hosts format). SSH is refused without it.
 	KnownHostsFile string
+	Log            *slog.Logger // New sets one that logs nothing
 
 	cacheDir string
 	creds    func(ctx context.Context) ([]domain.RepoCredential, error)
@@ -50,7 +53,7 @@ type repo struct {
 }
 
 func New(cacheDir string, creds func(ctx context.Context) ([]domain.RepoCredential, error)) *Git {
-	return &Git{FetchCooldown: 5 * time.Second, cacheDir: cacheDir, creds: creds, repos: map[string]*repo{}}
+	return &Git{FetchCooldown: 5 * time.Second, Log: logging.Discard, cacheDir: cacheDir, creds: creds, repos: map[string]*repo{}}
 }
 
 // open returns the locked cache entry for url, creating the bare clone if needed. Call unlock when done.
@@ -76,7 +79,7 @@ func (g *Git) open(url string) (*repo, func(), error) {
 		}
 		if err != nil {
 			e.mu.Unlock()
-			return nil, nil, fmt.Errorf("open repo cache for %s: %w", url, err)
+			return nil, nil, fmt.Errorf("open repo cache for %s: %w", redact(url), err)
 		}
 		e.r = r
 	}
@@ -97,8 +100,9 @@ func (g *Git) fetch(ctx context.Context, e *repo, url string) error {
 		Auth:      auth,
 	})
 	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
-		return fmt.Errorf("fetch %s: %w", url, err)
+		return hide(url, fmt.Errorf("fetch %s: %w", url, err))
 	}
+	g.Log.DebugContext(ctx, "fetched", "repo", redact(url), "changed", err == nil, "auth", auth != nil)
 	e.lastFetch = time.Now()
 	return nil
 }
@@ -148,7 +152,7 @@ func (g *Git) authFor(best *domain.RepoCredential, url string) (transport.AuthMe
 			return nil, fmt.Errorf("ssh key for %s: %w", best.URLPrefix, err)
 		}
 		if g.KnownHostsFile == "" {
-			return nil, fmt.Errorf("ssh to %s: no known_hosts file configured (OMEGACD_SSH_KNOWN_HOSTS)", url)
+			return nil, fmt.Errorf("ssh to %s: no known_hosts file configured (OMEGACD_SSH_KNOWN_HOSTS)", redact(url))
 		}
 		if keys.HostKeyCallback, err = gitssh.NewKnownHostsCallback(g.KnownHostsFile); err != nil {
 			return nil, fmt.Errorf("load known_hosts: %w", err)
@@ -268,18 +272,21 @@ func (g *Git) Resolve(ctx context.Context, repoURL, rev string) (string, error) 
 		return "", err
 	}
 	defer unlock()
-	if time.Since(e.lastFetch) >= g.FetchCooldown {
+	if since := time.Since(e.lastFetch); since >= g.FetchCooldown {
 		if err := g.fetch(ctx, e, repoURL); err != nil {
 			return "", err
 		}
+	} else {
+		g.Log.DebugContext(ctx, "not fetched: fetched recently", "repo", redact(repoURL), "ago", since.Round(time.Millisecond))
 	}
 	// Branches first (origin/<rev>), then ResolveRevision covers tags (peeled) and full/short SHAs.
 	for _, candidate := range []string{"origin/" + rev, rev} {
 		if h, err := e.r.ResolveRevision(plumbing.Revision(candidate)); err == nil {
+			g.Log.DebugContext(ctx, "resolved", "repo", redact(repoURL), "rev", rev, "as", candidate, "sha", h.String())
 			return h.String(), nil
 		}
 	}
-	return "", fmt.Errorf("revision %q in %s: %w", rev, repoURL, domain.ErrNotFound)
+	return "", fmt.Errorf("revision %q in %s: %w", rev, redact(repoURL), domain.ErrNotFound)
 }
 
 // commit returns the commit, fetching once if it is not in the cache yet.
@@ -349,7 +356,7 @@ func (g *Git) tree(ctx context.Context, repoURL, sha, p string) ([]treeFile, err
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("read %s@%s:%s: %w", repoURL, sha, p, err)
+		return nil, hide(repoURL, fmt.Errorf("read %s@%s:%s: %w", repoURL, sha, p, err))
 	}
 	return files, nil
 }
@@ -425,3 +432,45 @@ func NormalizeURL(u string) string {
 	u = strings.TrimSuffix(u, ".git")
 	return strings.TrimSuffix(u, "/")
 }
+
+// userinfo is the user and password of an http(s) URL, which may hold a token (https://token@host/…); nil for others
+// (ssh://git@host names no secret).
+func userinfo(raw string) *neturl.Userinfo {
+	if u, err := neturl.Parse(raw); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
+		return u.User
+	}
+	return nil
+}
+
+// redact is raw without its user and password, for logs and errors.
+func redact(raw string) string {
+	if userinfo(raw) == nil {
+		return raw
+	}
+	u, _ := neturl.Parse(raw)
+	u.User = nil
+	return strings.Replace(u.String(), "://", "://***@", 1)
+}
+
+// hide takes the user and password of url out of err's message, as written in the URL or masked by net/http
+// (user:***@): errors reach Sync messages, logs and the UI.
+func hide(url string, err error) error {
+	ui := userinfo(url)
+	if err == nil || ui == nil {
+		return err
+	}
+	msg := strings.ReplaceAll(err.Error(), ui.String()+"@", "***@")
+	msg = strings.ReplaceAll(msg, ui.Username()+":***@", "***@")
+	if pw, ok := ui.Password(); ok && pw != "" {
+		msg = strings.ReplaceAll(msg, pw, "***")
+	}
+	return hidden{msg, err}
+}
+
+type hidden struct {
+	msg string
+	err error
+}
+
+func (e hidden) Error() string { return e.msg }
+func (e hidden) Unwrap() error { return e.err }

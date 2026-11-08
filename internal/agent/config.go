@@ -38,6 +38,8 @@ var settings = []struct{ name, def, help string }{
 		"as a non-root user and join it with group_add: (the gid; with rootless Docker or Podman \"0\"); without it they are 0600, readable by containers running as root " +
 		"(rootful) or as the Agent's user (rootless). (On macOS, Docker Desktop and OrbStack ignore owner and mode of shared folders.)"},
 	{"OMEGACD_AGENT_ALLOW_ROOT", "false", "true runs the Agent as root; use a docker-group user or rootless Docker instead"},
+	{"OMEGACD_LOG_LEVEL", "info", "debug, info, warn or error; debug says why the Agent did what it did (never a secret)"},
+	{"OMEGACD_LOG_FORMAT", "text", "text or json (one object per line)"},
 }
 
 // Usage documents every setting.

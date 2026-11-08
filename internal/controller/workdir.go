@@ -42,6 +42,7 @@ func (c *Controller) claim(ctx context.Context, a *domain.Application, kids []st
 		wds, _ := c.cfg.Engine.WorkingDirs(ctx, *a) // unknown: the other rules still apply
 		owned = slices.Contains(wds, dir)
 	}
+	c.cfg.Log.DebugContext(ctx, "claim folder", "dir", dir, "owned", owned)
 	c.claimMu.Lock()
 	defer c.claimMu.Unlock()
 	if a.Parent != "" {

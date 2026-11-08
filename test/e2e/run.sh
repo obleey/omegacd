@@ -8,6 +8,8 @@
 # OMEGACD_BIN picks the binary (default bin/omegacd); name scripts to run only those: run.sh secrets adopt
 set -u
 cd "$(dirname "$0")"
+# at debug, the most a log says: the scripts holding known secrets check that none of them is in it (Q62)
+export OMEGACD_LOG_LEVEL=${OMEGACD_LOG_LEVEL:-debug}
 scripts=("$@")
 [ ${#scripts[@]} -gt 0 ] || scripts=(mounts compose-views secrets adopt readme-walkthrough webhook source-server agent)
 failed=()

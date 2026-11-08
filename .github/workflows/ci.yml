@@ -123,5 +123,18 @@ jobs:
           go-version-file: go.mod
       # rootless engines need unprivileged user namespaces, which Ubuntu 24.04 restricts with AppArmor by default
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      # the Agent's deploy path against rootful Docker, rootless Docker and rootless Podman (Q34, Q52)
-      - run: make test-engines ENGINES_ROOT=/tmp/omegacd-engines
+      # the runner's own rootless Podman as the test's user, as test/linux.sh sets it up: Q58's rootless case; events in
+      # a file, which its API service reads back for Self-Heal
+      - name: Rootless Podman of the runner's user
+        run: |
+          command -v podman >/dev/null || { sudo apt-get update -q && sudo apt-get install -y -q podman >/dev/null; }
+          mkdir -p ~/.config/containers/containers.conf.d
+          printf '[engine]\nevents_logger = "file"\n' > ~/.config/containers/containers.conf.d/events.conf
+          dir=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+          sudo mkdir -p "$dir" && sudo chown "$(id -u):$(id -g)" "$dir" && mkdir -p "$dir/podman"
+          echo "XDG_RUNTIME_DIR=$dir" >> "$GITHUB_ENV"
+          XDG_RUNTIME_DIR=$dir nohup podman system service --time=0 "unix://$dir/podman/podman.sock" > /tmp/podman.log 2>&1 &
+          for i in $(seq 30); do [ -S "$dir/podman/podman.sock" ] && exit; sleep 1; done; cat /tmp/podman.log; exit 1
+      # the Agent's deploy path against rootful Docker, rootless Docker and rootless Podman (Q34, Q52), the same engines
+      # test/linux.sh runs on every machine
+      - run: make test-engines ENGINES_ROOT=/tmp/omegacd-engines ENGINES="rootful rootless podman host-podman"

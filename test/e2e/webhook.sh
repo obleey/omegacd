@@ -14,7 +14,8 @@ fail=0
 check() { if eval "$2"; then echo "PASS  $1"; else echo "FAIL  $1"; fail=1; fi; }
 fj() { docker exec -u git "$FJ" forgejo "$@"; }
 
-# --- Forgejo: test user, token, repo with a compose app
+# --- Forgejo: test user, token, repo with a compose app (a run killed before its cleanup left them: gone first)
+fj admin user delete --username $U --purge >/dev/null 2>&1
 PW=$(openssl rand -hex 12)
 fj admin user create --username $U --password "$PW" --email e2e@example.com --must-change-password=false >/dev/null 2>&1
 FTOK=$(fj admin user generate-access-token --username $U --token-name e2e-$RANDOM --scopes write:repository,write:user --raw 2>/dev/null | tail -1)
@@ -82,6 +83,8 @@ check "Forgejo recorded a delivered webhook" 'fapi $FURL/api/v1/repos/$U/hook-te
 code=$(curl -s -o /dev/null -w '%{http_code}' -H 'X-Forgejo-Event: push' -H 'X-Forgejo-Signature: 00ff' -d '{"repository":{"clone_url":"x"}}' $API/webhooks/gitea)
 check "a forged webhook is refused (401)" '[ "$code" = 401 ]'
 grep -i "webhook\|sync finished" "$T/server.log" | cut -c1-200 | tail -4
+
+check "the log is at debug and holds no secret (Q62)" 'grep -q level=DEBUG "$T/server.log" && ! grep -qF -e "$SECRET" -e "$FTOK" -e "$PW" -e e2e-password-123 -e "$OMEGACD_TOKEN" "$T/server.log"'
 
 [ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- server log"; tail -15 "$T/server.log"; }
 exit $fail

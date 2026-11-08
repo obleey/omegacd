@@ -46,7 +46,9 @@ func EnsureAdmin(ctx context.Context, store domain.Store, initialPassword string
 		return err
 	}
 	if generated {
-		log.Warn("initial admin password", "username", adminUser, "password", initialPassword)
+		// the one secret logged on purpose (Q62): generated at first start, it must be changed at first login. Its key
+		// isn't a secret's name, so the logger's redaction lets it through.
+		log.Warn("initial admin password: log in and change it", "username", adminUser, "initial", initialPassword)
 	}
 	return nil
 }
@@ -165,13 +167,13 @@ func (s *server) touchSession(ctx context.Context, token string) bool {
 	exp, err := s.Store.GetSession(ctx, h)
 	if err != nil {
 		if !errors.Is(err, domain.ErrNotFound) {
-			slog.Error("get session", "err", err)
+			s.Log.ErrorContext(ctx, "get session", "err", err)
 		}
 		return false
 	}
 	if time.Until(exp) < sessionTTL-time.Hour {
 		if err := s.Store.ExtendSession(ctx, h, time.Now().Add(sessionTTL)); err != nil {
-			slog.Error("extend session", "err", err)
+			s.Log.ErrorContext(ctx, "extend session", "err", err)
 		}
 	}
 	return true

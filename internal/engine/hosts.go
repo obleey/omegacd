@@ -29,6 +29,7 @@ type Config struct {
 	KnownHostsFile string                                                      // OpenSSH known_hosts for ssh:// hosts; ssh refused if empty or missing
 	KeyDir         string                                                      // dir where SSH keys / TLS PEMs are written with 0600 for the ssh/tls clients
 	NoLocalHost    bool                                                        // no local Docker engine (e.g. in Kubernetes): only remote Hosts
+	Log            *slog.Logger                                                // nil: nothing logged
 }
 
 // hostConn is a Docker CLI and Compose service bound to one Host.
@@ -143,7 +144,7 @@ func (e *Engine) dial(h domain.Host) (*hostConn, error) {
 			}
 			opts = append(opts, client.WithTLSClientConfig(ca, cert, key))
 		} else {
-			slog.Warn("docker host without TLS: anyone on the network can control it", "host", h.Name, "url", h.URL)
+			e.cfg.Log.Warn("docker host without TLS: anyone on the network can control it", "host", h.Name, "url", h.URL)
 		}
 	default:
 		return nil, fmt.Errorf("%w: host url %q: scheme must be ssh:// or tcp://", domain.ErrInvalid, h.URL)

@@ -56,7 +56,7 @@ func testAgent(t *testing.T) (*Agent, *source, string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { eng.Close() })
-	ag := New(db, cache, NewWorkDir(filepath.Join(base, "work"), db, cache), NewSecrets(-1, SOPS{HostKey: key}), eng)
+	ag := New(db, cache, NewWorkDir(filepath.Join(base, "work"), db, cache, nil), NewSecrets(-1, SOPS{HostKey: key}), eng, nil)
 	return ag, &source{}, key.Recipient().String()
 }
 

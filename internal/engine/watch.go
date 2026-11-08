@@ -2,7 +2,6 @@ package engine
 
 import (
 	"context"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -34,7 +33,7 @@ func (e *Engine) Watch(ctx context.Context, changed func(host, project string)) 
 					want[name] = true
 				}
 				if ctx.Err() == nil {
-					slog.Warn("watch: list hosts", "err", err)
+					e.cfg.Log.Warn("watch: list hosts", "err", err)
 				}
 			}
 			for _, h := range hosts {
@@ -72,7 +71,7 @@ func (e *Engine) watchHost(ctx context.Context, host string, changed func(host, 
 		err := e.streamEvents(ctx, host, filters, changed, func() {
 			backoff = time.Second
 			if down {
-				slog.Info("watch: host reachable again", "host", host)
+				e.cfg.Log.Info("watch: host reachable again", "host", host)
 				down = false
 				changed(host, "") // resync: containers may have started or stopped while we weren't listening
 			}
@@ -81,7 +80,7 @@ func (e *Engine) watchHost(ctx context.Context, host string, changed func(host, 
 			return
 		}
 		if !down {
-			slog.Warn("watch: host unreachable, retrying", "host", host, "err", err)
+			e.cfg.Log.Warn("watch: host unreachable, retrying", "host", host, "err", err)
 			down = true
 		}
 		select {

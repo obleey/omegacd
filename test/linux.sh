@@ -22,8 +22,8 @@ asroot() { local t=$1; shift; ssh -F "$infra/ssh_config" -o ServerAliveInterval=
 
 # stop ends any test run on the target, one aborted or left over, and clears what tests leave in the engines: every
 # Compose project but Forgejo's, the remote-Host tests' docker:dind containers, the rootless engines (recreated fresh by
-# engines.sh), unused networks and volumes, the tests' temp dirs, the containers of the user's own Podman. Kept: Forgejo
-# and the image cache. The pkill patterns are bracketed so they don't match this command itself.
+# engines.sh), unused networks and volumes, the tests' temp dirs, the containers of the user's own Podman (before every
+# run, and after it, passed or failed). Kept: Forgejo and the image cache. The pkill patterns are bracketed so they don't match this command itself.
 stop() {
   asroot "$1" bash -c '
     pkill -x make; pkill -f "[t]est/e2e/run.sh"; pkill -f "^/usr/local/go/bin/[g]o (test|vet|build)"
@@ -92,7 +92,7 @@ while [ ${#running[@]} -gt 0 ]; do
     t=${e%%:*} pid=${e#*:} log=$logs/omegacd-test-${e%%:*}.log
     if hit=$(grep -aE -m1 "$failed" "$log"); then fail "$t" "$pid" "$hit"; continue; fi
     if kill -0 "$pid" 2>/dev/null; then still+=("$e"); continue; fi
-    if wait "$pid"; then echo "=== $t: passed (log: $log)"; else fail "$t" "$pid" "exited with $?"; fi
+    if wait "$pid"; then echo "=== $t: passed (log: $log)"; stop "$t"; else fail "$t" "$pid" "exited with $?"; fi
   done
   running=("${still[@]}")
   fill

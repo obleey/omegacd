@@ -9,7 +9,8 @@ check() { if eval "$2"; then echo "PASS  $1"; else echo "FAIL  $1"; fail=1; fi; 
 # agent runs the Agent with the given settings until it says it runs (then stops it: exit 0) or exits on its own (its
 # exit code); its log is the output
 agent() {
-  env -i PATH="$PATH" HOME="$T/home" ${DOCKER_HOST:+DOCKER_HOST=$DOCKER_HOST} "$@" "$BIN" agent > "$T/agent.log" 2>&1 &
+  env -i PATH="$PATH" HOME="$T/home" ${DOCKER_HOST:+DOCKER_HOST=$DOCKER_HOST} ${OMEGACD_LOG_LEVEL:+OMEGACD_LOG_LEVEL=$OMEGACD_LOG_LEVEL} \
+    "$@" "$BIN" agent > "$T/agent.log" 2>&1 &
   local pid=$! rc
   for _ in $(seq 100); do
     grep -q "omegacd agent running" "$T/agent.log" && { kill $pid; wait $pid; cat "$T/agent.log"; return 0; }
@@ -23,7 +24,7 @@ agent() {
 
 help=$("$BIN" agent --help)
 for v in OMEGACD_AGENT_CONTROL_PLANE OMEGACD_AGENT_INVITE OMEGACD_AGENT_STATE_DIR OMEGACD_AGENT_WORKDIR DOCKER_HOST \
-  OMEGACD_AGENT_CACHE_REVISIONS OMEGACD_AGENT_SECRET_GROUP OMEGACD_AGENT_ALLOW_ROOT; do
+  OMEGACD_AGENT_CACHE_REVISIONS OMEGACD_AGENT_SECRET_GROUP OMEGACD_AGENT_ALLOW_ROOT OMEGACD_LOG_LEVEL OMEGACD_LOG_FORMAT; do
   check "--help documents $v" 'echo "$help" | grep -q "^  $v$"'
 done
 
@@ -81,6 +82,16 @@ cid=$(docker run -d -v /var/run/docker.sock:/var/run/docker.sock -v "$T/omegacd-
 for _ in $(seq 100); do docker logs "$cid" 2>&1 | grep -q "omegacd agent running" && break; sleep 0.1; done
 out=$(docker logs "$cid" 2>&1); docker rm -f "$cid" >/dev/null
 check "the same path on both sides starts" 'echo "$out" | grep -q "omegacd agent running"'
+
+# logging (M2-10)
+out=$(agent XDG_RUNTIME_DIR="$T/run" OMEGACD_LOG_LEVEL=debug OMEGACD_LOG_FORMAT=json); rc=$?
+check "OMEGACD_LOG_FORMAT=json: every line is one JSON object with a level" '[ $rc -eq 0 ] &&
+  echo "$out" | python3 -c "import json,sys; e=[json.loads(l) for l in sys.stdin]; sys.exit(0 if e and all(\"level\" in x for x in e) else 1)"'
+check "at debug its log shows the Host Key's public half, never the private one (Q62)" 'echo "$out" | grep -q "age1" && ! echo "$out" | grep -q AGE-SECRET-KEY'
+out=$(agent XDG_RUNTIME_DIR="$T/run" OMEGACD_LOG_LEVEL=loud); rc=$?
+check "an unknown OMEGACD_LOG_LEVEL is refused and named" '[ $rc -ne 0 ] && echo "$out" | grep -q "OMEGACD_LOG_LEVEL=loud"'
+out=$(agent XDG_RUNTIME_DIR="$T/run" OMEGACD_LOG_FORMAT=xml); rc=$?
+check "and so is an unknown OMEGACD_LOG_FORMAT" '[ $rc -ne 0 ] && echo "$out" | grep -q "OMEGACD_LOG_FORMAT=xml"'
 
 [ $fail -eq 0 ] && echo "ALL PASSED"
 exit $fail

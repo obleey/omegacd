@@ -3,6 +3,7 @@ package api
 
 import (
 	"bytes"
+	"cmp"
 	"compress/gzip"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	"github.com/obleey/omegacd/internal/domain"
+	"github.com/obleey/omegacd/internal/logging"
 )
 
 type Config struct {
@@ -31,6 +33,7 @@ type Config struct {
 	UI            fs.FS
 	// TrustedProxies may set X-Forwarded-For; see ParseTrustedProxies.
 	TrustedProxies []netip.Prefix
+	Log            *slog.Logger // nil: nothing logged
 }
 
 type server struct {
@@ -41,6 +44,7 @@ type server struct {
 }
 
 func New(cfg Config) http.Handler {
+	cfg.Log = cmp.Or(cfg.Log, logging.Discard)
 	s := &server{Config: cfg, logins: map[string]loginState{}}
 	mux := http.NewServeMux()
 
@@ -101,7 +105,7 @@ func New(cfg Config) http.Handler {
 	mux.Handle("GET /metrics", metricsHandler(cfg.Controller))
 	mux.Handle("/", uiHandler(cfg.UI))
 
-	return logRequests(s.auth(mux))
+	return s.logRequests(s.auth(mux))
 }
 
 func isPublic(p string) bool {
@@ -111,6 +115,7 @@ func isPublic(p string) bool {
 type statusWriter struct {
 	http.ResponseWriter
 	status int
+	err    error // an internal error writeError answered with, logged with the request
 }
 
 func (w *statusWriter) WriteHeader(code int) {
@@ -129,7 +134,7 @@ func (w *statusWriter) Write(b []byte) (int, error) {
 
 func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
-func logRequests(next http.Handler) http.Handler {
+func (s *server) logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/healthz" || r.URL.Path == "/metrics" {
 			next.ServeHTTP(w, r)
@@ -138,7 +143,11 @@ func logRequests(next http.Handler) http.Handler {
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w}
 		next.ServeHTTP(sw, r)
-		slog.Info("http", "method", r.Method, "path", r.URL.Path, "status", sw.status, "duration", time.Since(start))
+		if sw.err != nil {
+			s.Log.Error("http", "method", r.Method, "path", r.URL.Path, "status", sw.status, "duration", time.Since(start), "err", sw.err)
+			return
+		}
+		s.Log.Info("http", "method", r.Method, "path", r.URL.Path, "status", sw.status, "duration", time.Since(start))
 	})
 }
 
@@ -158,7 +167,9 @@ func writeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, domain.ErrAlreadyExists), errors.Is(err, domain.ErrUnmanaged), errors.Is(err, domain.ErrBusy):
 		status = http.StatusConflict
 	default:
-		slog.Error("api error", "err", err)
+		if sw, ok := w.(*statusWriter); ok {
+			sw.err = err
+		}
 	}
 	writeJSON(w, status, map[string]string{"error": err.Error()})
 }
