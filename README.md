@@ -323,6 +323,21 @@ The App of Apps shows the worst Health of its children.
 - **Applications with a database** (WordPress, Forgejo, analytics): Auto-Sync off, or on without Prune — upgrades there often want a backup or a migration first.
 - **Prune volumes** only where losing the data is fine; never on a database Application.
 
+**Database migrations.** Use Compose's own init pattern: a one-shot service that runs the migration, and the app waiting for it to complete. OmegaCD runs the migration first and touches the rest only once it succeeded: a failing migration fails the Sync with its output and leaves the running app as it was.
+
+```yaml
+services:
+  migrate:
+    image: ghcr.io/acme/shop:1.4           # the app's own image
+    command: ["php", "artisan", "migrate", "--force"]   # Django: python manage.py migrate; Rails: bin/rails db:migrate
+    depends_on: {db: {condition: service_healthy}}
+  app:
+    image: ghcr.io/acme/shop:1.4
+    depends_on: {migrate: {condition: service_completed_successfully}}
+```
+
+The migration runs on **every** Sync, and again when the Host restores the Application after a reboot, so it must be idempotent: running it twice changes nothing the second time. Laravel's, Django's and Rails' migrations are (they record what ran). A completed migration counts as Healthy and Self-Heal leaves it alone. Something that should run once per change rather than on every Sync, like a backup before an upgrade, is a Sync hook ([Roadmap](ROADMAP.md)).
+
 **Labels.** Every container OmegaCD creates carries `managed-by=omegacd` and `dev.omegacd.application=<name>` (on Docker and Podman alike), so `docker ps --filter label=managed-by=omegacd` lists everything OmegaCD manages. Containers created before an upgrade get the label on their next recreate.
 
 ## Where your data lives

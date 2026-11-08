@@ -487,9 +487,27 @@ func (e *Engine) Sync(ctx context.Context, app domain.Application, dir string, o
 			slices.Sort(create.Services)
 		}
 	}
+	// the one-shots others wait for (migrations) run first, with what they need: only once they completed is the rest
+	// touched. Compose's up recreates every changed container before it starts any, so a failing migration would leave
+	// the app's new container created but never started, and its old one gone (M2-11)
+	up := p
+	if inits := initServices(p); len(inits) > 0 {
+		if err := e.runInits(ctx, svc, hc.cli.Client(), p, inits, create); err != nil {
+			return err
+		}
+		// they completed: the rest comes up without them, or Compose would run each once more. Its config hash leaves
+		// depends_on out, so dropping theirs recreates nothing; disabled, their containers aren't orphans
+		up = p.WithServicesDisabled(inits...)
+		if len(create.Services) > 0 {
+			create.Services = slices.DeleteFunc(slices.Clone(create.Services), func(s string) bool { return slices.Contains(inits, s) })
+			if len(create.Services) == 0 { // only init services were to be recreated: the rest is kept
+				create.Recreate = api.RecreateNever
+			}
+		}
+	}
 	e.cfg.Log.DebugContext(ctx, "compose up", "host", hc.host.Name, "dir", dir, "recreate", create.Recreate,
 		"services", create.Services, "dependencies", create.RecreateDependencies, "removeOrphans", create.RemoveOrphans)
-	err = svc.Up(ctx, p, api.UpOptions{Create: create})
+	err = svc.Up(ctx, up, api.UpOptions{Create: create})
 	if err != nil {
 		return fmt.Errorf("compose up: %w", err)
 	}
@@ -911,4 +929,69 @@ func (p *progressSink) On(events ...api.Resource) {
 		}
 		p.fn(domain.ProgressEvent{Resource: ev.ID, Status: status, Text: ev.Details})
 	}
+}
+
+// initServices names the services another waits for to complete (depends_on with service_completed_successfully):
+// one-shots such as a database migration.
+func initServices(p *types.Project) []string {
+	var names []string
+	for _, s := range p.Services {
+		for dep, d := range s.DependsOn {
+			if d.Condition == types.ServiceConditionCompletedSuccessfully && !slices.Contains(names, dep) {
+				names = append(names, dep)
+			}
+		}
+	}
+	slices.Sort(names)
+	return names
+}
+
+// runInits brings up the init services and what they depend on, leaving every other container as it is, and waits
+// for each to exit: one that fails stops the Sync with its last log lines, before anything else changed.
+func (e *Engine) runInits(ctx context.Context, svc api.Compose, c client.APIClient, p *types.Project, inits []string, create api.CreateOptions) error {
+	pre, err := p.WithSelectedServices(inits)
+	if err != nil {
+		return err
+	}
+	create.RemoveOrphans = false // the rest of the project is not orphaned, only not touched yet
+	if len(create.Services) > 0 {
+		create.Services = slices.DeleteFunc(slices.Clone(create.Services), func(s string) bool { _, ok := pre.Services[s]; return !ok })
+	}
+	e.cfg.Log.DebugContext(ctx, "compose up: init services first", "inits", inits, "services", slices.Sorted(maps.Keys(pre.Services)))
+	if err := svc.Up(ctx, pre, api.UpOptions{Create: create}); err != nil {
+		return fmt.Errorf("compose up (init services %s): %w", strings.Join(inits, ", "), err)
+	}
+	for _, name := range inits {
+		res, err := c.ContainerList(ctx, client.ContainerListOptions{All: true,
+			Filters: projectFilter(p.Name).Add("label", api.ServiceLabel+"="+name).Add("label", api.OneoffLabel+"=False")})
+		if err != nil {
+			return err
+		}
+		for _, ct := range res.Items {
+			wait := c.ContainerWait(ctx, ct.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+			select {
+			case err := <-wait.Error:
+				return fmt.Errorf("init service %s: %w", name, err)
+			case r := <-wait.Result:
+				if r.StatusCode != 0 {
+					return fmt.Errorf("init service %s exited %d, the rest of the project is left as it was: %s",
+						name, r.StatusCode, lastLines(ctx, c, ct.ID, 10))
+				}
+				e.cfg.Log.DebugContext(ctx, "init service completed", "service", name, "container", ct.ID[:12])
+			}
+		}
+	}
+	return nil
+}
+
+// lastLines is the end of a container's output, for an error message.
+func lastLines(ctx context.Context, c client.APIClient, id string, n int) string {
+	r, err := c.ContainerLogs(ctx, id, client.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Tail: strconv.Itoa(n)})
+	if err != nil {
+		return "(no logs: " + err.Error() + ")"
+	}
+	defer r.Close()
+	var out strings.Builder
+	stdcopy.StdCopy(&out, &out, r)
+	return strings.TrimSpace(out.String())
 }

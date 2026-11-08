@@ -114,7 +114,7 @@ secrets (SOPS values, credentials, tokens) and finds none of them in any log. Un
 Control Plane runs the engine itself: its entries carry the `op`; M4-01 takes it on to the Agent.
 
 ### M2-11 · Init and one-shot services (migrations)
-**Status:** todo
+**Status:** done (2026-11-08, PR #98)
 **Depends on:** M2-10
 
 Compose's own init pattern works through the Agent and is tested, not just assumed: a one-shot service (`migrate`)

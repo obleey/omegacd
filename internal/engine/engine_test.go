@@ -170,3 +170,27 @@ func TestWorkingDirs(t *testing.T) {
 		t.Fatalf("workingDirs = %v, %v", got, err)
 	}
 }
+
+// M2-11: the init services are those another waits for to complete; a dependency waited on only to start or be
+// healthy isn't one.
+func TestInitServices(t *testing.T) {
+	svc := func(name string, deps map[string]string) types.ServiceConfig {
+		s := types.ServiceConfig{Name: name}
+		s.DependsOn = types.DependsOnConfig{}
+		for d, cond := range deps {
+			s.DependsOn[d] = types.ServiceDependency{Condition: cond}
+		}
+		return s
+	}
+	done, healthy := types.ServiceConditionCompletedSuccessfully, types.ServiceConditionHealthy
+	p := &types.Project{Services: types.Services{
+		"web":     svc("web", map[string]string{"migrate": done, "db": healthy}),
+		"worker":  svc("worker", map[string]string{"migrate": done, "seed": done}),
+		"migrate": svc("migrate", map[string]string{"db": healthy}),
+		"db":      svc("db", nil),
+		"seed":    svc("seed", nil),
+	}}
+	if got := initServices(p); !slices.Equal(got, []string{"migrate", "seed"}) {
+		t.Fatalf("got %v", got)
+	}
+}
