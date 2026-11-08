@@ -7,7 +7,7 @@ itself, and a separate **Source Server** owns Git and rendering. v0.1 (push over
 | Read | For |
 | --- | --- |
 | [architecture.md](architecture.md) | the decided design: components, trust boundaries, flows, protocol, UI, install |
-| [decisions.md](decisions.md) | every design decision (Q1–Q62) with its outcome: the "why" |
+| [decisions.md](decisions.md) | every design decision (Q1–Q78) with its outcome: the "why" |
 | [milestones/](milestones/) | the work, as tickets with dependencies and "done when" |
 | [../adr/](../adr/) | the hard-to-reverse decisions (0003–0006) |
 | [../../GLOSSARY.md](../../GLOSSARY.md) | the vocabulary: Host, Agent, Control Plane, Source Server, Enrollment, … |
@@ -17,9 +17,8 @@ itself, and a separate **Source Server** owns Git and rendering. v0.1 (push over
 ## Milestones
 
 Work them in order; a ticket may start once the tickets it depends on are done. **Before each milestone: a design
-check** of its tickets against the decisions, the architecture and the roadmap (CLAUDE.md); between M2 and M3 that's a
-grilling session on the [open questions](decisions.md#open-for-the-grilling-before-m3), and M3 starts once they are
-decided.
+check** of its tickets against the decisions, the architecture and the roadmap (CLAUDE.md); between M2 and M3 the
+roadmap's later features were decided first ([Q63–Q72](decisions.md#later-features-design-check-before-m3-2026-11-08), 2026-11-08).
 
 | # | Milestone | Tickets |
 | --- | --- | --- |
