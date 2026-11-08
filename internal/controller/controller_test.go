@@ -3,8 +3,10 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -19,6 +21,7 @@ import (
 	"github.com/obleey/omegacd/internal/appdef"
 	"github.com/obleey/omegacd/internal/blob"
 	"github.com/obleey/omegacd/internal/domain"
+	"github.com/obleey/omegacd/internal/logging"
 )
 
 // ---- fakes ----
@@ -303,6 +306,7 @@ type fakeEngine struct {
 	lastPrune    bool
 	statusErr    error
 	diffErr      error
+	log          *slog.Logger // logs each Sync, as the engine does with the context it is given
 	lastPruneVol bool
 	removedVols  []bool // volumes flag per Remove call
 	lastForce    bool
@@ -316,9 +320,12 @@ func (e *fakeEngine) Diff(context.Context, domain.Application, string, string) (
 	defer e.mu.Unlock()
 	return e.drift, e.diffErr
 }
-func (e *fakeEngine) Sync(_ context.Context, _ domain.Application, _ string, opts domain.SyncOptions) error {
+func (e *fakeEngine) Sync(ctx context.Context, _ domain.Application, _ string, opts domain.SyncOptions) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if e.log != nil {
+		e.log.DebugContext(ctx, "compose up")
+	}
 	e.syncs++
 	e.lastPrune = opts.Prune
 	e.lastPruneVol = opts.PruneVolumes
@@ -1489,5 +1496,55 @@ func TestRunWithPollingOff(t *testing.T) {
 	<-done
 	if after == 0 || later != after {
 		t.Fatalf("Git resolves: %d at startup, %d later (want no polling)", after, later)
+	}
+}
+
+// Q62: everything a Sync logs, down into the engine, carries its app and op; a reconcile says why it didn't sync.
+func TestLogsFollowASync(t *testing.T) {
+	r := newRig(t)
+	var out logging.Buffer
+	log, _ := logging.New(&out, "debug", "text")
+	r.c.cfg.Log, r.e.log = log.With("component", "controller"), log.With("component", "engine")
+	ctx := t.Context()
+	r.c.CreateApp(ctx, app("web"))
+	id, err := r.c.Sync(ctx, "web", domain.SyncRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.waitIdle(t, "web")
+	op := fmt.Sprintf(" app=web op=%d revision=aaaaaaa host=local", id)
+	for _, want := range []string{
+		`msg=reconciled component=controller status=OutOfSync message="never synced" health=Healthy target=aaaaaaa deployed="" drift=false autoSync=no why="Auto-Sync off" app=web`,
+		`msg="sync started" component=controller trigger=manual` + op,
+		`msg="compose up" component=engine` + op,
+		`msg="sync finished" component=controller trigger=manual phase=Succeeded msg="synced to aaaaaaa"` + op,
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("no %q in:\n%s", want, out.String())
+		}
+	}
+}
+
+func TestAutoTriggerSaysWhy(t *testing.T) {
+	c := New(Config{})
+	out := domain.AppView{SyncStatus: domain.OutOfSync}
+	for _, tc := range []struct {
+		a            domain.Application
+		s            appState
+		v            domain.AppView
+		trigger, why string
+	}{
+		{domain.Application{AutoSync: true}, appState{targetTree: "t"}, domain.AppView{SyncStatus: domain.Synced}, "", "not OutOfSync"},
+		{domain.Application{}, appState{targetTree: "t"}, out, "", "Auto-Sync off"},
+		{domain.Application{AutoSync: true, RolledBack: true}, appState{targetTree: "t"}, out, "", "rolled back"},
+		{domain.Application{AutoSync: true}, appState{targetTree: "t", syncing: true}, out, "", "busy"},
+		{domain.Application{AutoSync: true}, appState{targetTree: "t", failedTree: "t"}, out, "", "this tree used up its retries"},
+		{domain.Application{AutoSync: true}, appState{targetTree: "t", drift: true}, out, "", "drifted, Self-Heal off"},
+		{domain.Application{AutoSync: true, SelfHeal: true}, appState{targetTree: "t", drift: true}, out, "self-heal", "drifted"},
+		{domain.Application{AutoSync: true}, appState{targetTree: "t"}, out, "auto", "new revision"},
+	} {
+		if trigger, why := c.autoTrigger(tc.a, &tc.s, tc.v); trigger != tc.trigger || why != tc.why {
+			t.Errorf("%+v %+v: got %q %q, want %q %q", tc.a, tc.s, trigger, why, tc.trigger, tc.why)
+		}
 	}
 }

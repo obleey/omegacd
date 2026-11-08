@@ -12,9 +12,11 @@ import (
 	"flag"
 	"fmt"
 	"github.com/obleey/omegacd/internal/importer"
+	"github.com/obleey/omegacd/internal/logging"
 	"github.com/obleey/omegacd/internal/source"
 	"github.com/obleey/omegacd/internal/version"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -234,7 +236,12 @@ func (c *CLI) client(o opts) (*client, error) {
 	if server == "" || token == "" {
 		return nil, errUnauthorized
 	}
-	return &client{server: strings.TrimRight(server, "/"), token: token}, nil
+	// warn unless asked: the CLI talks to people, its output is what they read
+	log, err := logging.New(c.Stderr, cmp.Or(c.Getenv("OMEGACD_LOG_LEVEL"), "warn"), c.Getenv("OMEGACD_LOG_FORMAT"))
+	if err != nil {
+		return nil, err
+	}
+	return &client{server: strings.TrimRight(server, "/"), token: token, log: log.With("component", "cli")}, nil
 }
 
 func first(vs ...string) string {
@@ -359,6 +366,7 @@ func (c *CLI) sourceCerts(ctx context.Context, args []string) error {
 
 type client struct {
 	server, token string
+	log           *slog.Logger
 }
 
 func (cl *client) request(ctx context.Context, method, path string, body any) (*http.Response, error) {
@@ -378,10 +386,12 @@ func (cl *client) request(ctx context.Context, method, path string, body any) (*
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	start := time.Now()
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
+	cl.log.DebugContext(ctx, "api", "method", method, "path", path, "status", resp.StatusCode, "duration", time.Since(start))
 	if resp.StatusCode < 300 {
 		return resp, nil
 	}

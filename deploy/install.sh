@@ -90,7 +90,7 @@ EOF
 		[ $i -lt 30 ] || die "OmegaCD did not start; see: cd $OMEGACD_DIR && docker compose logs omegacd"
 		sleep 2
 	done
-	pw=$(docker compose logs omegacd 2>&1 | sed -n 's/.*initial admin password.*password=\([^ ]*\).*/\1/p' | tail -1)
+	pw=$(docker compose logs omegacd 2>&1 | sed -n 's/.*initial admin password.*initial=\([^ ]*\).*/\1/p' | tail -1)
 
 	say ""
 	say "OmegaCD is running: http://$(hostname -f 2>/dev/null || hostname):$OMEGACD_PORT"
@@ -135,7 +135,7 @@ install_kubernetes() {
 	sed "s#image: ghcr.io/obleey/omegacd:.*#image: $IMAGE#" "$tmp/kubernetes.yaml" | k apply -f -
 	k rollout status deploy/omegacd --timeout=180s
 
-	pw=$(k logs deploy/omegacd 2>&1 | sed -n 's/.*initial admin password.*password=\([^ ]*\).*/\1/p' | tail -1)
+	pw=$(k logs deploy/omegacd 2>&1 | sed -n 's/.*initial admin password.*initial=\([^ ]*\).*/\1/p' | tail -1)
 	say ""
 	say "OmegaCD is running. Reach it with: kubectl --context $ctx -n $OMEGACD_NAMESPACE port-forward svc/omegacd 8080"
 	say "(or add the Ingress at the end of kubernetes.yaml)"

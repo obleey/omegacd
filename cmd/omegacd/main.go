@@ -29,6 +29,7 @@ import (
 	"github.com/obleey/omegacd/internal/crypto"
 	"github.com/obleey/omegacd/internal/domain"
 	"github.com/obleey/omegacd/internal/engine"
+	"github.com/obleey/omegacd/internal/logging"
 	"github.com/obleey/omegacd/internal/secrets"
 	"github.com/obleey/omegacd/internal/source"
 	"github.com/obleey/omegacd/internal/store"
@@ -51,7 +52,11 @@ func main() {
 	case len(os.Args) > 1 && os.Args[1] != "server":
 		os.Exit(cli.Main(os.Args[1:]))
 	}
-	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	log, err := logging.New(os.Stderr, os.Getenv("OMEGACD_LOG_LEVEL"), os.Getenv("OMEGACD_LOG_FORMAT"))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	if err := run(log); err != nil {
 		log.Error("fatal", "err", err)
 		os.Exit(1)
@@ -98,6 +103,7 @@ func run(log *slog.Logger) error {
 		KnownHostsFile: knownHosts,
 		KeyDir:         filepath.Join(dataDir, "keys"),
 		NoLocalHost:    noLocal,
+		Log:            log.With("component", "engine"),
 	})
 	if err != nil {
 		return err
@@ -118,7 +124,8 @@ func run(log *slog.Logger) error {
 			return err
 		}
 		s.KnownHostsFile = knownHosts
-		go s.CollectBlobs(ctx, log)
+		s.Log = log.With("component", "source")
+		go s.CollectBlobs(ctx)
 		src = s
 	}
 
@@ -133,10 +140,10 @@ func run(log *slog.Logger) error {
 		NormalizeURL: source.NormalizeURL,
 		ObserveSync:  api.ObserveSync,
 		SelfID:       selfID,
-		Log:          log,
+		Log:          log.With("component", "controller"),
 	})
 
-	if err := api.EnsureAdmin(ctx, st, os.Getenv("OMEGACD_ADMIN_PASSWORD"), log); err != nil {
+	if err := api.EnsureAdmin(ctx, st, os.Getenv("OMEGACD_ADMIN_PASSWORD"), log.With("component", "api")); err != nil {
 		return err
 	}
 	proxies, err := api.ParseTrustedProxies(os.Getenv("OMEGACD_TRUSTED_PROXIES"))
@@ -157,6 +164,7 @@ func run(log *slog.Logger) error {
 			WebhookParse:   source.ParseWebhook,
 			TrustedProxies: proxies,
 			UI:             ui,
+			Log:            log.With("component", "api"),
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
@@ -216,6 +224,7 @@ func runSourceServer(log *slog.Logger) error {
 		return err
 	}
 	src.KnownHostsFile = cmp.Or(os.Getenv("OMEGACD_SSH_KNOWN_HOSTS"), "/etc/omegacd/known_hosts")
+	src.Log = log.With("component", "source")
 	g := grpc.NewServer(grpc.Creds(credentials.NewTLS(cfg)))
 	source.Serve(g, src)
 	l, err := net.Listen("tcp", addr)
@@ -224,7 +233,7 @@ func runSourceServer(log *slog.Logger) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	go src.CollectBlobs(ctx, log)
+	go src.CollectBlobs(ctx)
 	go func() {
 		<-ctx.Done()
 		g.GracefulStop()
@@ -272,9 +281,9 @@ func runAgent(log *slog.Logger) error {
 		return err
 	}
 	secrets := agent.NewSecrets(cfg.SecretGroup, agent.SOPS{HostKey: hostKey})
-	work := agent.NewWorkDir(cfg.WorkDir, db, cache)
+	work := agent.NewWorkDir(cfg.WorkDir, db, cache, log.With("component", "agent"))
 	if filesOnly {
-		return agent.New(db, cache, work, secrets, nil).RestoreFiles(ctx)
+		return agent.New(db, cache, work, secrets, nil, log.With("component", "agent")).RestoreFiles(ctx)
 	}
 	if runtime.GOOS == "darwin" {
 		log.Warn("macOS is for development only (Q61): Docker Desktop and OrbStack share folders ignoring owners and " +
@@ -293,7 +302,7 @@ func runAgent(log *slog.Logger) error {
 	} else {
 		log.Info("container engine", "engine", eng.Name, "version", eng.Version, "rootless", eng.Rootless, "os", eng.OS, "arch", eng.Arch)
 	}
-	eng, err := engine.New(engine.Config{})
+	eng, err := engine.New(engine.Config{Log: log.With("component", "engine")})
 	if err != nil {
 		return err
 	}
@@ -301,7 +310,7 @@ func runAgent(log *slog.Logger) error {
 	log.Info("omegacd agent", "state", cfg.StateDir, "workdir", cfg.WorkDir, "controlPlane", cfg.ControlPlane,
 		"cacheRevisions", cfg.CacheRevisions, "apps", len(apps), "hostKey", hostKey.Recipient().String())
 	log.Info("omegacd agent running")
-	return agent.New(db, cache, work, secrets, eng).Run(ctx, log)
+	return agent.New(db, cache, work, secrets, eng, log.With("component", "agent")).Run(ctx)
 }
 
 // localHostDisabled reads OMEGACD_LOCAL_HOST: "false" where no Docker engine runs next to OmegaCD (Kubernetes).

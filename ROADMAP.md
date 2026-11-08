@@ -32,7 +32,9 @@ Still to test before v0.1.0 (see [TESTING.md](TESTING.md)):
 
 ## v0.2 — pull-based Agents (in development on `main`)
 
-A breaking redesign; v0.1 continues on the `release-0.1` branch for fixes only, and both are released together.
+A breaking redesign, and the MVP: what a small team needs to run its Compose Hosts with it, on Debian/Ubuntu; more
+platforms (the RHEL family) and features come after it. v0.1 continues on the `release-0.1` branch for fixes only,
+and both are released together.
 The plan: [docs/v0.2](docs/v0.2/README.md) (architecture, decisions, 8 milestones of tickets).
 
 - **Agents** on every Host dial out to the Control Plane over one WebSocket and run Compose themselves; push over SSH/TLS goes away
@@ -44,6 +46,7 @@ The plan: [docs/v0.2](docs/v0.2/README.md) (architecture, decisions, 8 milestone
 - Built-in Agent in a full install; install script with full and agent modes; Kubernetes; reverse proxies everywhere
 - UI: Add Host flow, Host cards, engine badges everywhere, offline and queued states; then a polish milestone
 - **Hosts**: Debian 13 and Ubuntu 24.04 on amd64 and arm64, every push tested on all four with the same tests (`make test-linux`, real servers); macOS for development only
+- **Packages**: `.deb` for amd64 and arm64 on every release, with the systemd units; `install.sh` installs it (`.rpm` comes with the RHEL family, after v0.2)
 - **Logging everywhere**: error, warn, info and debug for every decision the code makes, one Sync followable across Control Plane, Source Server and Agent, json or text; never a secret in a log
 - **Secrets helpers**: `omegacd secrets init` writes `.sops.yaml` for a Host, and a clear "this Host can't decrypt it" when a file was encrypted for other keys; built per secret source, ready for KeePass, 1Password, Ansible Vault, OpenBao and others later
 
@@ -54,8 +57,10 @@ The plan: [docs/v0.2](docs/v0.2/README.md) (architecture, decisions, 8 milestone
 
 - **Sync hooks** — jobs once per Sync, before/after it: backups before upgrades, `cache:clear`, `wp core update-db` (migrations on every start already work with Compose's own one-shot services, tested in v0.2's M2-11). How they fit the Agent and the protocol is decided before v0.2's M3 ([open questions](docs/v0.2/decisions.md#open-for-the-grilling-before-m3))
 - **Order between Child Applications** — `dependsOn: [caddy]` in a definition: the App of Apps syncs children in that order (e.g. the app that creates a shared network before those that join it), instead of a failed first attempt and a retry
+- **apt repository** (dnf with the RHEL family) — a signed repository for the packages, so `apt upgrade` updates OmegaCD (the signing key lives in CI secrets)
 - **Notifications** — Slack, Discord, email, generic webhook on Sync failed / Degraded / recovered
 - **Restart unhealthy containers** — Self-Heal option `restartUnhealthy`: restart a container its own healthcheck reports unhealthy for a while (Docker's restart policies only react to exits), with backoff and a limit, each restart in History and notified
+- **Find apps by Host and App of Apps** — filters for Host and App of Apps next to Sync and Health (with counts); every Host is clickable into its apps (a Host card's app count, the Host badge on an app); filters kept in the URL (back, reload, shared links); group by App of Apps or by Host, each group with a health summary; maybe search tokens (`host:prod-1`). Written up for a grilling: [docs/ideas/find-apps.md](docs/ideas/find-apps.md)
 - "Sync and recreate" in the UI; refresh from Git when an Application page opens
 
 ## v0.3 — many Applications, little repetition

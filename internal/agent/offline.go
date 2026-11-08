@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +16,7 @@ import (
 	"github.com/moby/moby/client"
 
 	"github.com/obleey/omegacd/internal/domain"
+	"github.com/obleey/omegacd/internal/logging"
 	agentv1 "github.com/obleey/omegacd/internal/proto/agent/v1"
 )
 
@@ -59,8 +59,12 @@ func (ag *Agent) RestoreFiles(ctx context.Context) error {
 			continue
 		}
 		r, err := ag.cache.Revision(ctx, a.Name, a.Revision)
-		if err == nil && !complete(ag.work.Dir(a), r) {
-			err = ag.writeFiles(ctx, a, r)
+		if err == nil {
+			done := complete(ag.work.Dir(a), r)
+			ag.log.Debug("restore files", "app", a.Name, "revision", a.Revision, "write", !done)
+			if !done {
+				err = ag.writeFiles(ctx, a, r)
+			}
 		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("restore %s: %w", a.Name, err))
@@ -112,6 +116,7 @@ func (ag *Agent) Restore(ctx context.Context) error {
 func (ag *Agent) restore(ctx context.Context, a App) error {
 	ag.mu.Lock()
 	defer ag.mu.Unlock()
+	ctx = logging.With(ctx, "app", a.Name, "revision", a.Revision)
 	r, err := ag.cache.Revision(ctx, a.Name, a.Revision)
 	if err != nil {
 		return err
@@ -119,12 +124,17 @@ func (ag *Agent) restore(ctx context.Context, a App) error {
 	dir := ag.work.Dir(a)
 	missing := !complete(dir, r)
 	if !missing {
-		if live, err := ag.engine.Status(ctx, application(a, r)); err == nil && running(live) {
+		live, err := ag.engine.Status(ctx, application(a, r))
+		if err == nil && running(live) {
+			ag.log.DebugContext(ctx, "restore: nothing to do, files present and containers running", "health", live.Health)
 			return nil
 		}
+		ag.log.DebugContext(ctx, "restore: containers not running", "health", live.Health, "err", err)
 	}
+	ag.log.InfoContext(ctx, "restoring", "filesMissing", missing)
 	if missing && inContainer() {
 		// a containerised Agent starts after Docker: clear the placeholders through Docker, with its own image
+		ag.log.DebugContext(ctx, "reclaim the work dir from Docker's placeholders", "dir", dir)
 		if err := reclaim(ctx, ag.work.Root, dir, ""); err != nil {
 			return err
 		}
@@ -213,20 +223,28 @@ func (ag *Agent) report(ctx context.Context, a App, r Revision, trigger string, 
 func (ag *Agent) selfHeal(ctx context.Context, name string) error {
 	ag.mu.Lock()
 	defer ag.mu.Unlock()
+	ctx = logging.With(ctx, "app", name)
 	a, r, err := ag.deployed(ctx, name)
 	if err != nil || !a.SelfHeal {
+		ag.log.DebugContext(ctx, "self-heal: not this Agent's to heal", "selfHeal", a.SelfHeal, "err", err)
 		return nil // not ours, or nothing to heal
 	}
+	ctx = logging.With(ctx, "revision", a.Revision)
 	app := application(a, r)
 	live, err := ag.engine.Status(ctx, app)
 	if err != nil {
 		return err
 	}
+	why := "containers " + string(live.Health)
 	if running(live) {
-		if d, err := ag.engine.Diff(ctx, app, a.Dir, ""); err != nil || len(d) == 0 {
+		d, err := ag.engine.Diff(ctx, app, a.Dir, "")
+		if err != nil || len(d) == 0 {
+			ag.log.DebugContext(ctx, "self-heal: running as deployed", "health", live.Health, "err", err)
 			return err
 		}
+		why = fmt.Sprintf("drifted: %d services", len(d))
 	}
+	ag.log.InfoContext(ctx, "self-healing", "why", why)
 	return ag.report(ctx, a, r, triggerSelfHeal, func() error { return ag.apply(ctx, a, r, false, nil) })
 }
 
@@ -241,7 +259,7 @@ const selfHealDelay = 3 * time.Second
 
 // Run keeps the Host's Applications as deployed until ctx ends (Q24): it restores them, then watches the engine and
 // self-heals those that have Self-Heal on. It works the same with or without a Control Plane.
-func (ag *Agent) Run(ctx context.Context, log *slog.Logger) error {
+func (ag *Agent) Run(ctx context.Context) error {
 	var mu sync.Mutex
 	pending := map[string]bool{}
 	watching := make(chan error, 1)
@@ -259,13 +277,13 @@ func (ag *Agent) Run(ctx context.Context, log *slog.Logger) error {
 				delete(pending, app)
 				mu.Unlock()
 				if err := ag.selfHeal(ctx, app); err != nil {
-					log.Error("self-heal", "app", app, "err", err)
+					ag.log.Error("self-heal failed; the next change to its containers tries again", "app", app, "err", err)
 				}
 			})
 		})
 	}()
 	if err := ag.Restore(ctx); err != nil {
-		log.Error("restore", "err", err)
+		ag.log.Error("restore failed; fix the cause, then restart the Agent to try again", "err", err)
 	}
 	return <-watching
 }

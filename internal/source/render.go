@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -74,7 +73,7 @@ const blobGrace = time.Hour
 
 // CollectBlobs removes, every hour until ctx ends, the blobs no cached render uses that weren't put within the
 // last hour. They are only a cache: a later Render of their commit puts them again.
-func (s *Server) CollectBlobs(ctx context.Context, log *slog.Logger) {
+func (s *Server) CollectBlobs(ctx context.Context) {
 	t := time.NewTicker(blobGrace)
 	defer t.Stop()
 	for {
@@ -84,9 +83,9 @@ func (s *Server) CollectBlobs(ctx context.Context, log *slog.Logger) {
 		case <-t.C:
 		}
 		if n, err := s.collectBlobs(); err != nil {
-			log.Warn("collect source server blobs", "err", err)
-		} else if n > 0 {
-			log.Info("collected source server blobs", "removed", n)
+			s.Log.Warn("collect source server blobs; they are only a cache, the next collection tries again", "err", err)
+		} else {
+			s.Log.Debug("collected source server blobs", "removed", n)
 		}
 	}
 }
@@ -118,6 +117,7 @@ func (s *Server) Render(ctx context.Context, spec domain.RenderSpec) (domain.Ren
 	}
 	s.mu.Unlock()
 	if ok {
+		s.Log.DebugContext(ctx, "render cached", "repo", redact(spec.RepoURL), "revision", spec.Revision, "path", spec.Path)
 		return r, nil
 	}
 	tree, err := s.tree(ctx, spec.RepoURL, spec.Revision, spec.Path)
@@ -160,6 +160,8 @@ func (s *Server) Render(ctx context.Context, spec domain.RenderSpec) (domain.Ren
 		r.Warnings = plainSecrets(a, dir)
 	}
 
+	s.Log.DebugContext(ctx, "rendered", "repo", redact(spec.RepoURL), "revision", spec.Revision, "path", spec.Path,
+		"files", len(r.Files), "tree", r.Checksum, "invalid", r.Invalid, "warnings", r.Warnings)
 	s.mu.Lock()
 	if _, ok := s.rendered[key]; !ok { // a concurrent Render of the same spec may have been first
 		s.rendered[key] = s.recent.PushFront(&cached{key, r})

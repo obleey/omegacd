@@ -561,6 +561,8 @@ All server settings are environment variables:
 | `OMEGACD_SOURCE_SERVER` | *(in-process)* | `https://host:port` of a standalone Source Server (see below) |
 | `OMEGACD_SOURCE_TLS_DIR` | `/etc/omegacd/source-tls` | Certificates from `omegacd source-certs`: the Control Plane reads `ca.pem`, `client.pem`, `client.key`; the Source Server `ca.pem`, `server.pem`, `server.key` |
 | `OMEGACD_SOURCE_ADDR` | `:9090` | `omegacd source-server` only: its listen address |
+| `OMEGACD_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. `debug` logs why OmegaCD did what it did: each reconcile's verdict and Auto-Sync decision, the Compose options of a Sync, kept and pruned containers, renders and fetches. Secrets are never logged at any level. Every entry has a `component`, and the ones about an Application its `app`, and during a Sync its `op` (the Sync Operation), `revision` and `host`. The CLI reads it too (default `warn`; `debug` shows its API calls) |
+| `OMEGACD_LOG_FORMAT` | `text` | `text`, or `json`: one JSON object per line |
 
 ### Standalone Source Server
 

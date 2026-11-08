@@ -28,7 +28,7 @@ decided.
 | M3 | [Connection](milestones/M3-connection.md): WebSocket, enrollment, signed challenges, version handshake, IP allowlist, resync | 6 |
 | M4 | [Control Plane in pull mode](milestones/M4-control-plane-pull.md): Sync and status through Agents, Source Server for Git, built-in Agent, delete push, DR | 7 |
 | M5 | [UI](milestones/M5-ui.md): Add Host, Host cards, badges, offline apps, Source Server settings, masked files, work dir field, "can't decrypt" | 8 |
-| M6 | [Install and import](milestones/M6-install-import.md): install.sh modes, compose files, systemd, Kubernetes, import via Agent, proxy docs, RHEL family (deferred), secrets helper | 8 |
+| M6 | [Install and import](milestones/M6-install-import.md): install.sh modes, compose files, systemd, Kubernetes, import via Agent, proxy docs, RHEL family (deferred), secrets helper, .deb packages | 9 |
 | M7 | [Hardening](milestones/M7-hardening.md): test pyramid incl. rootless Docker and Podman, e2e, chaos tests, real-world run, docs, RHEL-family matrix (deferred) | 6 |
 | M8 | [UI polish, then release](milestones/M8-ui-polish.md): UX, accessibility, performance, visuals, release notes, v0.1.0 + v0.2.0 | 6 |
 

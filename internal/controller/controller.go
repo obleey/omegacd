@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"filippo.io/age"
 
 	"github.com/obleey/omegacd/internal/domain"
+	"github.com/obleey/omegacd/internal/logging"
 )
 
 const (
@@ -72,9 +74,7 @@ type Controller struct {
 }
 
 func New(cfg Config) *Controller {
-	if cfg.Log == nil {
-		cfg.Log = slog.Default()
-	}
+	cfg.Log = cmp.Or(cfg.Log, logging.Discard)
 	if cfg.NormalizeURL == nil {
 		cfg.NormalizeURL = strings.ToLower
 	}
@@ -211,6 +211,7 @@ func (c *Controller) reconcile(ctx context.Context, a domain.Application) domain
 // reconcileWith skips the Git fetch when fetch is false and a target is already known,
 // so live container changes can be reflected immediately and cheaply.
 func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fetch bool) domain.AppView {
+	ctx = logging.With(ctx, "app", a.Name)
 	v := domain.AppView{Application: a, SyncStatus: domain.Unknown, Health: domain.Missing, ReconciledAt: time.Now()}
 	var targetTree string
 	var drift bool
@@ -229,7 +230,7 @@ func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fe
 	var children []domain.Application
 	if a.Kind == domain.KindApps {
 		if children, err = c.children(ctx, a.Name); err != nil {
-			c.cfg.Log.Warn("list child applications", "app", a.Name, "err", err)
+			c.cfg.Log.WarnContext(ctx, "list child applications", "err", err)
 		}
 		c.mu.Lock()
 		v.Health = c.worstHealth(children)
@@ -314,7 +315,7 @@ func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fe
 			v.Health = domain.HealthUnknown
 			// the most actionable fact; it explains any Sync Status error from the same outage too
 			v.SyncMessage = "Host " + cmp.Or(a.Host, domain.LocalHost) + " unreachable: " + err.Error()
-			c.cfg.Log.Warn("live state", "app", a.Name, "err", err)
+			c.cfg.Log.WarnContext(ctx, "live state", "err", err)
 		}
 	}
 
@@ -329,11 +330,13 @@ func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fe
 		v.LastOperation = s.view.LastOperation
 	}
 	s.view = v
-	trigger := c.autoTrigger(a, s, v)
+	trigger, why := c.autoTrigger(a, s, v)
 	if noKey {
-		trigger = ""
+		trigger, why = "", "no Host Key"
 	}
 	c.mu.Unlock()
+	c.cfg.Log.DebugContext(ctx, "reconciled", "status", v.SyncStatus, "message", v.SyncMessage, "health", v.Health,
+		"target", short(sha), "deployed", short(v.DeployedSHA), "drift", drift, "autoSync", cmp.Or(trigger, "no"), "why", why)
 	c.emit(domain.Event{Type: "app", App: a.Name, Data: v})
 	if a.Parent != "" {
 		c.refreshParent(ctx, a.Parent)
@@ -341,7 +344,7 @@ func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fe
 
 	if trigger != "" {
 		if _, err := c.startSync(a, sha, trigger); err != nil && !errors.Is(err, domain.ErrBusy) {
-			c.cfg.Log.Error("auto sync", "app", a.Name, "err", err)
+			c.cfg.Log.ErrorContext(ctx, "auto sync", "err", err)
 		}
 	}
 	return v
@@ -425,25 +428,29 @@ func (c *Controller) reconcileHost(ctx context.Context, host string) {
 	}
 }
 
-// autoTrigger decides whether policy wants a Sync now. Caller holds c.mu.
-func (c *Controller) autoTrigger(a domain.Application, s *appState, v domain.AppView) string {
-	if !a.AutoSync || a.RolledBack || s.syncing || s.deleting || v.SyncStatus != domain.OutOfSync {
-		return ""
-	}
-	if s.targetTree == s.failedTree {
-		return ""
-	}
-	if s.retries > 0 && time.Now().Before(s.nextRetry) {
-		return ""
-	}
-	if s.drift {
+// autoTrigger is the trigger of the Sync policy wants now ("" for none), and why (for the debug log). Caller holds c.mu.
+func (c *Controller) autoTrigger(a domain.Application, s *appState, v domain.AppView) (trigger, why string) {
+	switch {
+	case v.SyncStatus != domain.OutOfSync:
+		return "", "not OutOfSync"
+	case !a.AutoSync:
+		return "", "Auto-Sync off"
+	case a.RolledBack:
+		return "", "rolled back"
+	case s.syncing || s.deleting:
+		return "", "busy"
+	case s.targetTree == s.failedTree:
+		return "", "this tree used up its retries"
+	case s.retries > 0 && time.Now().Before(s.nextRetry):
+		return "", "retry " + strconv.Itoa(s.retries) + " waits until " + s.nextRetry.Format(time.TimeOnly)
+	case s.drift:
 		// an App of Apps only drifts by children kept without Prune; syncing again would not change that
 		if a.SelfHeal && a.Kind != domain.KindApps {
-			return "self-heal"
+			return "self-heal", "drifted"
 		}
-		return ""
+		return "", "drifted, Self-Heal off"
 	}
-	return "auto"
+	return "auto", "new revision"
 }
 
 // startSync records a Sync Operation and runs it in the background.
@@ -493,6 +500,8 @@ func (c *Controller) setSyncing(name string, v bool) {
 func (c *Controller) runSync(a domain.Application, op domain.SyncOperation) {
 	ctx, cancel := context.WithTimeout(context.Background(), syncTimeout)
 	defer cancel()
+	ctx = logging.With(ctx, "app", a.Name, "op", op.ID, "revision", short(op.Revision), "host", cmp.Or(a.Host, domain.LocalHost))
+	c.cfg.Log.InfoContext(ctx, "sync started", "trigger", op.Trigger)
 	err := c.apply(ctx, a, op)
 
 	phase, msg := domain.OpSucceeded, "synced to "+short(op.Revision)
@@ -500,12 +509,12 @@ func (c *Controller) runSync(a domain.Application, op domain.SyncOperation) {
 		phase, msg = domain.OpFailed, err.Error()
 	}
 	if ferr := c.cfg.Store.FinishOp(ctx, op.ID, phase, msg); ferr != nil {
-		c.cfg.Log.Error("record sync operation", "app", a.Name, "err", ferr)
+		c.cfg.Log.ErrorContext(ctx, "record sync operation", "err", ferr)
 	}
 	if c.cfg.ObserveSync != nil {
 		c.cfg.ObserveSync(a.Name, phase, time.Since(op.StartedAt))
 	}
-	c.cfg.Log.Info("sync finished", "app", a.Name, "revision", short(op.Revision), "trigger", op.Trigger, "phase", phase, "msg", msg)
+	c.cfg.Log.InfoContext(ctx, "sync finished", "trigger", op.Trigger, "phase", phase, "msg", msg)
 
 	c.mu.Lock()
 	s := c.state(a.Name)
@@ -532,7 +541,7 @@ func (c *Controller) runSync(a domain.Application, op domain.SyncOperation) {
 		if cur, gerr := c.cfg.Store.GetApp(ctx, a.Name); gerr == nil && cur.RolledBack {
 			cur.RolledBack = false
 			if uerr := c.cfg.Store.UpdateApp(ctx, cur); uerr != nil {
-				c.cfg.Log.Error("clear rolled-back flag", "app", a.Name, "err", uerr)
+				c.cfg.Log.ErrorContext(ctx, "clear rolled-back flag", "err", uerr)
 			}
 		}
 	}
@@ -585,6 +594,7 @@ func (c *Controller) apply(ctx context.Context, a domain.Application, op domain.
 	if err != nil {
 		return fmt.Errorf("render: %w", err)
 	}
+	c.cfg.Log.DebugContext(ctx, "rendered", "tree", r.Checksum, "warnings", len(r.Warnings), "invalid", r.Invalid != nil)
 	if r.Invalid != nil {
 		return r.Invalid
 	}
@@ -650,10 +660,10 @@ func (c *Controller) apply(ctx context.Context, a domain.Application, op domain.
 	if err == nil {
 		// the containers use dir now: an older folder of the app (old layout, former App of Apps) can go
 		if rerr := c.removeFiles(a, dir); rerr != nil {
-			c.cfg.Log.Warn("remove old application files", "app", a.Name, "err", rerr)
+			c.cfg.Log.WarnContext(ctx, "remove old application files", "err", rerr)
 		}
 		if rerr := c.cfg.Store.SetAppDirs(ctx, a.Name, dirs); rerr != nil {
-			c.cfg.Log.Warn("record application folders", "app", a.Name, "err", rerr)
+			c.cfg.Log.WarnContext(ctx, "record application folders", "err", rerr)
 		}
 	}
 	return err

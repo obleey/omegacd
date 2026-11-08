@@ -4,7 +4,6 @@ package agent
 
 import (
 	"context"
-	"log/slog"
 	"os"
 	"slices"
 	"strings"
@@ -14,6 +13,7 @@ import (
 	"github.com/moby/moby/client"
 
 	"github.com/obleey/omegacd/internal/domain"
+	"github.com/obleey/omegacd/internal/logging"
 )
 
 const restartCompose = `services:
@@ -140,7 +140,9 @@ func TestAgentSelfHealsOffline(t *testing.T) {
 	if err := ag.Deploy(ctx, a, src.revision(name, "r1", files), src.fetch, nil); err != nil {
 		t.Fatal(err)
 	}
-	go ag.Run(ctx, slog.New(slog.NewTextHandler(os.Stderr, nil))) // no Control Plane anywhere
+	var log logging.Buffer
+	ag.log, _ = logging.New(&log, "debug", "text")
+	go ag.Run(ctx) // no Control Plane anywhere
 	live, _ := ag.Status(ctx, name)
 	eventually(t, "running", func() bool { live, _ = ag.Status(ctx, name); return len(live.Containers) == 1 })
 	time.Sleep(2 * time.Second) // Run's event stream is open
@@ -155,5 +157,14 @@ func TestAgentSelfHealsOffline(t *testing.T) {
 	apps, _ := ag.db.ListApps(ctx)
 	if !slices.ContainsFunc(apps, func(x App) bool { return x.Name == name && x.Revision == "r1" }) {
 		t.Fatal("Self-Heal changed what is deployed")
+	}
+	// Q62: it says why it did, and why the restore before did nothing
+	for _, want := range []string{
+		`msg="restore: nothing to do, files present and containers running" health=Healthy app=` + name + " revision=r1",
+		`msg=self-healing why="containers `, " app=" + name + " revision=r1",
+	} {
+		if !strings.Contains(log.String(), want) {
+			t.Errorf("no %q in the Agent's log:\n%s", want, log.String())
+		}
 	}
 }

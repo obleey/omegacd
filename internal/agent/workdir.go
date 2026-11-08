@@ -1,9 +1,11 @@
 package agent
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +14,7 @@ import (
 	"github.com/moby/moby/client"
 
 	"github.com/obleey/omegacd/internal/domain"
+	"github.com/obleey/omegacd/internal/logging"
 	"github.com/obleey/omegacd/internal/workdir"
 )
 
@@ -20,10 +23,12 @@ type WorkDir struct {
 	Root  string
 	db    *DB
 	cache *Cache
+	log   *slog.Logger
 }
 
-func NewWorkDir(root string, db *DB, cache *Cache) *WorkDir {
-	return &WorkDir{Root: root, db: db, cache: cache}
+// NewWorkDir is the work dir at root; log nil logs nothing.
+func NewWorkDir(root string, db *DB, cache *Cache, log *slog.Logger) *WorkDir {
+	return &WorkDir{Root: root, db: db, cache: cache, log: cmp.Or(log, logging.Discard)}
 }
 
 // Dir is a's folder: <root>/<name>, or <root>/<parent>/<name> for a Child Application.
@@ -39,6 +44,7 @@ func (w *WorkDir) Write(ctx context.Context, a App, r Revision) error {
 		return err
 	}
 	owned := prev.Dir == dir
+	w.log.DebugContext(ctx, "claim folder", "dir", dir, "owned", owned, "previous", prev.Dir)
 	if a.Parent != "" {
 		var kids []string
 		apps, err := w.db.ListApps(ctx)
@@ -67,6 +73,7 @@ func (w *WorkDir) Write(ctx context.Context, a App, r Revision) error {
 		return err
 	}
 	if prev.Dir != "" && prev.Dir != dir {
+		w.log.DebugContext(ctx, "remove the folder it used before", "dir", prev.Dir)
 		os.RemoveAll(prev.Dir)
 		if filepath.Dir(prev.Dir) != w.Root {
 			os.Remove(filepath.Dir(prev.Dir)) // its old App of Apps' folder, once empty

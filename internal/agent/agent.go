@@ -1,16 +1,19 @@
 package agent
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
 
 	"github.com/obleey/omegacd/internal/domain"
+	"github.com/obleey/omegacd/internal/logging"
 )
 
 // Agent deploys Applications on its Host (Q3, Q12): Revision → cache → work dir → decrypted → Compose.
@@ -20,14 +23,16 @@ type Agent struct {
 	work    *WorkDir
 	secrets *Secrets
 	engine  domain.Engine // on this Host only
+	log     *slog.Logger
 
 	// mu makes Deploy, Remove, a restore and a Self-Heal run one at a time: two at once could bring an app up twice
 	// or back after its Remove. ponytail: one lock for the whole Host, per-app locks if Syncs ever need to overlap.
 	mu sync.Mutex
 }
 
-func New(db *DB, cache *Cache, work *WorkDir, secrets *Secrets, engine domain.Engine) *Agent {
-	return &Agent{db: db, cache: cache, work: work, secrets: secrets, engine: engine}
+// New is the Agent; log nil logs nothing.
+func New(db *DB, cache *Cache, work *WorkDir, secrets *Secrets, engine domain.Engine, log *slog.Logger) *Agent {
+	return &Agent{db: db, cache: cache, work: work, secrets: secrets, engine: engine, log: cmp.Or(log, logging.Discard)}
 }
 
 // application is how internal/engine sees a: a Compose project on the local Host.
@@ -42,6 +47,8 @@ func application(a App, r Revision) domain.Application {
 func (ag *Agent) Deploy(ctx context.Context, a App, r Revision, fetch func(hash string) ([]byte, error), progress func(domain.ProgressEvent)) error {
 	ag.mu.Lock()
 	defer ag.mu.Unlock()
+	ctx = logging.With(ctx, "app", a.Name, "revision", r.Revision)
+	ag.log.InfoContext(ctx, "deploy", "files", len(r.Files))
 	if err := ag.cache.Add(ctx, r, fetch); err != nil {
 		return err
 	}
@@ -55,8 +62,12 @@ func (ag *Agent) apply(ctx context.Context, a App, r Revision, recreate bool, pr
 		return err
 	}
 	dir := ag.work.Dir(a)
-	if _, err := ag.secrets.Decrypt(dir); err != nil {
+	decrypted, err := ag.secrets.Decrypt(dir)
+	if err != nil {
 		return err
+	}
+	for _, d := range decrypted { // the file only: neither its values nor its variables' names
+		ag.log.DebugContext(ctx, "decrypted", "file", d.Path)
 	}
 	app := application(a, r)
 	for _, f := range app.ComposeFilesIn(dir) {
@@ -67,7 +78,7 @@ func (ag *Agent) apply(ctx context.Context, a App, r Revision, recreate bool, pr
 	if err := ag.engine.Validate(ctx, app, dir); err != nil {
 		return err
 	}
-	err := ag.engine.Sync(ctx, app, dir, domain.SyncOptions{Prune: app.Prune, PruneVolumes: app.PruneVolumes,
+	err = ag.engine.Sync(ctx, app, dir, domain.SyncOptions{Prune: app.Prune, PruneVolumes: app.PruneVolumes,
 		ForceRecreate: recreate, Progress: progress})
 	if err != nil {
 		return err

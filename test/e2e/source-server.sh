@@ -83,5 +83,7 @@ check "losing the Control Plane's data loses no credential" 'listed'
 check "a client without the certificate is refused" '! curl -s --http2 --cacert "$T/tls/ca.pem" -o /dev/null https://127.0.0.1:19090/'
 check "a client with the certificate gets in" 'curl -s --http2 --cacert "$T/tls/ca.pem" --cert "$T/tls/client.pem" --key "$T/tls/client.key" -o /dev/null -w "%{http_code}" https://127.0.0.1:19090/ | grep -q "^[0-9]"'
 
+check "the log is at debug and holds no secret (Q62)" 'grep -q level=DEBUG "$T/source.log" && ! grep -qF -e "$GITPW" -e e2e-password-123 "$T/server.log" "$T/source.log"'
+
 [ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- server log"; tail -15 "$T/server.log"; echo "--- source server log"; tail -15 "$T/source.log"; }
 exit $fail

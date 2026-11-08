@@ -25,6 +25,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/obleey/omegacd/internal/domain"
+	"github.com/obleey/omegacd/internal/logging"
 )
 
 type fakeStore struct {
@@ -39,10 +40,11 @@ type fakeStore struct {
 type fakeSource struct {
 	domain.Source // unimplemented methods panic
 	creds         []domain.RepoCredential
+	err           error
 }
 
 func (s *fakeSource) ListCredentials(context.Context) ([]domain.RepoCredential, error) {
-	return s.creds, nil
+	return s.creds, s.err
 }
 
 func (s *fakeStore) CreateSession(_ context.Context, h string, exp time.Time) error {
@@ -288,6 +290,7 @@ type env struct {
 	src   *fakeSource
 	ctrl  *fakeController
 	c     *http.Client
+	log   *strings.Builder // ponytail: unlocked, read only after the request it logged returned
 }
 
 func newEnv(t *testing.T, mustChange bool) *env {
@@ -296,7 +299,10 @@ func newEnv(t *testing.T, mustChange bool) *env {
 	store.hash, store.mustChange = string(hash), mustChange
 	ctrl := &fakeController{apps: map[string]domain.AppView{}, events: make(chan domain.Event, 1), changed: make(chan string, 4), hosts: map[string]domain.Host{}}
 	src := &fakeSource{}
+	var log strings.Builder
+	logger, _ := logging.New(&log, "debug", "text")
 	h := New(Config{
+		Log:        logger,
 		Controller: ctrl, Store: store, Source: src, WebhookSecret: "s3",
 		WebhookParse: func(provider string, h http.Header, body []byte, secret string) ([]string, error) {
 			if h.Get("X-Sig") != secret {
@@ -315,7 +321,7 @@ func newEnv(t *testing.T, mustChange bool) *env {
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 	jar, _ := cookiejar.New(nil)
-	return &env{t: t, srv: srv, store: store, src: src, ctrl: ctrl, c: &http.Client{Jar: jar}}
+	return &env{t: t, srv: srv, store: store, src: src, ctrl: ctrl, c: &http.Client{Jar: jar}, log: &log}
 }
 
 // do sends a request; hdr pairs are header key/values. Returns status and body.
@@ -771,4 +777,18 @@ func TestHostKeysAPI(t *testing.T) {
 	e.expect("DELETE", "/api/settings/hosts/prod/keys/age1nope", "", 404)
 	e.expect("DELETE", "/api/settings/hosts/prod/keys/age1generated", "", 204)
 	e.expect("GET", "/api/settings/hosts/nope/keys", "", 404)
+}
+
+// An internal error is logged at error with the request it answered (Q62); the client gets it too.
+func TestInternalErrorIsLoggedWithItsRequest(t *testing.T) {
+	e := newEnv(t, false)
+	e.login()
+	e.src.err = errors.New("disk full")
+	if code, _ := e.do("GET", "/api/settings/repo-credentials", ""); code != http.StatusInternalServerError {
+		t.Fatalf("status %d", code)
+	}
+	if !strings.Contains(e.log.String(), `level=ERROR msg=http method=GET path=/api/settings/repo-credentials status=500`) ||
+		!strings.Contains(e.log.String(), `err="disk full"`) {
+		t.Errorf("log:\n%s", e.log.String())
+	}
 }

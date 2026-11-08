@@ -99,7 +99,7 @@ recorded in the outbox for the Control Plane to show as rolled back on the Host 
 and the outbox entry is produced.
 
 ### M2-10 · Logging everywhere
-**Status:** todo
+**Status:** done (2026-11-08, PR #95)
 **Depends on:** M2-07
 
 Q62, done before M2-08 so every later ticket has it: one logger set up per persona from `OMEGACD_LOG_LEVEL` and
@@ -110,7 +110,8 @@ Source Server's renders and cache. Error entries say what to do. `--help` and th
 
 **Done when:** every package that acts logs its decisions at debug; a Sync can be followed by its `op` across Control
 Plane and Agent in the e2e logs; json output parses line by line; and a test runs the e2e suite at debug with known
-secrets (SOPS values, credentials, tokens) and finds none of them in any log.
+secrets (SOPS values, credentials, tokens) and finds none of them in any log. Until Syncs reach Agents (M4-01) the
+Control Plane runs the engine itself: its entries carry the `op`; M4-01 takes it on to the Agent.
 
 ### M2-11 · Init and one-shot services (migrations)
 **Status:** todo

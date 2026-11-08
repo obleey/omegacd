@@ -102,7 +102,7 @@ change it here first.
   what the VM taught.
 - **Q61** (2026-11-07, narrowed 2026-11-08) Workloads run on Linux: in v0.2 Agents (Hosts) are supported on
   **Debian/Ubuntu, amd64 and arm64**, tested before every push on Debian 13 and Ubuntu 24.04, both architectures (real servers), with
-  the same tests (`make test-linux`). The RHEL family (Q60) follows
+  the same tests (`make test-linux`): v0.2 is the MVP. The RHEL family (Q60) follows
   after v0.2 (M6-07, M7-06 deferred): an emulated Rocky machine's Docker hung twice in a day and the gate grew past an
   hour, for Hosts no one runs yet; the SELinux handling and the test machines go with it. macOS is for development only: the CLI, a local Control Plane, trying an
   Agent; an Agent there warns at start (file sharing ignores owners and modes, so containers can read decrypted
@@ -113,7 +113,11 @@ change it here first.
   like "kept container, same config hash and image", inputs, timings). `OMEGACD_LOG_LEVEL` (default info) and
   `OMEGACD_LOG_FORMAT` (text, json). Every entry carries `component` and, where they apply, `app`, `host`, `revision`,
   `op` (the Sync Operation), so one Sync can be followed across Control Plane, Source Server and Agent. **Secrets are
-  never logged**, at any level (a test injects known secrets and scans every log line).
+  never logged**, at any level (a test injects known secrets and scans every log line); URLs are logged redacted, and
+  the logger replaces any value whose key names a secret (password, token, …) as a safety net. One exception, on
+  purpose (user's choice, 2026-11-08): the admin password generated at first start without `OMEGACD_ADMIN_PASSWORD`,
+  logged once and changed at first login.
+  The CLI reads the same settings with `warn` as its default: it talks to people (at `debug` it shows its API calls).
 - **Q47** `import` goes only through the Agent (`--host NAME`); no SSH path.
 - **Q34/Q52** Talks to any Docker-compatible socket; Podman rootless is in v0.2's test matrix; engine badges everywhere.
 

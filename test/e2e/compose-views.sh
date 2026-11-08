@@ -62,5 +62,7 @@ printf '      API_TOKEN: abc123\n' >> "$REPO/sec/compose.yaml"; gitc commit -qam
 D=$(diffjson)
 check "a literal API_TOKEN is warned about" 'echo "$D" | python3 -c "import json,sys; w=json.load(sys.stdin).get(\"warnings\") or []; sys.exit(0 if len(w)==1 and w[0].startswith(\"web: API_TOKEN is in plain text in compose.yaml\") else 1)"'
 
+check "the log is at debug and holds no secret (Q62)" 'grep -q level=DEBUG "$T/server.log" && ! grep -qF -e sup3r-s3cret-value -e e2e-password-123 -e "$OMEGACD_TOKEN" "$T/server.log"'
+
 [ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- server log"; tail -15 "$T/server.log"; echo "$D" | head -c 2000; }
 exit $fail

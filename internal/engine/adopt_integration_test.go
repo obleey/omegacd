@@ -11,6 +11,7 @@ import (
 	"github.com/moby/moby/client"
 
 	"github.com/obleey/omegacd/internal/domain"
+	"github.com/obleey/omegacd/internal/logging"
 )
 
 // A stack started by hand with the Compose installed on the Host (whatever version: Ubuntu packages 2.x) is adopted
@@ -49,8 +50,13 @@ func TestAdoptKeepsContainersOfAnyCompose(t *testing.T) {
 		return
 	}
 	c1, n1, v1 := ids()
+	var log strings.Builder
+	e.cfg.Log, _ = logging.New(&log, "debug", "text")
 	if err := e.Sync(ctx, app, dir, domain.SyncOptions{}); err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(log.String(), `msg="kept service: same config hash and image, only the image label differs" service=app`) {
+		t.Errorf("the engine doesn't say it kept the service (Q62):\n%s", log.String())
 	}
 	c2, n2, v2 := ids()
 	t.Logf("compose %s: containers %s→ %s networks %s→ %s volumes %s→ %s", strings.TrimSpace(string(version)), c1, c2, n1, n2, v1, v2)

@@ -2,6 +2,7 @@
 package engine
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -35,6 +36,7 @@ import (
 	"github.com/moby/moby/client"
 
 	"github.com/obleey/omegacd/internal/domain"
+	"github.com/obleey/omegacd/internal/logging"
 )
 
 var _ domain.Engine = (*Engine)(nil)
@@ -50,6 +52,7 @@ type Engine struct {
 // New connects to the local Docker host the way the docker CLI does (DOCKER_HOST, contexts).
 // Remote Hosts are connected on first use.
 func New(cfg Config) (*Engine, error) {
+	cfg.Log = cmp.Or(cfg.Log, logging.Discard)
 	if cfg.NoLocalHost {
 		return &Engine{cfg: cfg, conns: map[string]*hostConn{}, desired: map[string][]string{}}, nil
 	}
@@ -467,7 +470,7 @@ func (e *Engine) Sync(ctx context.Context, app domain.Application, dir string, o
 	} else {
 		// containers Compose would recreate only for an image label written another way are kept: the services left out
 		// of the targets follow RecreateDependencies
-		keep, err := unchanged(ctx, hc.cli.Client(), p)
+		keep, err := unchanged(ctx, e.cfg.Log, hc.cli.Client(), p)
 		if err != nil {
 			return err
 		}
@@ -484,6 +487,8 @@ func (e *Engine) Sync(ctx context.Context, app domain.Application, dir string, o
 			slices.Sort(create.Services)
 		}
 	}
+	e.cfg.Log.DebugContext(ctx, "compose up", "host", hc.host.Name, "dir", dir, "recreate", create.Recreate,
+		"services", create.Services, "dependencies", create.RecreateDependencies, "removeOrphans", create.RemoveOrphans)
 	err = svc.Up(ctx, p, api.UpOptions{Create: create})
 	if err != nil {
 		return fmt.Errorf("compose up: %w", err)
@@ -491,22 +496,22 @@ func (e *Engine) Sync(ctx context.Context, app domain.Application, dir string, o
 	if stale {
 		// only now: until Up recreated the containers, they used the old folder
 		if err := e.removeFiles(ctx, hc, app, app.Dir()); err != nil {
-			slog.Warn("remove old application files", "app", app.Name, "host", hc.host.Name, "err", err)
+			e.cfg.Log.WarnContext(ctx, "remove old application files", "host", hc.host.Name, "err", err)
 		}
 	}
-	if err := settleUndeclared(ctx, hc.cli.Client(), p, opts.Prune); err != nil {
+	if err := settleUndeclared(ctx, e.cfg.Log, hc.cli.Client(), p, opts.Prune); err != nil {
 		return err
 	}
 	if !opts.Prune {
 		return nil
 	}
-	return pruneUndeclared(ctx, hc.cli.Client(), p, opts.PruneVolumes)
+	return pruneUndeclared(ctx, e.cfg.Log, hc.cli.Client(), p, opts.PruneVolumes)
 }
 
 // settleUndeclared handles containers of services the project no longer declares (removed from
 // the compose files, or their profile switched off): with prune they are deleted, otherwise
 // stopped. Compose itself keeps profile-disabled services even with RemoveOrphans.
-func settleUndeclared(ctx context.Context, c client.APIClient, p *types.Project, prune bool) error {
+func settleUndeclared(ctx context.Context, log *slog.Logger, c client.APIClient, p *types.Project, prune bool) error {
 	res, err := c.ContainerList(ctx, client.ContainerListOptions{All: true, Filters: projectFilter(p.Name).Add("label", api.OneoffLabel+"=False")})
 	if err != nil {
 		return fmt.Errorf("list containers: %w", err)
@@ -519,10 +524,12 @@ func settleUndeclared(ctx context.Context, c client.APIClient, p *types.Project,
 		}
 		switch {
 		case prune:
+			log.DebugContext(ctx, "remove container of an undeclared service (prune)", "service", svc, "container", ct.ID[:12])
 			if _, err := c.ContainerRemove(ctx, ct.ID, client.ContainerRemoveOptions{Force: true}); err != nil {
 				errs = append(errs, fmt.Errorf("prune service %s: %w", svc, err))
 			}
 		case ct.State == "running" || ct.State == "restarting":
+			log.DebugContext(ctx, "stop container of an undeclared service (no prune)", "service", svc, "container", ct.ID[:12])
 			if _, err := c.ContainerStop(ctx, ct.ID, client.ContainerStopOptions{}); err != nil {
 				errs = append(errs, fmt.Errorf("stop undeclared service %s: %w", svc, err))
 			}
@@ -576,7 +583,7 @@ func undeclared(ctx context.Context, c client.APIClient, p *types.Project) ([]ne
 // pruneUndeclared deletes the project's undeclared networks, and with volumes its undeclared volumes,
 // that no container of any project (stopped ones included) uses; those in use stay, prune pending.
 // Compose up only prunes containers. Bind mounts are not volumes, so no host path is ever touched.
-func pruneUndeclared(ctx context.Context, c client.APIClient, p *types.Project, volumes bool) error {
+func pruneUndeclared(ctx context.Context, log *slog.Logger, c client.APIClient, p *types.Project, volumes bool) error {
 	nets, vols, err := undeclared(ctx, c, p)
 	if err != nil {
 		return err
@@ -588,6 +595,7 @@ func pruneUndeclared(ctx context.Context, c client.APIClient, p *types.Project, 
 	var errs []error
 	for _, n := range nets {
 		used, err := inUse("network", n.ID)
+		log.DebugContext(ctx, "prune undeclared network", "network", n.Name, "inUse", used)
 		if err == nil && !used {
 			_, err = c.NetworkRemove(ctx, n.ID, client.NetworkRemoveOptions{})
 		}
@@ -600,6 +608,7 @@ func pruneUndeclared(ctx context.Context, c client.APIClient, p *types.Project, 
 	}
 	for _, v := range vols {
 		used, err := inUse("volume", v.Name)
+		log.DebugContext(ctx, "prune undeclared volume", "volume", v.Name, "inUse", used)
 		if err == nil && !used {
 			// not forced: a container created meanwhile makes this fail instead of losing its data
 			_, err = c.VolumeRemove(ctx, v.Name, client.VolumeRemoveOptions{})

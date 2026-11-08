@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"log/slog"
 	"maps"
 	"slices"
 	"strings"
@@ -19,7 +20,7 @@ import (
 // counts when every container has the config hash Compose expects, runs the very image the service's reference
 // resolves to now, and sits on the project's networks and volumes. Services that share another container's namespace
 // or volumes are left to Compose, which recreates them along with their parent.
-func unchanged(ctx context.Context, c client.APIClient, p *types.Project) ([]string, error) {
+func unchanged(ctx context.Context, log *slog.Logger, c client.APIClient, p *types.Project) ([]string, error) {
 	ctrs, err := containers(ctx, c, p.Name)
 	if err != nil {
 		return nil, err
@@ -54,6 +55,7 @@ func unchanged(ctx context.Context, c client.APIClient, p *types.Project) ([]str
 		}) {
 			continue
 		}
+		log.DebugContext(ctx, "kept service: same config hash and image, only the image label differs", "service", name, "image", img.ID)
 		keep = append(keep, name)
 	}
 	return keep, nil
