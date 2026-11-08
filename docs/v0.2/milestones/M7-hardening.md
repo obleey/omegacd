@@ -74,3 +74,25 @@ version was built during M2 and removed when v0.2 narrowed to Debian/Ubuntu (kep
 
 **Done when:** `make test-linux` is green on Ubuntu, Rocky and Fedora on both architectures, and the SELinux
 enforcing suite is green on a RHEL-family VM.
+
+### M7-07 · Forgejo becomes primary
+**Status:** todo
+**Depends on:** M7-05
+
+The project moves from GitHub to the maintainer's Forgejo, where CI runs on the maintainer's own runners. Until then Forgejo is a
+pull mirror of GitHub (every 10 minutes, Actions off). The switch:
+- **Migrate once** with Forgejo's GitHub migration: issues, PRs, comments, labels, milestones, releases; the mirror
+  is replaced.
+- **CI on Forgejo Actions** with the maintainer's runners, labelled by need: `ubuntu-24.04-amd64`,
+  `ubuntu-24.04-arm64`, `debian-13-amd64`, `debian-13-arm64` (host jobs, one at a time: the gate), and `docker` for
+  light container jobs (web UI, secret scan); jobs from others' pull requests only after approval.
+- **Releases stay public** while the source may become private:
+  - images on Docker Hub (`obleey/omegacd`), optionally a second registry as a fallback;
+  - binaries and `install.sh` from a public place, chosen then (a release-only repository, an own domain with object
+    storage, or the Forgejo exposed);
+  - the README, the install docs and the `readme-walkthrough` e2e follow.
+- **Tooling moves over:** `create-issues.sh`, CLAUDE.md's commands and the release workflow move from `gh` to Forgejo.
+- **GitHub goes private** only after the public download places exist.
+
+**Done when:** an issue, a pull request with its CI on the maintainer's runners, and a release (image pulled from Docker
+Hub, binary and install script downloaded by someone not logged in) all work on Forgejo alone.

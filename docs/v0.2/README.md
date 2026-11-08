@@ -28,7 +28,7 @@ roadmap's later features were decided first ([Q63–Q72](decisions.md#later-feat
 | M4 | [Control Plane in pull mode](milestones/M4-control-plane-pull.md): Sync and status through Agents, Source Server for Git, built-in Agent, delete push, DR | 7 |
 | M5 | [UI](milestones/M5-ui.md): Add Host, Host cards, badges, offline apps, Source Server settings, masked files, work dir field, "can't decrypt" | 8 |
 | M6 | [Install and import](milestones/M6-install-import.md): install.sh modes, compose files, systemd, Kubernetes, import via Agent, proxy docs, RHEL family (deferred), secrets helper, .deb packages | 9 |
-| M7 | [Hardening](milestones/M7-hardening.md): test pyramid incl. rootless Docker and Podman, e2e, chaos tests, real-world run, docs, RHEL-family matrix (deferred) | 6 |
+| M7 | [Hardening](milestones/M7-hardening.md): test pyramid incl. rootless Docker and Podman, e2e, chaos tests, real-world run, docs, RHEL-family matrix (deferred), Forgejo primary | 7 |
 | M8 | [UI polish, then release](milestones/M8-ui-polish.md): UX, accessibility, performance, visuals, release notes, v0.1.0 + v0.2.0 | 6 |
 
 A ticket is done when its "Done when" holds, proven by tests at every level: unit tests, an end-to-end test in

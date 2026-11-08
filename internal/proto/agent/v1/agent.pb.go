@@ -641,8 +641,11 @@ func (x *File) GetSha256() []byte {
 }
 
 type BlobRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Sha256        [][]byte               `protobuf:"bytes,1,rep,name=sha256,proto3" json:"sha256,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Sha256 [][]byte               `protobuf:"bytes,1,rep,name=sha256,proto3" json:"sha256,omitempty"`
+	// resume each blob from this offset (same index as sha256): what arrived before a reconnect isn't sent again; missing
+	// or 0: from the start
+	Offset        []uint64 `protobuf:"varint,2,rep,packed,name=offset,proto3" json:"offset,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -680,6 +683,13 @@ func (*BlobRequest) Descriptor() ([]byte, []int) {
 func (x *BlobRequest) GetSha256() [][]byte {
 	if x != nil {
 		return x.Sha256
+	}
+	return nil
+}
+
+func (x *BlobRequest) GetOffset() []uint64 {
+	if x != nil {
+		return x.Offset
 	}
 	return nil
 }
@@ -1247,9 +1257,10 @@ const file_omegacd_agent_v1_agent_proto_rawDesc = "" +
 	"\x04File\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x12\n" +
 	"\x04mode\x18\x02 \x01(\rR\x04mode\x12\x16\n" +
-	"\x06sha256\x18\x03 \x01(\fR\x06sha256\"%\n" +
+	"\x06sha256\x18\x03 \x01(\fR\x06sha256\"=\n" +
 	"\vBlobRequest\x12\x16\n" +
-	"\x06sha256\x18\x01 \x03(\fR\x06sha256\"O\n" +
+	"\x06sha256\x18\x01 \x03(\fR\x06sha256\x12\x16\n" +
+	"\x06offset\x18\x02 \x03(\x04R\x06offset\"O\n" +
 	"\tBlobChunk\x12\x16\n" +
 	"\x06sha256\x18\x01 \x01(\fR\x06sha256\x12\x16\n" +
 	"\x06offset\x18\x02 \x01(\x04R\x06offset\x12\x12\n" +
