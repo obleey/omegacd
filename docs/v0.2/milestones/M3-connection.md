@@ -3,13 +3,13 @@
 The Agent ↔ Control Plane link: one WebSocket, enrollment, authentication, versions.
 See [architecture](../architecture.md#the-connection-q16-q20-q22-q27-q28-q41-q42-q51).
 
-**Before M3 starts:** the grilling session on the [open questions](../decisions.md#open-for-the-grilling-before-m3)
-(Sync hooks, order between Child Applications, restart unhealthy, image updater, follow the latest tag, ApplicationSet,
-notifications), with their answers recorded as decisions: they decide what the protocol carries.
+**Before M3 starts:** the roadmap's later features decided where they shape the protocol (done 2026-11-08,
+[Q63–Q72](../decisions.md#later-features-design-check-before-m3-2026-11-08): Sync hooks, order between Child Applications, restart unhealthy, image updater, the
+latest tag, ApplicationSet, notifications), then the design check of M3's own tickets.
 
 ### M3-01 · The WebSocket
 **Status:** todo
-**Depends on:** M1-02, M2 done, the grilling before M3 (decisions.md, open questions answered)
+**Depends on:** M1-02, M2 done, the design check before M3 (Q63–Q72, and M3's tickets)
 
 `/api/agents/v1/connect` on the Control Plane and the Agent's client (Q20, Q51): binary frames carrying the protobuf
 envelope; ping every 30 s; reconnect with exponential backoff and jitter; large payloads in chunks so status and
@@ -23,9 +23,10 @@ never cutting a quiet connection; a test runs through a real reverse proxy conta
 **Status:** todo
 **Depends on:** M3-01
 
-An admin adds a Host by **name** → single-use, short-lived invite stored as a hash (Q22, Q43). The Agent starts with
+An admin adds a Host by **name** → single-use invite, valid one hour, stored as a hash (Q22, Q43, Q73). The Agent starts with
 it, generates an ed25519 signing key (and has its age Host Key, M2-05), registers both public keys; the invite is
-used up. The Host waits for **approval** with the key fingerprint shown in the UI and printed by the Agent (Q28).
+used up. The Host waits for **approval** with the key fingerprint shown in the UI and printed by the Agent (Q28); always, no
+auto-approve (Q74).
 
 **Done when:** a used or expired invite is refused, an unapproved Agent can't receive anything, and the fingerprint
 matches on both sides.
@@ -36,8 +37,8 @@ matches on both sides.
 
 Every connection authenticates by signing a fresh challenge (Q22); no bearer tokens. A second live connection with
 the same key **locks** the Host until an admin acts (Q28). Key rotation (the Agent generates a new key, signs the
-change with the old one) and revocation (delete the Host). Keys owner-only on disk; optional sealing with
-`systemd-creds`/TPM.
+change with the old one) and revocation (delete the Host). Keys owner-only on disk (sealing with `systemd-creds`/TPM
+is after v0.2, Q77). A locked Host shows both connections, with unlock or revoke (Q75).
 
 **Done when:** tests cover a replayed signature (refused), a duplicate connection (locked), rotation without a gap,
 and revocation closing the live connection.
@@ -63,7 +64,7 @@ Optional CIDR list per Host (Q28); the client address comes through `OMEGACD_TRU
 **Status:** todo
 **Depends on:** M3-01, M2-02
 
-On connect and every few minutes the Agent sends per-app checksums; the Control Plane answers with what differs (Q16):
+On connect and every 5 minutes (Q78) the Agent sends per-app checksums; the Control Plane answers with what differs (Q16):
 the safety net for missed signals, and how the outbox gets drained after offline time.
 
 **Done when:** a signal dropped on purpose is healed by the next resync, and outbox entries arrive exactly once.

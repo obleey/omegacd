@@ -6,7 +6,7 @@ https://github.com/obleey/omegacd.
 ## Where things stand
 
 - **`main` is v0.2 in development**: a breaking redesign to pull-based Agents and a separate Source Server. Read
-  [docs/v0.2/README.md](docs/v0.2/README.md) first: architecture, every design decision (Q1–Q62), and the work as
+  [docs/v0.2/README.md](docs/v0.2/README.md) first: architecture, every design decision (Q1–Q78), and the work as
   tickets in [docs/v0.2/milestones/](docs/v0.2/milestones/). Work milestones in order (M1 → M8).
 - **`release-0.1`** is v0.1 (push over SSH/TLS, last tag `v0.1.0-rc.10`): fixes only, no features.
 - Vocabulary: [GLOSSARY.md](GLOSSARY.md) (Host, Agent, Control Plane, Source Server, Application, Sync, …). Use its
@@ -22,8 +22,8 @@ https://github.com/obleey/omegacd.
 
 **Design checks** (grilling), not after every ticket but:
 - **Before each milestone starts**: walk its tickets against decisions.md, architecture.md and ROADMAP.md (later items
-  too: they can change what's built now) and settle what's open, recorded as decisions. Between M2 and M3 that's the
-  [open questions](docs/v0.2/decisions.md#open-for-the-grilling-before-m3).
+  too: they can change what's built now) and settle what's open, recorded as decisions. Between M2 and M3 that was the
+  roadmap's later features, decided as [Q63–Q72](docs/v0.2/decisions.md#later-features-design-check-before-m3-2026-11-08).
 - **When a ticket shows a decision is wrong** (step 5): a focused grilling on that question before going on.
 - **Before building something hard to reverse** (the protocol, a database schema, the install path): a full grilling.
 

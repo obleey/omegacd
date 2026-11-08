@@ -60,6 +60,17 @@ change it here first.
 - **Q51** Reverse proxies everywhere: WebSocket through any proxy, signed challenge works behind TLS termination,
   30 s pings, Source Server mTLS needs TLS passthrough, WebSocket stays as the fallback once gRPC exists, IP
   allowlist via trusted proxies, docs with Caddy/Traefik/nginx examples.
+- **Q73** (2026-11-08, design check before M3) An invite is valid for one hour and once; a new one is a click away.
+- **Q74** Every new Host is approved by the admin comparing the fingerprint; no auto-approve. Only the built-in Agent on
+  the Control Plane's own machine (M4-04) doesn't enroll.
+- **Q75** A Host locked by a second connection with its key shows both connections (address, time) with two actions:
+  unlock (a harmless cause, such as a cloned VM now gone) or revoke and add again (a key that may be stolen). Its
+  Applications keep running meanwhile.
+- **Q76** Key rotation is by hand, one click per Host; automatic rotation is later (roadmap).
+- **Q77** In v0.2 keys are owner-only files (0600); sealing them with systemd-creds or a TPM is after v0.2 (roadmap):
+  it needs testing per platform, and the test servers have no TPM. Q28's "optionally sealed" moves there.
+- **Q78** The Agent sends its checksums (resync) on every connect and every 5 minutes, not configurable in v0.2: the
+  safety net for lost signals, which carry changes at once.
 
 ## Agent
 
@@ -149,27 +160,46 @@ change it here first.
   6 Install and import, 7 Hardening, 8 UI polish (then release).
 - **Q56** ADRs 0003–0006 record the four hard-to-reverse decisions.
 
-## Open: for the grilling before M3
+## Later features (design check before M3, 2026-11-08)
 
-The design review (Q1–Q56) left the roadmap's later items out; these touch v0.2's architecture (what the Control Plane
-tells an Agent, what an Agent does on its own, the Source Server's trust boundary) even if they ship later, so they
-are decided before M3 builds the protocol (found 2026-11-07, starting from Sync hooks):
+The roadmap's items after v0.2, decided where they shape what M3 and M4 build: the protocol, who runs what, where it
+is declared. Their details (syntax, UI, messages) are decided when each is built.
 
-- **Sync hooks** (roadmap, after v0.2): jobs once per Sync, before or after it (backups before an upgrade, `wp core
-  update-db`). Where declared, what blocks a Sync, what a Rollback runs, that a restore or Self-Heal never re-runs a
-  pre-Sync hook, how they travel in the Desired State. Compose's own init pattern (a one-shot with
-  `service_completed_successfully`) already covers migrations on every `up` (M2-11).
-- **Order between Child Applications** (`dependsOn`): children on different Hosts mean the Control Plane waits for one
-  Agent's report before telling another to Sync, offline Hosts included.
-- **Restart unhealthy containers** (Self-Heal option): the Agent must do it offline too, so the setting travels in the
+- **Q63** Only what is hard to change later is decided now. Protobuf fields are additive: none is reserved for these.
+- **Q64** **Sync hooks** run **on the Agent**, so offline too, and are declared in the **Application definition**
+  (API, CLI, UI, App of Apps), not in `compose.yaml`: Compose stays plain Compose, and one Compose folder deployed
+  twice (staging, prod) can have different hooks. A hook names a service of the project and a command, and runs as a
+  one-shot of that service (as `docker compose run --rm SERVICE CMD`: its image, environment, volumes, network), e.g.
+  `preSync: [{service: db, run: [sh, -c, "pg_dump … > /backup/…"]}]`. They travel to the Agent as a field of the
+  Desired State, stored with the Application, so an `omegacd agent rollback` runs the ones it last got. They run **only
+  on a Sync or a Rollback**, never on a restore after a reboot, a Self-Heal or as init services (M2-11, which run on
+  every `up`). Order: pre-sync hooks, init services, the new containers, Healthy, post-sync hooks. A failing pre-sync
+  hook stops the Sync before anything changed; a failing post-sync hook makes it "Succeeded with warnings" (the new
+  version runs); post-sync hooks run only once the Application is Healthy. What a hook does is the Application's
+  developers' responsibility; OmegaCD guarantees when it runs and what a failure does.
+- **Q65** **Rollback reverts code, not data.** Code is what Git holds for the Application: its Compose files, the files
+  beside them, its encrypted secrets, and so the image versions the Compose files name. Data is what the Application
+  wrote while running: named volumes, absolute data folders, a database's content and schema. OmegaCD never reverts
+  data: a Rollback deploys the older Revision, whose migrations change nothing on a newer schema. The docs say so and recommend backward-compatible
+  migrations (expand/contract: the previous version runs on the new schema); the safety net is a pre-sync backup
+  hook, which also runs before a Rollback, so there is a backup from just before every change. Down migrations or
+  restoring a backup are a person's deliberate step (`docker compose run --rm …`); an explicit restore hook is an idea
+  for the roadmap, not automatic.
+- **Q66** **Order between Child Applications** (`dependsOn`): the **Control Plane** orchestrates, the one that sees every
+  Host: a child is synced once those it depends on report Synced and Healthy; one on an offline Host makes its
+  dependents wait, shown ("waiting for prod-1"), like queued Syncs (Q38). The Agents' reports already carry this.
+- **Q67** **Restart unhealthy containers** is Self-Heal **on the Agent**, offline too; its setting is a field of the
   Desired State.
-- **Image updater**: committing a tag bump to Git needs *write* access; the Source Server holds read credentials only
-  today (Q13). Does it get write access, or does something else commit?
-- **Follow the latest Git tag** (`v1.*`, semver ranges): Resolve takes a range, and polling and webhooks must notice new
-  tags: the Source Server's API (M1).
-- **ApplicationSet**: generators over Git directories and Hosts: rendered by the Source Server (like App of Apps
-  definitions, Q46) or expanded by the Control Plane?
-- **Notifications**: from Agent reports, including the outbox after offline time (a failure while offline is notified
-  on reconnect, once).
-- Only the Control Plane, no architecture impact: SSO, RBAC, ApplicationSet's UI, Swarm, self-upgrade (Agent
-  self-update is already "later", Q41).
+- **Q68** **Image updater**: the **Source Server** commits the tag bump, with an optional, separate **write** credential
+  per repository used only for it; read-only stays the default (Q13, Q40). Neither the Control Plane nor an Agent
+  ever gets write access to Git.
+- **Q69** **Follow the latest Git tag**: `targetRevision` may be a semver range (`~1.4`, `v1.*`), resolved by the
+  Source Server to the newest matching tag; a pushed tag refreshes through webhooks or polling. The Source Server's
+  interface keeps a Revision as a string (M1).
+- **Q70** **ApplicationSet**: the **Source Server** expands generators, like App of Apps definitions (Q46); for a Host
+  generator the Control Plane passes the Hosts in with the render. The Source Server never calls the Control Plane.
+- **Q71** **Notifications** come from the **Control Plane**, from the Agents' reports; what failed while a Host was
+  offline arrives in its outbox and is notified once, on reconnect, with the time it happened and that the Host was
+  offline. Agents never notify (no credentials on Hosts).
+- **Q72** SSO, RBAC, ApplicationSet's UI, Swarm and self-upgrade touch only the Control Plane: nothing in M3. Agent
+  self-update stays later (Q41).
