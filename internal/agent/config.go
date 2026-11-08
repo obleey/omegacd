@@ -44,7 +44,14 @@ var settings = []struct{ name, def, help string }{
 
 // Usage documents every setting.
 func Usage(w io.Writer) {
-	fmt.Fprintln(w, "Usage: omegacd agent\n\nRuns the Agent on this Host. Settings are environment variables:")
+	fmt.Fprintln(w, "Usage: omegacd agent [restore --files | rollback [APP [REVISION]]]\n\n"+
+		"Runs the Agent on this Host.\n"+
+		"  restore --files              writes the deployed Applications' files back from the cache, before Docker starts\n"+
+		"  rollback                     lists every Application's cached Revisions, the deployed one marked\n"+
+		"  rollback APP                 lists APP's cached Revisions\n"+
+		"  rollback APP REVISION        deploys a cached Revision of APP again (a unique prefix will do), without the\n"+
+		"                               Control Plane; it shows APP as rolled back on the Host, its Auto-Sync off\n"+
+		"\nSettings are environment variables:")
 	for _, s := range settings {
 		fmt.Fprintf(w, "\n  %s\n      %s\n      default: %s\n", s.name, s.help, cmp.Or(s.def, "(none)"))
 	}

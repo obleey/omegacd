@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 
 	"github.com/obleey/omegacd/internal/domain"
 	"github.com/obleey/omegacd/internal/logging"
@@ -25,9 +26,29 @@ type Agent struct {
 	engine  domain.Engine // on this Host only
 	log     *slog.Logger
 
-	// mu makes Deploy, Remove, a restore and a Self-Heal run one at a time: two at once could bring an app up twice
-	// or back after its Remove. ponytail: one lock for the whole Host, per-app locks if Syncs ever need to overlap.
+	// mu (and lock's file lock, across processes) makes Deploy, Remove, a restore, a Self-Heal and a rollback run one
+	// at a time: two at once could bring an app up twice or back after its Remove, or a Self-Heal of the running
+	// service undo a rollback run by hand. ponytail: one lock for the whole Host, per-app locks if Syncs ever need to
+	// overlap.
 	mu sync.Mutex
+}
+
+// lock takes the Agent's lock: mu within this process, and an flock on agent.lock next to the database, held by
+// every omegacd agent process on the Host (the service, a rollback run by hand). unlock releases both.
+func (ag *Agent) lock() (unlock func(), err error) {
+	ag.mu.Lock()
+	f, err := os.OpenFile(filepath.Join(filepath.Dir(ag.db.path), "agent.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err == nil {
+		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
+	}
+	if err != nil {
+		if f != nil {
+			f.Close()
+		}
+		ag.mu.Unlock()
+		return nil, fmt.Errorf("agent lock: %w", err)
+	}
+	return func() { f.Close(); ag.mu.Unlock() }, nil // closing the file releases the flock
 }
 
 // New is the Agent; log nil logs nothing.
@@ -45,8 +66,11 @@ func application(a App, r Revision) domain.Application {
 // decrypted, and the project is rendered (with the decrypted .env) and brought up. Only then is r recorded as
 // deployed: a failed Deploy leaves the previous Revision as the one to restore.
 func (ag *Agent) Deploy(ctx context.Context, a App, r Revision, fetch func(hash string) ([]byte, error), progress func(domain.ProgressEvent)) error {
-	ag.mu.Lock()
-	defer ag.mu.Unlock()
+	unlock, err := ag.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	ctx = logging.With(ctx, "app", a.Name, "revision", r.Revision)
 	ag.log.InfoContext(ctx, "deploy", "files", len(r.Files))
 	if err := ag.cache.Add(ctx, r, fetch); err != nil {
@@ -56,7 +80,7 @@ func (ag *Agent) Deploy(ctx context.Context, a App, r Revision, fetch func(hash 
 }
 
 // apply writes a cached Revision into a's folder, decrypts it and brings the project up; recreate re-attaches every
-// container's bind mounts (after a restore the files are new). It records r as deployed. Caller holds ag.mu.
+// container's bind mounts (after a restore the files are new). It records r as deployed. Caller holds the lock.
 func (ag *Agent) apply(ctx context.Context, a App, r Revision, recreate bool, progress func(domain.ProgressEvent)) error {
 	if err := ag.work.Write(ctx, a, r); err != nil {
 		return err
@@ -164,8 +188,11 @@ func (ag *Agent) Watch(ctx context.Context, changed func(app string)) error {
 // Remove deletes an Application from the Host: its containers and networks (with volumes only when asked), its
 // folder and its cached Revisions.
 func (ag *Agent) Remove(ctx context.Context, name string, volumes bool) error {
-	ag.mu.Lock()
-	defer ag.mu.Unlock()
+	unlock, err := ag.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	a, err := ag.db.GetApp(ctx, name)
 	if err != nil {
 		return err

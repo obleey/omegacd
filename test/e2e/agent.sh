@@ -52,6 +52,18 @@ out=$(env -i PATH="$PATH" HOME="$T/home" XDG_RUNTIME_DIR="$T/run" "$BIN" agent r
 check "omegacd agent restore --files runs without an engine and exits" '[ $rc -eq 0 ]'
 out=$(env -i PATH="$PATH" HOME="$T/home" "$BIN" agent restore 2>&1); rc=$?
 check "an unknown agent command is refused with its usage" '[ $rc -ne 0 ] && echo "$out" | grep -q "usage: omegacd agent"'
+# offline rollback (M2-08): what the binary reaches without a Control Plane to deploy from (that comes with M4-01); the
+# rollback itself, beside a running Agent with Self-Heal, is in the Agent's integration tests on every engine
+ra() { env -i PATH="$PATH" HOME="$T/home" XDG_RUNTIME_DIR="$T/run" ${DOCKER_HOST:+DOCKER_HOST=$DOCKER_HOST} "$BIN" agent rollback "$@" 2>&1; }
+out=$(ra); rc=$?
+check "omegacd agent rollback lists the cached Revisions: none yet" '[ $rc -eq 0 ] && echo "$out" | grep -q "no Applications deployed on this Host"'
+out=$(ra web); rc=$?
+check "and refuses an Application it doesn't have, naming it" '[ $rc -ne 0 ] && echo "$out" | grep -q "no Application web on this Host"'
+out=$(ra web abc123); rc=$?
+check "also when rolling back" '[ $rc -ne 0 ] && echo "$out" | grep -q "no Application web on this Host"'
+out=$(ra web abc123 extra); rc=$?
+check "too many arguments: its usage" '[ $rc -ne 0 ] && echo "$out" | grep -q "rollback \[APP \[REVISION\]\]"'
+check "--help documents rollback" 'echo "$help" | grep -q "rollback APP REVISION"'
 out=$(agent XDG_RUNTIME_DIR="$T/run"); rc=$?
 check "its Host Key is created owner-only, and kept (M2-05)" '[ -n "$key1" ] && echo "$out" | grep -q "$key1" && [ "$(ls -l "$T/home/.local/share/omegacd-agent/host.key" | cut -c1-10)" = -rw------- ]'
 out=$(agent OMEGACD_AGENT_SECRET_GROUP=no-such-group-xyz XDG_RUNTIME_DIR="$T/run"); rc=$?

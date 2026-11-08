@@ -856,12 +856,14 @@ func (x *StatusReport) GetMessage() string {
 }
 
 type SyncOperationReport struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	App           string                 `protobuf:"bytes,1,opt,name=app,proto3" json:"app,omitempty"`
-	Revision      string                 `protobuf:"bytes,2,opt,name=revision,proto3" json:"revision,omitempty"`
-	Phase         string                 `protobuf:"bytes,3,opt,name=phase,proto3" json:"phase,omitempty"`
-	Message       string                 `protobuf:"bytes,4,opt,name=message,proto3" json:"message,omitempty"`
-	Trigger       string                 `protobuf:"bytes,5,opt,name=trigger,proto3" json:"trigger,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	App      string                 `protobuf:"bytes,1,opt,name=app,proto3" json:"app,omitempty"`
+	Revision string                 `protobuf:"bytes,2,opt,name=revision,proto3" json:"revision,omitempty"`
+	Phase    string                 `protobuf:"bytes,3,opt,name=phase,proto3" json:"phase,omitempty"`
+	Message  string                 `protobuf:"bytes,4,opt,name=message,proto3" json:"message,omitempty"`
+	// what started it on the Agent: "restore" (after a reboot), "self-heal", or "rollback" (run on the Host, Q25: the
+	// Control Plane shows the Application rolled back on the Host and turns its Auto-Sync off)
+	Trigger       string `protobuf:"bytes,5,opt,name=trigger,proto3" json:"trigger,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }

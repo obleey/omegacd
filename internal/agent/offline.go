@@ -114,8 +114,11 @@ func (ag *Agent) Restore(ctx context.Context) error {
 }
 
 func (ag *Agent) restore(ctx context.Context, a App) error {
-	ag.mu.Lock()
-	defer ag.mu.Unlock()
+	unlock, err := ag.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	ctx = logging.With(ctx, "app", a.Name, "revision", a.Revision)
 	r, err := ag.cache.Revision(ctx, a.Name, a.Revision)
 	if err != nil {
@@ -221,8 +224,11 @@ func (ag *Agent) report(ctx context.Context, a App, r Revision, trigger string, 
 // selfHeal re-applies an Application's deployed Revision from the cache when it has Self-Heal on and its containers
 // aren't running and healthy or have drifted.
 func (ag *Agent) selfHeal(ctx context.Context, name string) error {
-	ag.mu.Lock()
-	defer ag.mu.Unlock()
+	unlock, err := ag.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	ctx = logging.With(ctx, "app", name)
 	a, r, err := ag.deployed(ctx, name)
 	if err != nil || !a.SelfHeal {

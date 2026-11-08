@@ -5,6 +5,7 @@ package agent
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/moby/moby/client"
 
 	"github.com/obleey/omegacd/internal/domain"
+	"github.com/obleey/omegacd/internal/engine"
 	"github.com/obleey/omegacd/internal/logging"
 )
 
@@ -166,5 +168,58 @@ func TestAgentSelfHealsOffline(t *testing.T) {
 		if !strings.Contains(log.String(), want) {
 			t.Errorf("no %q in the Agent's log:\n%s", want, log.String())
 		}
+	}
+}
+
+// Q25: a rollback run on the Host goes back to a cached Revision with no Control Plane anywhere, from its own process
+// (omegacd agent rollback: another Agent on the same state dir) while the Agent service runs with Self-Heal on. The
+// service doesn't undo it, and the outbox says it was a rollback.
+func TestAgentRollsBackOffline(t *testing.T) {
+	ag, src, recipient := testAgent(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	name := appName(t)
+	a := App{Name: name, SelfHeal: true}
+	t.Cleanup(func() { ag.Remove(context.Background(), name, true) })
+	for _, rev := range []string{"r1-aaaa", "r2-bbbb"} {
+		files := map[string]string{"compose.yaml": strings.Replace(compose, "%s", "", 1), "conf.txt": rev,
+			".sops.env": encrypted(t, "SECRET=x\n", ".sops.env", recipient)}
+		if err := ag.Deploy(ctx, a, src.revision(name, rev, files), src.fetch, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	go ag.Run(ctx) // the service
+	time.Sleep(2 * time.Second)
+
+	state := filepath.Dir(ag.db.path)
+	db := openDB(t, ag.db.path)
+	defer db.Close()
+	cache, err := OpenCache(db, filepath.Join(state, "cache"), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, _ := HostKey(state)
+	eng, err := engine.New(engine.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	byHand := New(db, cache, NewWorkDir(ag.work.Root, db, cache, nil), NewSecrets(-1, SOPS{HostKey: key}), eng, nil)
+	if err := byHand.Rollback(ctx, name, "r1"); err != nil { // a prefix will do
+		t.Fatal(err)
+	}
+
+	conf := func() string { b, _ := os.ReadFile(filepath.Join(ag.work.Dir(a), "conf.txt")); return string(b) }
+	deployed := func() string { x, _ := ag.db.GetApp(ctx, name); return x.Revision }
+	if conf() != "r1-aaaa" || deployed() != "r1-aaaa" {
+		t.Fatalf("after the rollback: files of %q, deployed %q", conf(), deployed())
+	}
+	time.Sleep(selfHealDelay + 3*time.Second) // the service saw the containers change: it must not heal back to r2
+	live, _ := ag.Status(ctx, name)
+	if conf() != "r1-aaaa" || deployed() != "r1-aaaa" || !running(live) {
+		t.Fatalf("the service undid the rollback: files of %q, deployed %q, %s", conf(), deployed(), live.Health)
+	}
+	if reports(t, ag, triggerRollback) != 1 {
+		t.Fatal("the rollback isn't in the outbox")
 	}
 }

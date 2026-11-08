@@ -19,6 +19,11 @@ driving the Agent.
 Port `test/e2e` (mounts, compose views, secrets, adopt, README walkthrough, webhook) to a Control Plane with an Agent,
 and add: enrollment, offline Host, queued Sync, offline rollback, built-in Agent.
 
+Open: CI could run this whole gate on the Hetzner test servers too (the API token as a GitHub secret; up, test, down
+per run), so Debian is tested in CI and pull requests from people who don't run the gate are covered: today GitHub's
+runners are Ubuntu only and Debian is tested by the local gate before every push. Decide when outside contributions
+start (a Debian container on the runners was rejected: no systemd or Docker of its own there, only part of the suite).
+
 **Done when:** `make e2e` is green.
 
 ### M7-03 · Chaos tests for no data loss

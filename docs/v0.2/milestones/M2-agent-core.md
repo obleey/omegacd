@@ -89,7 +89,7 @@ when rootful Docker restarted a container first (its placeholders), a stopped co
 Self-Heal is on, and a work dir on disk is warned about at start (one in RAM isn't).
 
 ### M2-08 · Offline rollback on the Host
-**Status:** todo
+**Status:** done (2026-11-08, PR #96)
 **Depends on:** M2-07
 
 `omegacd agent rollback APP REVISION` to any cached Revision (Q25), listing cached Revisions without arguments;

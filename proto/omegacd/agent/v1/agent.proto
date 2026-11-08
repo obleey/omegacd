@@ -88,6 +88,8 @@ message SyncOperationReport {
   string revision = 2;
   string phase = 3;
   string message = 4;
+  // what started it on the Agent: "restore" (after a reboot), "self-heal", or "rollback" (run on the Host, Q25: the
+  // Control Plane shows the Application rolled back on the Host and turns its Auto-Sync off)
   string trigger = 5;
 }
 
