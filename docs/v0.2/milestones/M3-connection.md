@@ -8,7 +8,7 @@ See [architecture](../architecture.md#the-connection-q16-q20-q22-q27-q28-q41-q42
 latest tag, ApplicationSet, notifications), then the design check of M3's own tickets.
 
 ### M3-01 · The WebSocket
-**Status:** todo
+**Status:** done (2026-11-08, PR #100)
 **Depends on:** M1-02, M2 done, the design check before M3 (Q63–Q72, and M3's tickets)
 
 `/api/agents/v1/connect` on the Control Plane and the Agent's client (Q20, Q51): binary frames carrying the protobuf

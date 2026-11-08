@@ -78,6 +78,7 @@ require (
 	github.com/clipperhouse/uax29/v2 v2.2.0 // indirect
 	github.com/cloudflare/circl v1.6.4 // indirect
 	github.com/cncf/xds/go v0.0.0-20260202195803-dba9d589def2 // indirect
+	github.com/coder/websocket v1.8.14 // indirect
 	github.com/containerd/console v1.0.5 // indirect
 	github.com/containerd/containerd/api v1.12.0 // indirect
 	github.com/containerd/containerd/v2 v2.4.2 // indirect

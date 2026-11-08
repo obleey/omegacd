@@ -65,6 +65,9 @@ message File {
 
 message BlobRequest {
   repeated bytes sha256 = 1;
+  // resume each blob from this offset (same index as sha256): what arrived before a reconnect isn't sent again; missing
+  // or 0: from the start
+  repeated uint64 offset = 2;
 }
 
 message BlobChunk {
