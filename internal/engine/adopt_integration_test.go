@@ -17,7 +17,7 @@ import (
 // without recreating containers whose configuration didn't change: import and disaster recovery rely on it (Q30).
 func TestAdoptKeepsContainersOfAnyCompose(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skip("no docker CLI")
+		skipUnlessRequired(t, "no docker CLI")
 	}
 	ctx := context.Background()
 	e := newTestEngine(t)

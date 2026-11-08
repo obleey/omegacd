@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"syscall"
@@ -274,6 +275,10 @@ func runAgent(log *slog.Logger) error {
 	work := agent.NewWorkDir(cfg.WorkDir, db, cache)
 	if filesOnly {
 		return agent.New(db, cache, work, secrets, nil).RestoreFiles(ctx)
+	}
+	if runtime.GOOS == "darwin" {
+		log.Warn("macOS is for development only (Q61): Docker Desktop and OrbStack share folders ignoring owners and " +
+			"modes, so any container can read decrypted secrets, and there is no systemd; run Agents on Linux")
 	}
 	if agent.WorkDirOnDisk(cfg.WorkDir) {
 		log.Warn("the work dir is not in RAM: decrypted secrets written there stay on disk, also across reboots; "+

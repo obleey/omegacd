@@ -43,10 +43,16 @@ The plan: [docs/v0.2](docs/v0.2/README.md) (architecture, decisions, 8 milestone
 - **Rootless** Docker, docker-group users and rootless **Podman** (tested); Agent as a container or a systemd service
 - Built-in Agent in a full install; install script with full and agent modes; Kubernetes; reverse proxies everywhere
 - UI: Add Host flow, Host cards, engine badges everywhere, offline and queued states; then a polish milestone
+- **Hosts**: Debian 13 and Ubuntu 24.04 on amd64 and arm64, every push tested on all four with the same tests (`make test-linux`, real servers); macOS for development only
+- **Logging everywhere**: error, warn, info and debug for every decision the code makes, one Sync followable across Control Plane, Source Server and Agent, json or text; never a secret in a log
+- **Secrets helpers**: `omegacd secrets init` writes `.sops.yaml` for a Host, and a clear "this Host can't decrypt it" when a file was encrypted for other keys; built per secret source, ready for KeePass, 1Password, Ansible Vault, OpenBao and others later
 
 ## After v0.2 — trustworthy for real sites (to be re-planned)
 
-- **Sync hooks** — jobs before/after a Sync: `artisan migrate`, `cache:clear`, `wp core update-db`, backups before upgrades
+- **Ubuntu 26.04** — the current LTS (newer Docker, Podman, systemd) as a supported Host, tested like 24.04: two more test servers
+- **RHEL-family Hosts** — RHEL, Rocky, Alma, Fedora with SELinux enforcing, Podman or Docker CE: install, systemd units with SELinux contexts, `.rpm`, and the test matrix in every push. The test machines for it (Rocky, Fedora, a Rocky VM with SELinux enforcing) were built and removed again, what they taught is in M7-06; v0.2's tickets M6-07 and M7-06 move here
+
+- **Sync hooks** — jobs once per Sync, before/after it: backups before upgrades, `cache:clear`, `wp core update-db` (migrations on every start already work with Compose's own one-shot services, tested in v0.2's M2-11). How they fit the Agent and the protocol is decided before v0.2's M3 ([open questions](docs/v0.2/decisions.md#open-for-the-grilling-before-m3))
 - **Order between Child Applications** — `dependsOn: [caddy]` in a definition: the App of Apps syncs children in that order (e.g. the app that creates a shared network before those that join it), instead of a failed first attempt and a retry
 - **Notifications** — Slack, Discord, email, generic webhook on Sync failed / Degraded / recovered
 - **Restart unhealthy containers** — Self-Heal option `restartUnhealthy`: restart a container its own healthcheck reports unhealthy for a while (Docker's restart policies only react to exits), with backoff and a limit, each restart in History and notified

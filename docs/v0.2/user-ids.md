@@ -70,6 +70,22 @@ sources as root-owned empty directories: the system unit restores the files befo
 (`omegacd agent restore --files`), a containerised Agent clears those placeholders through Docker. A work dir on disk
 keeps its files, and the decrypted secrets in it, across reboots (the Agent warns).
 
+## Encrypting secrets for a Host
+
+The Agent keeps its Host Key's private half; encrypt with its public half (`age1…`: printed at the Agent's start,
+`omegacd host key show HOST`, the Host's card), plus **your own** recipient, or nobody but that Host can open the
+file again:
+
+```yaml
+# .sops.yaml
+creation_rules:
+  - path_regex: ^nas/.*
+    age: age1nashostkey...,age1yourownkey...
+```
+
+`sops encrypt nas/web/.env > nas/web/.sops.env`, commit the `.sops.env`; after a Host changed, `sops updatekeys`.
+`omegacd secrets init` (M6-08) will write this for you.
+
 ## Choosing
 
 - **Rootless** (Docker or Podman): safest; the Agent is one ordinary user and owns everything it writes.

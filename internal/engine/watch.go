@@ -64,7 +64,9 @@ func (e *Engine) Watch(ctx context.Context, changed func(host, project string)) 
 
 // watchHost streams one Host's events, reconnecting with backoff. It logs only when the Host goes down or comes back.
 func (e *Engine) watchHost(ctx context.Context, host string, changed func(host, project string)) {
-	filters := make(client.Filters).Add("type", "container").Add("label", api.ProjectLabel)
+	// only by type: Podman 4.9 (Ubuntu 24.04's) matches no event to a label filter without a value, so the project
+	// label is checked on each event below
+	filters := make(client.Filters).Add("type", "container")
 	backoff, down := time.Second, false
 	for ctx.Err() == nil {
 		err := e.streamEvents(ctx, host, filters, changed, func() {

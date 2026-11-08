@@ -3,9 +3,13 @@
 The Agent ↔ Control Plane link: one WebSocket, enrollment, authentication, versions.
 See [architecture](../architecture.md#the-connection-q16-q20-q22-q27-q28-q41-q42-q51).
 
+**Before M3 starts:** the grilling session on the [open questions](../decisions.md#open-for-the-grilling-before-m3)
+(Sync hooks, order between Child Applications, restart unhealthy, image updater, follow the latest tag, ApplicationSet,
+notifications), with their answers recorded as decisions: they decide what the protocol carries.
+
 ### M3-01 · The WebSocket
 **Status:** todo
-**Depends on:** M1-02
+**Depends on:** M1-02, M2 done, the grilling before M3 (decisions.md, open questions answered)
 
 `/api/agents/v1/connect` on the Control Plane and the Agent's client (Q20, Q51): binary frames carrying the protobuf
 envelope; ping every 30 s; reconnect with exponential backoff and jitter; large payloads in chunks so status and

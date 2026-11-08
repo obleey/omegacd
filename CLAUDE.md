@@ -6,7 +6,7 @@ https://github.com/obleey/omegacd.
 ## Where things stand
 
 - **`main` is v0.2 in development**: a breaking redesign to pull-based Agents and a separate Source Server. Read
-  [docs/v0.2/README.md](docs/v0.2/README.md) first: architecture, every design decision (Q1–Q59), and the work as
+  [docs/v0.2/README.md](docs/v0.2/README.md) first: architecture, every design decision (Q1–Q62), and the work as
   tickets in [docs/v0.2/milestones/](docs/v0.2/milestones/). Work milestones in order (M1 → M8).
 - **`release-0.1`** is v0.1 (push over SSH/TLS, last tag `v0.1.0-rc.10`): fixes only, no features.
 - Vocabulary: [GLOSSARY.md](GLOSSARY.md) (Host, Agent, Control Plane, Source Server, Application, Sync, …). Use its
@@ -19,6 +19,13 @@ https://github.com/obleey/omegacd.
 3. Its "Done when" is the acceptance test: meet it, with tests at every level (see **Testing** below).
 4. Open a PR to `main`; CI must be green. The user reviews and merges unless they say otherwise.
 5. If a decision in docs/v0.2 turns out wrong, stop and ask; then update decisions.md and architecture.md first.
+
+**Design checks** (grilling), not after every ticket but:
+- **Before each milestone starts**: walk its tickets against decisions.md, architecture.md and ROADMAP.md (later items
+  too: they can change what's built now) and settle what's open, recorded as decisions. Between M2 and M3 that's the
+  [open questions](docs/v0.2/decisions.md#open-for-the-grilling-before-m3).
+- **When a ticket shows a decision is wrong** (step 5): a focused grilling on that question before going on.
+- **Before building something hard to reverse** (the protocol, a database schema, the install path): a full grilling.
 
 ## Rules
 
@@ -42,6 +49,11 @@ https://github.com/obleey/omegacd.
   the last change, the **whole** suite green on Linux (`make test-linux`; macOS hides permission bugs):
   `go test -race ./...`, `make test-integration`, `make test-engines` for Agent changes, and `make e2e` (start Forgejo first:
   `docker compose -f test/e2e/forgejo.yaml up -d`, so the webhook test runs instead of skipping). The PR says what ran.
+  **Two loops:** a target that fails is stopped at its first failure (the others go on); fix it by rerunning only the
+  failing part on that target (`test/linux.sh --only "CMD" TARGET`); then, before the push, the whole suite on all
+  targets again.
+  Within `make test-all` a test whose environment is missing (dind, sops, the docker CLI) fails instead of skipping
+  (`skipUnlessRequired`): only true platform skips stay (macOS, the matrix's other-user engines).
 
 ## Commands
 
@@ -52,7 +64,7 @@ make test               # unit tests (go test ./...); cd web && npm run check &&
 make test-integration   # against the local Docker engine (docker:dind for remote Hosts; ~6 min)
 make test-engines       # the Agent against rootful Docker, rootless Docker and rootless Podman (test/engines.sh)
 make test-all           # the whole suite: vet, unit -race, integration, test-engines, e2e with Forgejo
-make test-linux         # test-all on real Linux, arm64 and amd64 in parallel (OrbStack machines, test/linux.sh)
+make test-linux         # test-all on Ubuntu 24.04 and Debian 13, amd64 and arm64: Hetzner servers (test/linux.sh, ../omegacd-testinfra)
 make e2e                # end-to-end: throwaway OmegaCDs driven through the CLI (needs age-keygen, sops)
 make run                # run locally with data in ./data (OMEGACD_WORKDIR=… to move the work dir)
 make stop               # stop it (only the listener)

@@ -27,7 +27,9 @@ change it here first.
 - **Q11/Q19** The Agent caches ciphertext only, decrypts in memory, and writes plaintext only to the app's folder in
   its configured work dir (RAM or disk); in-place file writes, not wipe-and-copy.
 - **Q29** Secret sources plug in on the Agent; their credentials stay in the Agent's configuration; v0.2 ships
-  SOPS+age. 1Password, LastPass, Vault, OpenBao, Ansible Vault come later as paid features.
+  SOPS+age. KeePass, 1Password, LastPass, Vault, OpenBao, Ansible Vault come later as paid features. Everything
+  around secrets is per source, not SOPS-shaped: the Agent's `SecretSource`, the repository helper (M6-08), the
+  "can't decrypt" report (M5-08).
 
 ## Source Server
 
@@ -86,6 +88,32 @@ change it here first.
   unit ordered `Before=docker.service`); a containerised Agent, which starts after Docker, removes those placeholders
   through Docker with a short-lived container of its own image (local, so offline is fine; empty directories only, never
   files) and then writes the files. Rootless engines need neither. Anything left over is reported with the fix.
+- **Q60** (2026-11-07; **deferred to after v0.2** on 2026-11-08, see Q61) RHEL-family Hosts (RHEL, Rocky, Alma 9+,
+  Fedora), with their defaults: SELinux **enforcing**, Podman (rootless) or Docker CE, dnf, firewalld. Containers read bind-mounted
+  files there only with the `container_file_t` label: the Agent adds the **`z`** option (shared label: services of a
+  project may mount the same file; `Z`, private to one container, would break that) to every bind mount whose source
+  is inside the app's own folder, as Docker, Podman and Red Hat document. It never relabels anything else: absolute
+  paths (the user's data) keep their labels, `:z` there is the user's choice; relabelling system paths can break the
+  Host. `z` is a no-op without SELinux, so it's the same on every Host. Rejected: a `semanage fcontext` rule at install
+  (for fixed package paths, fragile for folders the Agent creates and moves), `chcon` (undone by a relabel). Also
+  planned then: `label=disable` on the Agent's helper containers (reclaim, import) and on containers that mount the
+  Docker socket. A Rocky 9 VM with SELinux enforcing proved all of it during M2; with the narrowed scope (Q61) none of
+  it is in v0.2 (code nobody can test on Debian/Ubuntu doesn't stay): it comes back with the RHEL family, M7-06 keeps
+  what the VM taught.
+- **Q61** (2026-11-07, narrowed 2026-11-08) Workloads run on Linux: in v0.2 Agents (Hosts) are supported on
+  **Debian/Ubuntu, amd64 and arm64**, tested before every push on Debian 13 and Ubuntu 24.04, both architectures (real servers), with
+  the same tests (`make test-linux`). The RHEL family (Q60) follows
+  after v0.2 (M6-07, M7-06 deferred): an emulated Rocky machine's Docker hung twice in a day and the gate grew past an
+  hour, for Hosts no one runs yet; the SELinux handling and the test machines go with it. macOS is for development only: the CLI, a local Control Plane, trying an
+  Agent; an Agent there warns at start (file sharing ignores owners and modes, so containers can read decrypted
+  secrets; no systemd).
+- **Q62** (2026-11-07) Logging everywhere, done early (M2-10) so it helps find bugs while v0.2 is built: every persona
+  (Control Plane, Source Server, Agent, CLI) logs through `log/slog` with levels **error** (something failed, with
+  what to do), **warn**, **info** (what happened: a Sync, a restore, a connection) and **debug** (the why: decisions
+  like "kept container, same config hash and image", inputs, timings). `OMEGACD_LOG_LEVEL` (default info) and
+  `OMEGACD_LOG_FORMAT` (text, json). Every entry carries `component` and, where they apply, `app`, `host`, `revision`,
+  `op` (the Sync Operation), so one Sync can be followed across Control Plane, Source Server and Agent. **Secrets are
+  never logged**, at any level (a test injects known secrets and scans every log line).
 - **Q47** `import` goes only through the Agent (`--host NAME`); no SSH path.
 - **Q34/Q52** Talks to any Docker-compatible socket; Podman rootless is in v0.2's test matrix; engine badges everywhere.
 
@@ -116,3 +144,28 @@ change it here first.
 - **Q55** Milestones in order: 1 Foundations, 2 Agent core, 3 Connection, 4 Control Plane in pull mode, 5 UI,
   6 Install and import, 7 Hardening, 8 UI polish (then release).
 - **Q56** ADRs 0003–0006 record the four hard-to-reverse decisions.
+
+## Open: for the grilling before M3
+
+The design review (Q1–Q56) left the roadmap's later items out; these touch v0.2's architecture (what the Control Plane
+tells an Agent, what an Agent does on its own, the Source Server's trust boundary) even if they ship later, so they
+are decided before M3 builds the protocol (found 2026-11-07, starting from Sync hooks):
+
+- **Sync hooks** (roadmap, after v0.2): jobs once per Sync, before or after it (backups before an upgrade, `wp core
+  update-db`). Where declared, what blocks a Sync, what a Rollback runs, that a restore or Self-Heal never re-runs a
+  pre-Sync hook, how they travel in the Desired State. Compose's own init pattern (a one-shot with
+  `service_completed_successfully`) already covers migrations on every `up` (M2-11).
+- **Order between Child Applications** (`dependsOn`): children on different Hosts mean the Control Plane waits for one
+  Agent's report before telling another to Sync, offline Hosts included.
+- **Restart unhealthy containers** (Self-Heal option): the Agent must do it offline too, so the setting travels in the
+  Desired State.
+- **Image updater**: committing a tag bump to Git needs *write* access; the Source Server holds read credentials only
+  today (Q13). Does it get write access, or does something else commit?
+- **Follow the latest Git tag** (`v1.*`, semver ranges): Resolve takes a range, and polling and webhooks must notice new
+  tags: the Source Server's API (M1).
+- **ApplicationSet**: generators over Git directories and Hosts: rendered by the Source Server (like App of Apps
+  definitions, Q46) or expanded by the Control Plane?
+- **Notifications**: from Agent reports, including the outbox after offline time (a failure while offline is notified
+  on reconnect, once).
+- Only the Control Plane, no architecture impact: SSO, RBAC, ApplicationSet's UI, Swarm, self-upgrade (Agent
+  self-update is already "later", Q41).

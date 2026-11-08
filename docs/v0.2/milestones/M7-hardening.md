@@ -44,8 +44,28 @@ Your VPS and a Host behind NAT, installed with `install.sh`, a real stack import
 
 README rewritten for v0.2 (concepts, install modes, Agents, Source Server, proxies, security model, upgrade note:
 reinstall from v0.1), TESTING.md, ROADMAP.md, SECURITY.md (trust boundaries), ADRs final, screenshots. The Agent's
+support table (Q61: Agents on Debian/Ubuntu, amd64 and arm64; the RHEL family after v0.2; macOS for development only), the
 work dir in RAM vs on disk (where decrypted secrets live, what a reboot does, Q19/Q59) and the file modes of decrypted
 secrets per engine (Q58) get their own section, from the draft [user-ids.md](../user-ids.md): rootful vs rootless,
 who owns which files, data folders and `chown`, the "user 1000" convention, choosing an engine.
 
 **Done when:** a new user installs from the README alone (the v0.1 checklist's test 6, redone).
+
+### M7-06 · RHEL-family test matrix
+**Status:** deferred: after v0.2 (Q61, 2026-11-08; ROADMAP)
+**Depends on:** M6-07
+
+`test/linux.sh` gets Rocky and Fedora machines next to Ubuntu, arm64 and amd64, with the same tests and engines, and a
+Rocky VM with SELinux enforcing (OrbStack's kernel has no SELinux policy; a Lima VM locally, KVM in CI). A first
+version was built during M2 and removed when v0.2 narrowed to Debian/Ubuntu (kept only on the maintainer's local branch
+`archive/rhel-test-machines`). What it taught:
+- Docker CE comes from Docker's dnf repository; `age` isn't packaged (not even in EPEL), so it and `sops` come from
+  their releases, and checks for them go by path: sudo's `secure_path` on RHEL lacks `/usr/local/bin`.
+- SELinux: Docker needs `"selinux-enabled": true`; the VM's own rootless Podman confines containers by default. Tests
+  that mount a user's own folder need `:z` like a real stack would; containers that mount the Docker socket need
+  `label=disable` (never relabel the socket).
+- Emulated amd64 (Rosetta) Rocky had its Docker daemon hang twice in a day: prefer native machines or CI runners for
+  amd64.
+
+**Done when:** `make test-linux` is green on Ubuntu, Rocky and Fedora on both architectures, and the SELinux
+enforcing suite is green on a RHEL-family VM.

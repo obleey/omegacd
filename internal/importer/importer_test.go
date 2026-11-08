@@ -93,8 +93,8 @@ secrets:
 
 // fake key files, assembled at run time so no key block is ever committed (gitleaks)
 var (
-	pemKey = "-----BEGIN " + "PRIVATE KEY-----\nk3y\n-----END " + "PRIVATE KEY-----\n"
-	sshKey = "-----BEGIN " + "OPENSSH PRIVATE KEY-----\nk3y\n"
+	pemKey = "-----BEGIN " + "PRIVATE KEY-----\nk3y-material\n-----END " + "PRIVATE KEY-----\n"
+	sshKey = "-----BEGIN " + "OPENSSH PRIVATE KEY-----\nk3y-material\n"
 )
 
 func shopHost() *fakeHost {
@@ -185,7 +185,7 @@ func TestImport(t *testing.T) {
 			return nil
 		}
 		b, _ := os.ReadFile(p)
-		for _, secret := range []string{"hunter2", "s3ss10n", "pa55word", "tok-from-dotenv", "k3y", "c2VjcmV0"} {
+		for _, secret := range []string{"hunter2", "s3ss10n", "pa55word", "tok-from-dotenv", "k3y-material", "c2VjcmV0"} { // "-": never in an age recipient or base64, where a short secret could turn up by chance
 			if strings.Contains(string(b), secret) {
 				t.Errorf("%s holds the secret %q in plain text", p, secret)
 			}
