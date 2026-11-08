@@ -244,10 +244,13 @@ func runSourceServer(log *slog.Logger) error {
 
 // runAgent runs the Agent on this Host (Q3, Q10) until it is stopped. "omegacd agent restore --files" only writes
 // the deployed Applications' files back from the cache, without any engine: before Docker starts at boot (Q59).
+// "omegacd agent rollback [APP [REVISION]]" lists the cached Revisions, or deploys one again from the cache (Q25).
 func runAgent(log *slog.Logger) error {
-	filesOnly := len(os.Args) > 2 && os.Args[2] == "restore"
-	if filesOnly && (len(os.Args) != 4 || os.Args[3] != "--files") || !filesOnly && len(os.Args) > 2 {
-		return fmt.Errorf("usage: omegacd agent [restore --files] (omegacd agent --help: its settings)")
+	args := os.Args[2:]
+	filesOnly := len(args) == 2 && args[0] == "restore" && args[1] == "--files"
+	rollback := len(args) >= 1 && len(args) <= 3 && args[0] == "rollback"
+	if len(args) > 0 && !filesOnly && !rollback {
+		return fmt.Errorf("usage: omegacd agent [restore --files | rollback [APP [REVISION]]] (omegacd agent --help: its settings)")
 	}
 	cfg, err := agent.LoadConfig(os.Getenv, os.Geteuid())
 	if err != nil {
@@ -262,7 +265,7 @@ func runAgent(log *slog.Logger) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if !filesOnly {
+	if !filesOnly && !(rollback && len(args) < 3) { // listing touches no container
 		if err := agent.CheckPathParity(ctx, cfg.WorkDir); err != nil {
 			return err
 		}
@@ -284,6 +287,21 @@ func runAgent(log *slog.Logger) error {
 	work := agent.NewWorkDir(cfg.WorkDir, db, cache, log.With("component", "agent"))
 	if filesOnly {
 		return agent.New(db, cache, work, secrets, nil, log.With("component", "agent")).RestoreFiles(ctx)
+	}
+	if rollback && len(args) < 3 {
+		return listCached(ctx, agent.New(db, cache, work, secrets, nil, log.With("component", "agent")), db, args[1:])
+	}
+	if rollback {
+		eng, err := engine.New(engine.Config{Log: log.With("component", "engine")})
+		if err != nil {
+			return err
+		}
+		defer eng.Close()
+		if err := agent.New(db, cache, work, secrets, eng, log.With("component", "agent")).Rollback(ctx, args[1], args[2]); err != nil {
+			return err
+		}
+		fmt.Printf("%s rolled back to %s on this Host; the Control Plane shows it rolled back, its Auto-Sync off\n", args[1], args[2])
+		return nil
 	}
 	if runtime.GOOS == "darwin" {
 		log.Warn("macOS is for development only (Q61): Docker Desktop and OrbStack share folders ignoring owners and " +
@@ -331,4 +349,36 @@ func pollInterval(v string) (time.Duration, error) {
 		return 0, fmt.Errorf("OMEGACD_POLL_INTERVAL must be a duration like 3m, or 0 to turn polling off, not %q", v)
 	}
 	return d, nil
+}
+
+// listCached prints the cached Revisions of the Applications named (all when none), newest first, the deployed one
+// marked: what omegacd agent rollback can go back to.
+func listCached(ctx context.Context, ag *agent.Agent, db *agent.DB, names []string) error {
+	if len(names) == 0 {
+		apps, err := db.ListApps(ctx)
+		if err != nil {
+			return err
+		}
+		for _, a := range apps {
+			names = append(names, a.Name)
+		}
+		if len(names) == 0 {
+			fmt.Println("no Applications deployed on this Host")
+		}
+	}
+	for _, name := range names {
+		revs, deployed, err := ag.Cached(ctx, name)
+		if err != nil {
+			return err
+		}
+		fmt.Println(name)
+		for _, r := range revs {
+			mark := ""
+			if r.Revision == deployed {
+				mark = "  (deployed)"
+			}
+			fmt.Printf("  %s  %s%s\n", r.Revision, r.AddedAt.Local().Format("2006-01-02 15:04"), mark)
+		}
+	}
+	return nil
 }

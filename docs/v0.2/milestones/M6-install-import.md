@@ -11,6 +11,10 @@ See [architecture](../architecture.md#install-q10-q21-q26-q33-q35-q51).
 (Control Plane URL + invite; container or systemd; rootless detected) (Q33). Unattended via environment variables,
 as today; Kubernetes context always confirmed.
 
+On Debian it installs with recommended packages, as apt does by default: a minimal image without them (Hetzner's
+turns them off) lacks the docker command (`docker-cli`), Podman's networking (`passt`) and its DNS (`aardvark-dns`),
+found by the test servers; the docs say so.
+
 **Done when:** both modes are tested on a clean machine, rootful and rootless.
 
 ### M6-02 · Compose files

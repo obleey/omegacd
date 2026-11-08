@@ -54,7 +54,10 @@ ALTER TABLE apps ADD COLUMN dir TEXT NOT NULL DEFAULT '';
 `}
 
 // DB is the Agent's own small database in its state dir (Q48).
-type DB struct{ db *sql.DB }
+type DB struct {
+	db   *sql.DB
+	path string
+}
 
 // App is an Application on this Host, with what the Agent needs to keep it running offline.
 type App struct {
@@ -81,7 +84,7 @@ func OpenDB(path string) (*DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	d := &DB{db: db}
+	d := &DB{db: db, path: path}
 	if err := d.migrate(); err != nil {
 		db.Close()
 		return nil, err
