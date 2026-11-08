@@ -98,6 +98,34 @@ recorded in the outbox for the Control Plane to show as rolled back on the Host 
 **Done when:** works with the Control Plane unreachable, refuses uncached Revisions with the list of cached ones,
 and the outbox entry is produced.
 
+### M2-10 · Logging everywhere
+**Status:** todo
+**Depends on:** M2-07
+
+Q62, done before M2-08 so every later ticket has it: one logger set up per persona from `OMEGACD_LOG_LEVEL` and
+`OMEGACD_LOG_FORMAT`, passed down (no globals), with `component` and the context attributes (`app`, `host`,
+`revision`, `op`). Debug entries for every decision the code makes on its own: the Agent's restore, Self-Heal, claim,
+reclaim and kept-container decisions, the engine's Compose options, the controller's reconcile and Sync Policy, the
+Source Server's renders and cache. Error entries say what to do. `--help` and the README document the settings.
+
+**Done when:** every package that acts logs its decisions at debug; a Sync can be followed by its `op` across Control
+Plane and Agent in the e2e logs; json output parses line by line; and a test runs the e2e suite at debug with known
+secrets (SOPS values, credentials, tokens) and finds none of them in any log.
+
+### M2-11 · Init and one-shot services (migrations)
+**Status:** todo
+**Depends on:** M2-10
+
+Compose's own init pattern works through the Agent and is tested, not just assumed: a one-shot service (`migrate`)
+that another depends on with `condition: service_completed_successfully`. A one-shot that exited 0 counts as Healthy
+(no Self-Heal loop); Compose runs it again on every `up`, so on each Sync and on a restore after a reboot: migrations
+must be idempotent, which the README's "Database migrations" recipe says (Laravel, Django, Rails: they are). What
+runs once per Sync instead (a backup before an upgrade) is Sync hooks, decided before M3.
+
+**Done when:** on every engine and every Linux target: the order holds (the app starts after the migration); a
+failing migration fails the Sync with its reason and leaves the running app untouched; a restore re-runs it; Self-Heal
+leaves a completed one-shot alone; plus an e2e with a real migration step.
+
 ### M2-09 · Per-Application work dir
 **Status:** todo
 **Depends on:** M2-04

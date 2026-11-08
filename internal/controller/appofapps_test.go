@@ -145,7 +145,9 @@ func TestChildIsOwnedByGit(t *testing.T) {
 	r.g.define("aaaaaaaa", "name: web\nrepoURL: x\nhost: local\n")
 	r.mustSync(t, "root")
 	r.childrenSynced(t, "web")
-	r.g.files = nil      // the child's path holds a compose.yaml
+	r.g.mu.Lock()
+	r.g.files = nil // the child's path holds a compose.yaml; background reconciles read it
+	r.g.mu.Unlock()
 	r.mustSync(t, "web") // manual Sync of a child is allowed
 
 	web, _ := r.st.GetApp(ctx, "web")
@@ -347,7 +349,14 @@ func TestAppOfAppsWithoutLocalHost(t *testing.T) {
 	if err != nil || web.Parent != "root" || web.Host != "prod" {
 		t.Fatalf("child: %+v %v", web, err)
 	}
-	if v, err := r.c.GetApp(ctx, "root"); err != nil || v.Host != "" || !slices.Equal(v.Hosts, []string{"edge", "prod"}) {
+	// the parent's Hosts follow its children's reconcile, a moment after the Sync Operation ends
+	var v domain.AppView
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if v, err = r.c.GetApp(ctx, "root"); err == nil && slices.Equal(v.Hosts, []string{"edge", "prod"}) {
+			break
+		}
+	}
+	if err != nil || v.Host != "" || !slices.Equal(v.Hosts, []string{"edge", "prod"}) {
 		t.Fatalf("parent shows host %q, hosts %v: %v", v.Host, v.Hosts, err)
 	}
 	// it runs on no Host: not listed among a Host's Applications

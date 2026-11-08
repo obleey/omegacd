@@ -66,3 +66,16 @@ An optional **Work dir** field in the Application form and detail (Q57): empty s
 placeholder; a path the Host's Agent doesn't allow shows the Agent's message and the setting to change.
 
 **Done when:** UI tests cover empty, allowed and refused, and an e2e creates an Application with its own work dir.
+
+### M5-08 · "This Host can't decrypt it"
+**Status:** todo
+**Depends on:** M2-05, M4-02
+
+When a secret source on the Agent can't produce a secret, the Sync fails and the Application shows why, per source:
+for SOPS, the file was encrypted for other keys than this Host's (the error names the file, this Host's public key
+and the fix: add the key to `.sops.yaml` and run `sops updatekeys`, or `omegacd secrets init`, M6-08); for the
+sources that come later (KeePass, 1Password, Ansible Vault, OpenBao, …, Q29) their own reasons (no access, an entry
+that doesn't exist), reported through the same field so the UI needs nothing new per source.
+
+**Done when:** a file encrypted for another Host shows that reason with the fix in the UI and the CLI, the message
+never contains a secret, and a test with the dummy second source (M2-05) shows its reason the same way.

@@ -136,7 +136,7 @@ func TestImportLocal(t *testing.T) {
 func TestImportOverSSH(t *testing.T) {
 	id, err := docker("run", "-d", "--privileged", "-e", "DOCKER_TLS_CERTDIR=", "-p", "127.0.0.1::22", "docker:29-dind")
 	if err != nil {
-		t.Skipf("cannot start docker:dind: %v: %s", err, id)
+		skipUnlessRequired(t, "cannot start docker:dind: %v: %s", err, id)
 	}
 	id = id[strings.LastIndex(id, "\n")+1:]
 	t.Cleanup(func() { docker("rm", "-f", "-v", id) })
@@ -145,7 +145,7 @@ func TestImportOverSSH(t *testing.T) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Skip("dind did not come up")
+			skipUnlessRequired(t, "dind did not come up")
 		}
 	}
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
@@ -192,4 +192,14 @@ cat /etc/ssh/ssh_host_ed25519_key.pub`
 	if b, _ := os.ReadFile(filepath.Join(repo, "platform", "apps.yaml")); !strings.Contains(string(b), "host: vps") || !strings.Contains(string(b), "adopt: true") {
 		t.Errorf("definition:\n%s", b)
 	}
+}
+
+// skipUnlessRequired skips a test whose environment is missing (a tool, a dind that won't start), except in the whole
+// suite: make test-all sets OMEGACD_TEST_ALL, and there a missing environment fails, so nothing passes by not running.
+func skipUnlessRequired(t *testing.T, format string, args ...any) {
+	t.Helper()
+	if os.Getenv("OMEGACD_TEST_ALL") != "" {
+		t.Fatalf("make test-all requires this test to run: "+format, args...)
+	}
+	t.Skipf(format, args...)
 }

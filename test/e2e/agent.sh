@@ -37,6 +37,11 @@ check "and its Revision cache (M2-03)" '[ -d "$T/home/.local/share/omegacd-agent
 out=$(agent XDG_RUNTIME_DIR="$T/run"); rc=$?
 check "and opened again on the next start" '[ $rc -eq 0 ] && echo "$out" | grep -q "apps=0"'
 check "the container engine is detected and reported (M2-06)" 'echo "$out" | grep -q "msg=\"container engine\" engine=docker version=[0-9]"'
+if [ "$(uname)" = Darwin ]; then
+  check "on macOS it warns: development only (Q61)" 'echo "$out" | grep -q "macOS is for development only"'
+else
+  check "on Linux no macOS warning" '! echo "$out" | grep -q "macOS is for development only"'
+fi
 # the warning follows the filesystem: /tmp is a tmpfs on some Linux systems, disk on others and on macOS
 case $(stat -f -c %T "$T/run/omegacd" 2>/dev/null || echo disk) in
 tmpfs | ramfs) check "a work dir in RAM isn't warned about (M2-07)" '! echo "$out" | grep -q "the work dir is not in RAM"' ;;

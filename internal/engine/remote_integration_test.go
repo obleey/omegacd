@@ -41,7 +41,7 @@ func startDind(t *testing.T) dind {
 	id, err := dockerCmd("run", "-d", "--privileged", "-e", "DOCKER_TLS_CERTDIR=/certs",
 		"-p", "127.0.0.1::2376", "-p", "127.0.0.1::22", "docker:29-dind")
 	if err != nil {
-		t.Skipf("cannot start docker:dind: %v: %s", err, id)
+		skipUnlessRequired(t, "cannot start docker:dind: %v: %s", err, id)
 	}
 	id = id[strings.LastIndex(id, "\n")+1:] // skip pull progress on the first run
 	t.Cleanup(func() { dockerCmd("rm", "-f", "-v", id) })
@@ -71,7 +71,7 @@ func startDind(t *testing.T) dind {
 			}
 		}
 		if time.Now().After(deadline) {
-			t.Skipf("dind did not come up: %v: %s", err, out)
+			skipUnlessRequired(t, "dind did not come up: %v: %s", err, out)
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
@@ -136,7 +136,7 @@ func newRemoteEngine(t *testing.T, d dind) *Engine {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Skipf("dind engine not reachable: %s", st.Error)
+			skipUnlessRequired(t, "dind engine not reachable: %s", st.Error)
 		}
 		time.Sleep(time.Second)
 	}
@@ -149,7 +149,7 @@ func TestRemoteHost(t *testing.T) {
 	t.Run("tls", func(t *testing.T) { remoteLifecycle(t, e, d, d.tls) })
 	t.Run("ssh", func(t *testing.T) {
 		if d.ssh.Name == "" {
-			t.Skip("sshd could not be set up in dind")
+			skipUnlessRequired(t, "sshd could not be set up in dind")
 		}
 		remoteLifecycle(t, e, d, d.ssh)
 	})
@@ -448,4 +448,14 @@ watch:
 	if _, err := inDind("test", "-e", remote); err == nil {
 		t.Error("remote app dir survived Remove")
 	}
+}
+
+// skipUnlessRequired skips a test whose environment is missing (a tool, a dind that won't start), except in the whole
+// suite: make test-all sets OMEGACD_TEST_ALL, and there a missing environment fails, so nothing passes by not running.
+func skipUnlessRequired(t *testing.T, format string, args ...any) {
+	t.Helper()
+	if os.Getenv("OMEGACD_TEST_ALL") != "" {
+		t.Fatalf("make test-all requires this test to run: "+format, args...)
+	}
+	t.Skipf(format, args...)
 }

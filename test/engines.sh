@@ -17,12 +17,21 @@ up)
   fi
   # existing ones are reused, and started if a reboot stopped them
   docker start omegacd-it-rootless omegacd-it-podman >/dev/null 2>&1 || true
-  docker inspect omegacd-it-rootless >/dev/null 2>&1 ||
+  docker container inspect omegacd-it-rootless >/dev/null 2>&1 ||
     docker run -d --name omegacd-it-rootless --privileged -p 127.0.0.1:23750:2375 -e DOCKER_TLS_CERTDIR= \
       -v "$root:$root" docker:29-dind-rootless >/dev/null
-  docker inspect omegacd-it-podman >/dev/null 2>&1 ||
-    docker run -d --name omegacd-it-podman --privileged --user podman -p 127.0.0.1:23751:8888 \
-      -v "$root:$root" quay.io/podman/stable:v5 podman system service --time=0 tcp:0.0.0.0:8888 >/dev/null
+  # slirp4netns, not pasta, on every machine: in a container started by Docker, Debian 13's AppArmor profile for pasta
+  # refuses Podman's signals to it (they carry Docker's runtime label, runc). Ubuntu's own Podman uses slirp4netns too;
+  # pasta is tested natively, by Debian's own Podman (host-podman). Built once (the image cache survives cleanups)
+  docker image inspect omegacd-test-podman >/dev/null 2>&1 || docker build -q -t omegacd-test-podman - >/dev/null <<'EOF'
+FROM quay.io/podman/stable:v5
+RUN dnf -y -q install slirp4netns && mkdir -p /etc/containers/containers.conf.d && \
+  printf '[network]\ndefault_rootless_network_cmd = "slirp4netns"\n' > /etc/containers/containers.conf.d/slirp4netns.conf
+USER podman
+EOF
+  docker container inspect omegacd-it-podman >/dev/null 2>&1 ||
+    docker run -d --name omegacd-it-podman --privileged -p 127.0.0.1:23751:8888 \
+      -v "$root:$root" omegacd-test-podman podman system service --time=0 tcp:0.0.0.0:8888 >/dev/null
   for port in 23750 23751; do
     for i in $(seq 120); do DOCKER_HOST=tcp://127.0.0.1:$port docker version >/dev/null 2>&1 && break; sleep 1; done
     DOCKER_HOST=tcp://127.0.0.1:$port docker version >/dev/null || {

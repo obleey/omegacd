@@ -20,7 +20,7 @@ import (
 
 func TestDecryptDir(t *testing.T) {
 	if _, err := exec.LookPath("sops"); err != nil {
-		t.Skip("sops not on PATH")
+		skipUnlessRequired(t, "sops not on PATH")
 	}
 	id, err := age.GenerateX25519Identity()
 	if err != nil {
@@ -147,7 +147,7 @@ func newID(t *testing.T) *age.X25519Identity {
 
 func TestDecryptDirUsesOnlyGivenIdentities(t *testing.T) {
 	if _, err := exec.LookPath("sops"); err != nil {
-		t.Skip("sops not on PATH")
+		skipUnlessRequired(t, "sops not on PATH")
 	}
 	// a key in the environment must never be used
 	stray := newID(t)
@@ -267,7 +267,7 @@ func TestEncrypt(t *testing.T) {
 // The sops CLI opens what Encrypt writes.
 func TestEncryptReadableBySopsCLI(t *testing.T) {
 	if _, err := exec.LookPath("sops"); err != nil {
-		t.Skip("sops not on PATH")
+		skipUnlessRequired(t, "sops not on PATH")
 	}
 	id := newID(t)
 	enc, err := Encrypt([]byte("DB_PASSWORD=s3cret\n"), "db.sops.env", []string{id.Recipient().String()})
@@ -282,4 +282,14 @@ func TestEncryptReadableBySopsCLI(t *testing.T) {
 	if err != nil || string(out) != "DB_PASSWORD=s3cret\n" {
 		t.Fatalf("sops --decrypt: %v\n%s", err, out)
 	}
+}
+
+// skipUnlessRequired skips a test whose environment is missing (a tool, a dind that won't start), except in the whole
+// suite: make test-all sets OMEGACD_TEST_ALL, and there a missing environment fails, so nothing passes by not running.
+func skipUnlessRequired(t *testing.T, format string, args ...any) {
+	t.Helper()
+	if os.Getenv("OMEGACD_TEST_ALL") != "" {
+		t.Fatalf("make test-all requires this test to run: "+format, args...)
+	}
+	t.Skipf(format, args...)
 }

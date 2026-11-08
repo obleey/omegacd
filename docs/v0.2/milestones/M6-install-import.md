@@ -60,3 +60,32 @@ Examples for Caddy, Traefik and nginx in front of the Control Plane (WebSocket u
 and the TLS-passthrough note for a proxy in front of a standalone Source Server (Q51).
 
 **Done when:** each example is tested in the e2e suite or by hand and recorded in TESTING.md.
+
+### M6-07 · RHEL-family Hosts
+**Status:** deferred: after v0.2 (Q61, 2026-11-08; ROADMAP)
+**Depends on:** M6-01, M6-03
+
+Install and run on RHEL, Rocky, Alma (9 and 10) and Fedora (Q60): `install.sh` with dnf, Podman (rootless, the
+default there) or Docker CE, the systemd units (M6-03) with correct SELinux contexts, a firewalld note for the Control
+Plane's port. SELinux stays **enforcing**: the Agent adds `:z` to app-folder bind mounts, its helpers and the
+containerised Agent (the Docker socket) run with `label=disable` (Q60, M7-06's notes), and the units get their
+contexts, so the restore unit (Q59) works under SELinux too.
+
+**Done when:** on an enforcing RHEL-family VM, an Application with bind-mounted files and a decrypted secret deploys,
+survives a reboot offline and self-heals, with no SELinux denial in the audit log (`ausearch -m avc`), for rootless
+Podman and for Docker CE.
+
+### M6-08 · Secrets helper for a repository
+**Status:** todo
+**Depends on:** M3-02, M2-05
+
+`omegacd secrets init --host NAME [--path PATH] [--source sops]` prepares a repository for a Host's secrets, so
+nobody copies `age1…` strings by hand: for SOPS it writes or updates `.sops.yaml` with a rule for the path, the
+Host's public key (from the Control Plane) and the user's own recipient (from `omegacd keygen`, the one that keeps
+files editable and recoverable when a Host is lost), and `omegacd secrets rekey` runs `sops updatekeys` after a Host
+changed. Built per secret source (Q29): later sources (KeePass, 1Password, Ansible Vault, OpenBao, …) bring their own
+`init` (a reference format, not keys); `import` uses the same code.
+
+**Done when:** a repository prepared with it deploys a SOPS secret to that Host; rekeying after a Host Key rotation
+keeps it deployable and editable with the user's key; tested end to end; and the helper's interface has a second
+(dummy) source.
