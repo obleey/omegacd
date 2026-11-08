@@ -1366,6 +1366,15 @@ func normalize(a *domain.Application) error {
 			return fmt.Errorf("%w: compose file %q must be relative to the path", domain.ErrInvalid, f)
 		}
 	}
+	// its own work dir (Q57): absolute; the Agent decides whether it may write there. An App of Apps has no folder
+	if a.WorkDir = strings.TrimSpace(a.WorkDir); a.Kind == domain.KindApps {
+		a.WorkDir = ""
+	} else if a.WorkDir != "" {
+		if !filepath.IsAbs(a.WorkDir) || strings.Contains(a.WorkDir, "..") || filepath.Clean(a.WorkDir) == "/" {
+			return fmt.Errorf("%w: workDir %q must be an absolute path, not /", domain.ErrInvalid, a.WorkDir)
+		}
+		a.WorkDir = filepath.Clean(a.WorkDir)
+	}
 	return nil
 }
 
@@ -1607,6 +1616,7 @@ func changedFields(old, a domain.Application) []string {
 		{"selfHeal", old.SelfHeal != a.SelfHeal},
 		{"prune", old.Prune != a.Prune},
 		{"pruneVolumes", old.PruneVolumes != a.PruneVolumes},
+		{"workDir", old.WorkDir != a.WorkDir},
 	} {
 		if c.changed {
 			f = append(f, c.name)

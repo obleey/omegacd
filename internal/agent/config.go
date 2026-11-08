@@ -13,13 +13,14 @@ import (
 )
 
 type Config struct {
-	ControlPlane   string // URL; empty while the Agent works on its own
-	Invite         string // single-use, for the first connection
-	StateDir       string // signing key, Host Key, database, cache
-	WorkDir        string // the Applications' folders
-	DockerHost     string // empty: the engine's default socket
-	CacheRevisions int    // per Application, besides the deployed one
-	SecretGroup    int    // gid decrypted files belong to (mode 0640); -1: none, they are 0600
+	ControlPlane   string   // URL; empty while the Agent works on its own
+	Invite         string   // single-use, for the first connection
+	StateDir       string   // signing key, Host Key, database, cache
+	WorkDir        string   // the Applications' folders
+	WorkDirAllow   []string // further roots an Application may name as its work dir (Q57)
+	DockerHost     string   // empty: the engine's default socket
+	CacheRevisions int      // per Application, besides the deployed one
+	SecretGroup    int      // gid decrypted files belong to (mode 0640); -1: none, they are 0600
 	AllowRoot      bool
 }
 
@@ -32,6 +33,8 @@ var settings = []struct{ name, def, help string }{
 	{"OMEGACD_AGENT_WORKDIR", "$XDG_RUNTIME_DIR/omegacd, else /run/omegacd",
 		"where Applications' files are written, decrypted secrets included: in RAM (tmpfs, the default) they never touch a " +
 			"disk and are restored from the cache after a reboot; on a disk path they stay there across reboots (the Agent warns)"},
+	{"OMEGACD_AGENT_WORKDIR_ALLOW", "", "comma-separated absolute paths an Application may name as its own work dir " +
+		"(workDir:), besides the work dir above; the Agent refuses any other, so Git can't aim it at /etc"},
 	{"DOCKER_HOST", "the engine's default socket", "Docker or Podman socket, e.g. unix:///run/user/1000/docker.sock for rootless Docker"},
 	{"OMEGACD_AGENT_CACHE_REVISIONS", "10", "Revisions kept per Application for offline restore and rollback"},
 	{"OMEGACD_AGENT_SECRET_GROUP", "", "a group (name or gid) decrypted files belong to, mode 0640, for containers that read them " +
@@ -103,6 +106,15 @@ func LoadConfig(getenv func(string) string, euid int) (Config, error) {
 	}
 	// cleaned, so they compare with paths Docker reports (path parity) whatever the spelling: /opt/services/, //opt/…
 	c.StateDir, c.WorkDir = filepath.Clean(c.StateDir), filepath.Clean(c.WorkDir)
+	for _, r := range strings.Split(getenv("OMEGACD_AGENT_WORKDIR_ALLOW"), ",") {
+		if r = strings.TrimSpace(r); r == "" {
+			continue
+		}
+		if !filepath.IsAbs(r) || filepath.Clean(r) == "/" {
+			return c, fmt.Errorf("OMEGACD_AGENT_WORKDIR_ALLOW: %q must be an absolute path, not /", r)
+		}
+		c.WorkDirAllow = append(c.WorkDirAllow, filepath.Clean(r))
+	}
 
 	c.CacheRevisions = 10
 	if v := strings.TrimSpace(getenv("OMEGACD_AGENT_CACHE_REVISIONS")); v != "" {

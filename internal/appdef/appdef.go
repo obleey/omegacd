@@ -32,6 +32,7 @@ type def struct {
 	Prune          bool     `yaml:"prune"`
 	PruneVolumes   bool     `yaml:"pruneVolumes,omitempty"`
 	Adopt          bool     `yaml:"adopt,omitempty"`
+	WorkDir        string   `yaml:"workDir,omitempty"` // its own (Q57), like host: nothing comes from the App of Apps
 }
 
 // Marshal writes a's settings as a definition; Adopt and runtime state are left out.
@@ -41,7 +42,7 @@ func Marshal(a domain.Application) ([]byte, error) { return marshal(a, false) }
 func MarshalAdopting(a domain.Application) ([]byte, error) { return marshal(a, true) }
 
 func marshal(a domain.Application, adopt bool) ([]byte, error) {
-	d := def{a.Name, a.Kind, a.RepoURL, a.Path, a.TargetRevision, a.ComposeFiles, a.Profiles, a.Host, a.AutoSync, a.SelfHeal, a.Prune, a.PruneVolumes, adopt}
+	d := def{a.Name, a.Kind, a.RepoURL, a.Path, a.TargetRevision, a.ComposeFiles, a.Profiles, a.Host, a.AutoSync, a.SelfHeal, a.Prune, a.PruneVolumes, adopt, a.WorkDir}
 	if d.Kind == domain.KindCompose {
 		d.Kind = ""
 	}
@@ -116,6 +117,7 @@ func Decode(source string, b []byte) ([]domain.Application, error) {
 			Name: d.Name, Kind: d.Kind, RepoURL: d.RepoURL, Path: d.Path, TargetRevision: d.TargetRevision,
 			ComposeFiles: d.ComposeFiles, Profiles: d.Profiles, Host: d.Host,
 			AutoSync: d.AutoSync, SelfHeal: d.SelfHeal, Prune: d.Prune, PruneVolumes: d.PruneVolumes, Adopt: d.Adopt,
+			WorkDir: d.WorkDir,
 		})
 	}
 	return apps, nil

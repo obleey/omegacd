@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -145,5 +146,77 @@ func TestComplete(t *testing.T) {
 	}
 	if complete(t.TempDir(), r) {
 		t.Fatal("an empty folder counts as complete")
+	}
+}
+
+// Q57: an Application in a second allowed root deploys there (as a Child too); one outside every allowed root is
+// refused before a file is written; moving between roots leaves no folder behind, and never removes a root.
+func TestWriteInItsOwnWorkDir(t *testing.T) {
+	w, src, _ := newWorkDir(t)
+	other := filepath.Join(t.TempDir(), "srv")
+	w.Allow = []string{other}
+	files := map[string]string{"compose.yaml": "services: {}\n"}
+
+	web := App{Name: "web", WorkDir: filepath.Join(other, "apps")} // under an allowed root; made when missing
+	if err := w.deploy(t, src, web, "r1", files); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(other, "apps", "web", "compose.yaml")); err != nil {
+		t.Fatalf("not in its own work dir: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(w.Root, "web")); err == nil {
+		t.Fatal("also in the Host's work dir")
+	}
+	kid := App{Name: "api", Parent: "root", WorkDir: other}
+	if err := w.deploy(t, src, kid, "r1", files); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(other, "root", "api", "compose.yaml")); err != nil {
+		t.Fatalf("a Child in its own work dir: %v", err)
+	}
+
+	for _, bad := range []string{"/etc", filepath.Join(t.TempDir(), "elsewhere"), "relative/dir", other + "/../escape"} {
+		evil := App{Name: "evil", WorkDir: bad}
+		err := w.deploy(t, src, evil, "r1", files)
+		if !errors.Is(err, domain.ErrInvalid) {
+			t.Fatalf("work dir %q: %v", bad, err)
+		}
+		if _, serr := os.Stat(w.Dir(evil)); serr == nil {
+			t.Fatalf("work dir %q: a folder was written", bad)
+		}
+	}
+	if err := w.deploy(t, src, App{Name: "evil", WorkDir: "/etc"}, "r1", files); err == nil ||
+		!strings.Contains(err.Error(), "OMEGACD_AGENT_WORKDIR_ALLOW: "+other) {
+		t.Fatalf("the refusal names the setting and its roots: %v", err)
+	}
+
+	web.WorkDir = "" // back to the Host's work dir
+	if err := w.deploy(t, src, web, "r2", files); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(other, "apps", "web")); err == nil {
+		t.Fatal("moving between roots left the old folder behind")
+	}
+	if _, err := os.Stat(filepath.Join(other, "apps")); err != nil {
+		t.Fatal("moving removed the root it named")
+	}
+	if _, err := os.Stat(filepath.Join(w.Root, "web", "compose.yaml")); err != nil {
+		t.Fatalf("not moved: %v", err)
+	}
+}
+
+// A root the Agent's user can't create fails with the folder and the command that makes it once.
+func TestWorkDirItCannotCreate(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can create any folder")
+	}
+	w, src, _ := newWorkDir(t)
+	locked := filepath.Join(t.TempDir(), "locked")
+	os.Mkdir(locked, 0o500)
+	t.Cleanup(func() { os.Chmod(locked, 0o700) })
+	w.Allow = []string{locked}
+	err := w.deploy(t, src, App{Name: "web", WorkDir: filepath.Join(locked, "apps")}, "r1", map[string]string{"compose.yaml": "services: {}\n"})
+	if err == nil || !strings.Contains(err.Error(), "sudo install -d -o ") || !strings.Contains(err.Error(), filepath.Join(locked, "apps")) {
+		t.Fatalf("got %v", err)
 	}
 }

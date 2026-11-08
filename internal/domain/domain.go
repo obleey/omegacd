@@ -56,12 +56,13 @@ type Application struct {
 	AutoSync       bool      `json:"autoSync"`
 	SelfHeal       bool      `json:"selfHeal"`
 	Prune          bool      `json:"prune"`
-	PruneVolumes   bool      `json:"pruneVolumes"`     // with Prune, also delete undeclared project volumes; false whenever Prune is
-	Adopt          bool      `json:"adopt"`            // only honoured on create
-	RolledBack     bool      `json:"rolledBack"`       // Auto-Sync was turned off by a Rollback; cleared when Auto-Sync is re-enabled
-	Kind           string    `json:"kind"`             // KindCompose (default) or KindApps (an App of Apps)
-	Parent         string    `json:"parent,omitempty"` // the App of Apps that owns this Child Application
-	NotInGit       bool      `json:"notInGit"`         // a Child Application its parent no longer declares (kept because Prune is off)
+	PruneVolumes   bool      `json:"pruneVolumes"`      // with Prune, also delete undeclared project volumes; false whenever Prune is
+	Adopt          bool      `json:"adopt"`             // only honoured on create
+	RolledBack     bool      `json:"rolledBack"`        // Auto-Sync was turned off by a Rollback; cleared when Auto-Sync is re-enabled
+	Kind           string    `json:"kind"`              // KindCompose (default) or KindApps (an App of Apps)
+	Parent         string    `json:"parent,omitempty"`  // the App of Apps that owns this Child Application
+	NotInGit       bool      `json:"notInGit"`          // a Child Application its parent no longer declares (kept because Prune is off)
+	WorkDir        string    `json:"workDir,omitempty"` // absolute root for its folder on the Host (Q57); "": the Host's work dir
 	CreatedAt      time.Time `json:"createdAt"`
 	// Dirs is the folders (HostDir) Syncs wrote the Application's files to and that may still hold them: a Sync may
 	// write into them again, and deletes the ones it moved away from. Only Store.SetAppDirs changes it.

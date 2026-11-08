@@ -470,10 +470,30 @@ func TestCreateValidation(t *testing.T) {
 		{Name: "ok"},
 		{Name: "ok", RepoURL: "x", Path: "../etc"},
 		{Name: "ok", RepoURL: "x", ComposeFiles: []string{"/abs.yaml"}},
+		{Name: "ok", RepoURL: "x", WorkDir: "srv/apps"},
+		{Name: "ok", RepoURL: "x", WorkDir: "/"},
+		{Name: "ok", RepoURL: "x", WorkDir: "/srv/../etc"},
 	} {
 		if _, err := r.c.CreateApp(t.Context(), a); !errors.Is(err, domain.ErrInvalid) {
 			t.Errorf("%+v: want ErrInvalid, got %v", a, err)
 		}
+	}
+}
+
+// Q57: an Application's own work dir is kept clean and absolute; an App of Apps has no folder, so none.
+func TestWorkDirIsNormalized(t *testing.T) {
+	r := newRig(t)
+	ctx := t.Context()
+	v, err := r.c.CreateApp(ctx, domain.Application{Name: "web", RepoURL: "x", WorkDir: " /srv/apps/ "})
+	if err != nil || v.WorkDir != "/srv/apps" {
+		t.Fatalf("got %q, %v", v.WorkDir, err)
+	}
+	if got, _ := r.st.GetApp(ctx, "web"); got.WorkDir != "/srv/apps" {
+		t.Fatalf("stored %q", got.WorkDir)
+	}
+	v, err = r.c.CreateApp(ctx, domain.Application{Name: "root", RepoURL: "x", Kind: domain.KindApps, WorkDir: "/srv/apps"})
+	if err != nil || v.WorkDir != "" {
+		t.Fatalf("an App of Apps: %q, %v", v.WorkDir, err)
 	}
 }
 
@@ -806,7 +826,9 @@ func TestHosts(t *testing.T) {
 
 func TestResourceDetail(t *testing.T) {
 	r := newRig(t)
+	r.st.mu.Lock() // background Syncs read and write the fake store too
 	r.st.apps["web"] = app("web")
+	r.st.mu.Unlock()
 	dir := r.c.appDir(app("web"))
 	outside := filepath.Join(r.c.cfg.WorkDir, "outside.txt")
 	for name, content := range map[string]string{
@@ -1257,7 +1279,9 @@ func TestHostKeysDecryptSyncs(t *testing.T) {
 func TestKeylessHostBlocksSyncs(t *testing.T) {
 	r := newRig(t)
 	ctx := t.Context()
+	r.st.mu.Lock()                                                           // background Syncs read and write the fake store too
 	r.st.hosts["prod"] = domain.Host{Name: "prod", URL: "ssh://deploy@prod"} // e.g. created before Host Keys existed
+	r.st.mu.Unlock()
 	a := app("web")
 	a.Host, a.AutoSync = "prod", true
 	want := `Host "prod" has no Host Key — generate or import one in Settings → Hosts`
@@ -1394,7 +1418,9 @@ func TestStartupDropsLeftoverSopsCopies(t *testing.T) {
 	r := newRig(t)
 	a := app("web")
 	a.ComposeFiles = []string{"compose.yaml"}
+	r.st.mu.Lock() // background Syncs read and write the fake store too
 	r.st.apps["web"] = a
+	r.st.mu.Unlock()
 	dir := r.c.appDir(app("web"))
 	os.MkdirAll(filepath.Join(dir, "sub"), 0o750)
 	for name, content := range map[string]string{

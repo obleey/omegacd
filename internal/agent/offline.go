@@ -138,7 +138,7 @@ func (ag *Agent) restore(ctx context.Context, a App) error {
 	if missing && inContainer() {
 		// a containerised Agent starts after Docker: clear the placeholders through Docker, with its own image
 		ag.log.DebugContext(ctx, "reclaim the work dir from Docker's placeholders", "dir", dir)
-		if err := reclaim(ctx, ag.work.Root, dir, ""); err != nil {
+		if err := reclaim(ctx, ag.work.root(a), dir, ""); err != nil {
 			return err
 		}
 	}
