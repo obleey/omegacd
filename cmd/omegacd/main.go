@@ -147,7 +147,8 @@ func run(log *slog.Logger) error {
 		SelfID:       selfID,
 		Log:          log.With("component", "controller"),
 	})
-	hub.Reported, hub.Resynced, hub.Removed, hub.Progress = ctl.AgentReported, ctl.Resynced, ctl.AgentRemoved, ctl.AgentProgress
+	hub.Reported, hub.Resynced, hub.Removed, hub.Progress, hub.Status = ctl.AgentReported, ctl.Resynced, ctl.AgentRemoved,
+		ctl.AgentProgress, ctl.AgentStatusChanged
 
 	if err := api.EnsureAdmin(ctx, st, os.Getenv("OMEGACD_ADMIN_PASSWORD"), log.With("component", "api")); err != nil {
 		return err

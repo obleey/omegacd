@@ -62,8 +62,8 @@ gitc init -q -b main && gitc add -A && gitc commit -qm v1
 
 ctr() { docker ps -q --filter label=com.docker.compose.project=$APP; }
 "$BIN" app create $APP --repo "$REPO" --path web --host edge > "$T/create.out" 2>&1
-out=$("$BIN" app sync $APP --wait --no-health --timeout 3m 2>&1); rc=$?
-check "a Sync through the Agent succeeds" '[ $rc -eq 0 ]'
+out=$("$BIN" app sync $APP --wait --timeout 3m 2>&1); rc=$?
+check "a Sync through the Agent succeeds, --wait waiting for the Health its Agent reports (M4-02)" '[ $rc -eq 0 ] && echo "$out" | grep -q Healthy'
 check "its container runs on the Agent's Host, the secret decrypted by the Agent" \
   '[ -n "$(ctr)" ] && docker logs $(ctr) 2>&1 | grep -q "secret=only-the-agent-reads-this" && docker logs $(ctr) 2>&1 | grep -q "conf v1"'
 check "the Agent's work dir has the app's files" '[ -f "$T/edge/run/omegacd/$APP/conf.txt" ]'
@@ -74,13 +74,22 @@ OP=$("$BIN" app history $APP -o json | python3 -c 'import json,sys; print(json.l
 check "one Sync followed by its op from the Control Plane's log into the Agent's (Q62)" \
   'grep "op=$OP " "$T/server.log" | grep -q "sync started" && grep "op=$OP " "$T/agent.log" | grep -q "msg=deploy"'
 check "Synced" '"$BIN" app get $APP -o json | python3 -c "import json,sys; v=json.load(sys.stdin); assert v[\"syncStatus\"]==\"Synced\", v[\"syncStatus\"]"'
+# M4-02: the views come from the Agent's reports
+api() { curl -sf -H "Authorization: Bearer $OMEGACD_TOKEN" "$API/apps/$APP/$1"; }
+check "Live State and resources as the Agent reported them, the decrypted .env marked secret" 'api resources | python3 -c "
+import json,sys; v=json.load(sys.stdin); c=v[\"containers\"]; r={(x[\"kind\"],x[\"name\"]):x for x in v[\"resources\"]}
+assert len(c)==1 and c[0][\"state\"]==\"running\" and r[(\"env_file\",\".env\")].get(\"secret\"), v"'
+check "a file's content from the rendered Revision; the secret's stays on the Host" \
+  'api "resource?kind=bind&name=conf.txt" | grep -q "conf v1" && ! api "resource?kind=env_file&name=.env" | grep -q only-the-agent-reads-this'
+check "app logs through the Agent" '"$BIN" app logs $APP --tail 20 2>&1 | grep -q "secret=only-the-agent-reads-this"'
+check "host list: the Host connected, its engine's version" '"$BIN" host list -o json | python3 -c "
+import json,sys; h=[h for h in json.load(sys.stdin) if h[\"name\"]==\"edge\"][0]; assert h[\"status\"][\"connected\"] and h[\"status\"][\"serverVersion\"], h[\"status\"]"'
 
 echo "conf v2" > "$REPO/web/conf.txt"; gitc commit -qam v2
 "$BIN" app refresh $APP >/dev/null 2>&1
-"$BIN" app sync $APP --wait --no-health --timeout 3m >/dev/null 2>&1
+"$BIN" app sync $APP --wait --timeout 3m >/dev/null 2>&1
 check "a new Revision deploys" 'sleep 2; docker logs $(ctr) 2>&1 | grep -q "conf v2"'
-# Health comes from the Agent with M4-02: until then --no-health
-out=$("$BIN" app rollback $APP "$OP" --wait --no-health --timeout 3m 2>&1); rc=$?
+out=$("$BIN" app rollback $APP "$OP" --wait --timeout 3m 2>&1); rc=$?
 check "a rollback through the Agent" '[ $rc -eq 0 ] && sleep 2 && docker logs $(ctr) 2>&1 | grep -q "conf v1" && ! docker logs $(ctr) 2>&1 | grep -q "conf v2"'
 
 kill $AGENT; wait $AGENT 2>/dev/null
@@ -89,6 +98,11 @@ check "app sync --wait stops at a Sync waiting for its Host, saying so" '[ $rc -
 check "a Sync to an offline Host waits for it (Q81)" '"$BIN" app history $APP -o json | python3 -c "
 import json,sys; op=json.load(sys.stdin)[0]; assert op[\"phase\"]==\"Waiting\" and \"waiting for Host edge\" in op[\"message\"], op"'
 check "its containers keep running meanwhile" '[ -n "$(ctr)" ]'
+check "offline, the app shows its Host offline since when, and the last known state from when (Q38)" '"$BIN" app get $APP -o json | python3 -c "
+import json,sys; v=json.load(sys.stdin); m=v.get(\"syncMessage\",\"\")
+assert \"Host edge offline since\" in m and \"last known state from\" in m and v[\"health\"]==\"Healthy\", v"'
+check "its resources still show, as last known" 'api resources | grep -q "\"state\":\"running\""'
+check "and logs say the Host is offline" '! "$BIN" app logs $APP --tail 5 >/dev/null 2>&1'
 
 # M3-06: back online, the Sync that waited runs; a rollback run on the Host while offline arrives exactly once
 hist() { "$BIN" app history $APP -o json | python3 -c "import json,sys; ops=json.load(sys.stdin); $1"; }

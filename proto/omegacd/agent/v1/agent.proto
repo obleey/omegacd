@@ -33,6 +33,7 @@ message Envelope {
     RegistryAuthRequest registry_auth_request = 30;
     RegistryAuth registry_auth = 31;
     SyncProgress sync_progress = 32;
+    LogsStop logs_stop = 33;
   }
 }
 
@@ -132,12 +133,20 @@ message Resync {
 }
 
 // Statuses are strings with the domain package's values (Healthy, Running, …).
+// StatusReport is an Application's state as its Agent sees it, sent whenever it changes (engine events, after a Sync,
+// on connect; M4-02): the Control Plane keeps the latest, with its time, as the last-known state while the Host is
+// offline. The JSON fields are the domain package's types (the UI reads them as they are; both ends are the same
+// release, or one minor apart, Q41).
 message StatusReport {
   string app = 1;
   string revision = 2;
   string health = 3;
   bool drifted = 4;
   string message = 5;
+  bytes live_state = 6; // JSON domain.LiveState: services, containers, resources (networks, volumes, files)
+  bytes drift = 7; // JSON []domain.ServiceDiff: how what runs differs from the deployed Revision
+  bytes details = 8; // JSON map["kind/name"]map[string]string: each volume's and network's details
+  int64 time_unix = 9;
 }
 
 message SyncOperationReport {
@@ -159,9 +168,15 @@ message LogsRequest {
   bool follow = 4;
 }
 
+// LogChunk answers a LogsRequest (reply_to), as many as it takes; the last one has done set, and error if it failed.
 message LogChunk {
   bytes data = 1;
+  bool done = 2;
+  string error = 3;
 }
+
+// LogsStop ends a LogsRequest (reply_to) that follows: the viewer went away.
+message LogsStop {}
 
 // OutboxEntry is something that happened while offline, sent on reconnect in seq order.
 message OutboxEntry {

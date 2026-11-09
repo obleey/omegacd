@@ -134,6 +134,11 @@ ALTER TABLE hosts ADD COLUMN allow_ips TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE hosts ADD COLUMN outbox_seq INTEGER NOT NULL DEFAULT 0;
 `, `
 ALTER TABLE apps ADD COLUMN deleting TEXT NOT NULL DEFAULT '';
+`, `
+CREATE TABLE agent_status (
+	app TEXT PRIMARY KEY REFERENCES apps(name) ON DELETE CASCADE,
+	status TEXT NOT NULL
+);
 `}
 
 type Store struct {
@@ -670,6 +675,29 @@ func (s *Store) ApplyAgentRemoval(ctx context.Context, host string, seq uint64, 
 		return false, err
 	}
 	return true, tx.Commit()
+}
+
+func (s *Store) SaveAgentStatus(ctx context.Context, host, app string, st domain.AgentStatus) error {
+	b, err := json.Marshal(st)
+	if err != nil { // coverage: unreachable, a struct of strings, maps and slices always encodes
+		return err
+	}
+	return affected(s.db.ExecContext(ctx, `INSERT INTO agent_status (app, status) SELECT name, ? FROM apps WHERE name = ? AND host = ?
+		ON CONFLICT (app) DO UPDATE SET status = excluded.status`, string(b), app, host))
+}
+
+func (s *Store) AgentStatus(ctx context.Context, app string) (domain.AgentStatus, error) {
+	var st domain.AgentStatus
+	var b string
+	if err := s.db.QueryRowContext(ctx, `SELECT status FROM agent_status WHERE app = ?`, app).Scan(&b); err != nil {
+		return st, mapErr(err)
+	}
+	return st, json.Unmarshal([]byte(b), &st)
+}
+
+func (s *Store) AgentLeft(ctx context.Context, host string, at time.Time) error {
+	return affected(s.db.ExecContext(ctx, `UPDATE hosts SET agent = json_set(agent, '$.leftAt', ?) WHERE name = ? AND agent <> ''`,
+		at.UTC().Format(time.RFC3339Nano), host))
 }
 
 func (s *Store) RecordAgent(ctx context.Context, host string, info domain.AgentInfo) error {

@@ -286,6 +286,7 @@ func (ag *Agent) Run(ctx context.Context) error {
 	// watching first, then the restore: nothing that changes in between is missed
 	go func() {
 		watching <- ag.Watch(ctx, func(app string) {
+			ag.reports.soon(ctx, app) // the Control Plane sees the change (M4-02)
 			mu.Lock()
 			defer mu.Unlock()
 			if pending[app] {

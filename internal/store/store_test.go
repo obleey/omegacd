@@ -587,3 +587,49 @@ func TestAgentRemoval(t *testing.T) {
 	_, err = s.ApplyAgentRemoval(ctx, "nope", 1, "web")
 	wantErr(t, err, domain.ErrNotFound)
 }
+
+// M4-02: an Application's latest report from its Host's Agent, only from that Host; when the Agent left.
+func TestAgentStatus(t *testing.T) {
+	s, _ := open(t)
+	for _, h := range []string{"edge", "other"} {
+		inv, _ := s.CreateInvite(ctx, h, time.Now().Add(time.Hour))
+		_, err := s.Enroll(ctx, inv, []byte("key-"+h), "age1"+h, time.Now())
+		must(t, err)
+	}
+	must(t, s.CreateApp(ctx, domain.Application{Name: "web", Host: "edge"}))
+	_, err := s.AgentStatus(ctx, "web")
+	wantErr(t, err, domain.ErrNotFound)
+
+	at := time.Date(2026, 11, 9, 15, 0, 0, 0, time.UTC)
+	st := domain.AgentStatus{Revision: "r1", Health: domain.Healthy, Drifted: true, Message: "web stopped",
+		Live:  domain.LiveState{Services: []string{"web"}, Containers: []domain.Container{{Name: "web-1", State: "running"}}},
+		Drift: []domain.ServiceDiff{{Service: "web", Change: "changed"}}, Details: map[string]map[string]string{"volume/data": {"driver": "local"}}, At: at}
+	must(t, s.SaveAgentStatus(ctx, "edge", "web", st))
+	got, err := s.AgentStatus(ctx, "web")
+	must(t, err)
+	if !reflect.DeepEqual(got, st) {
+		t.Fatalf("got %+v\nwant %+v", got, st)
+	}
+	st.Health = domain.Degraded
+	must(t, s.SaveAgentStatus(ctx, "edge", "web", st)) // the latest wins
+	if got, _ := s.AgentStatus(ctx, "web"); got.Health != domain.Degraded {
+		t.Fatalf("not updated: %+v", got)
+	}
+	wantErr(t, s.SaveAgentStatus(ctx, "other", "web", st), domain.ErrNotFound) // another Host's Agent
+
+	wantErr(t, s.AgentLeft(ctx, "edge", at), domain.ErrNotFound) // no Hello recorded yet
+	must(t, s.RecordAgent(ctx, "edge", domain.AgentInfo{Version: "v0.2.0", SeenAt: at}))
+	must(t, s.AgentLeft(ctx, "edge", at.Add(time.Hour)))
+	h, _ := s.GetHost(ctx, "edge")
+	if h.Agent == nil || !h.Agent.LeftAt.Equal(at.Add(time.Hour)) || h.Agent.Version != "v0.2.0" {
+		t.Fatalf("left at: %+v", h.Agent)
+	}
+	must(t, s.RecordAgent(ctx, "edge", domain.AgentInfo{Version: "v0.2.0", SeenAt: at.Add(2 * time.Hour)})) // back
+	if h, _ := s.GetHost(ctx, "edge"); !h.Agent.LeftAt.IsZero() {
+		t.Fatalf("still left: %+v", h.Agent)
+	}
+
+	must(t, s.DeleteApp(ctx, "web"))
+	_, err = s.AgentStatus(ctx, "web")
+	wantErr(t, err, domain.ErrNotFound)
+}

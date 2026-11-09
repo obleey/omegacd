@@ -29,7 +29,8 @@ import (
 // ---- fakes ----
 
 type fakeStore struct {
-	domain.Store // unimplemented methods panic
+	domain.Store                               // unimplemented methods panic
+	statuses     map[string]domain.AgentStatus // reports of Agents (M4-02)
 	mu           sync.Mutex
 	apps         map[string]domain.Application
 	ops          []domain.SyncOperation
@@ -196,6 +197,9 @@ type fakeSource struct {
 	renders       int               // of App of Apps definitions
 	files         map[string]string // an App of Apps' files when set; every other app gets a compose.yaml
 	blobs         map[string][]byte
+	appFiles      map[string]string // more files every compose app gets
+	renderErr     error             // Render fails with it
+	blobErr       error             // Blob fails with it
 }
 
 func (g *fakeSource) Invalidate(string) {}
@@ -209,7 +213,11 @@ func (g *fakeSource) Render(_ context.Context, spec domain.RenderSpec) (domain.R
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	r := domain.Rendered{Checksum: "tree-" + spec.Revision}
+	if g.renderErr != nil {
+		return r, g.renderErr
+	}
 	files := map[string]string{"compose.yaml": "services: {}\n"}
+	maps.Copy(files, g.appFiles)
 	if spec.Apps {
 		g.renders++
 		files = g.files
@@ -238,6 +246,9 @@ func (g *fakeSource) Render(_ context.Context, spec domain.RenderSpec) (domain.R
 func (g *fakeSource) Blob(_ context.Context, hash string) ([]byte, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if g.blobErr != nil {
+		return nil, g.blobErr
+	}
 	return g.blobs[hash], nil
 }
 func (g *fakeSource) Diff(context.Context, string, string, string, string) (string, error) {
@@ -1632,6 +1643,20 @@ type fakeAgents struct {
 	got     []*agentv1.DesiredState
 	err     error
 	removed []string // "app volumes keep"
+	offline bool     // Online answers !offline
+	logs    string   // what Logs writes
+}
+
+func (f *fakeAgents) Online(string) bool { f.mu.Lock(); defer f.mu.Unlock(); return !f.offline }
+
+func (f *fakeAgents) Logs(_ context.Context, host, app, container string, follow bool, tail int, w io.Writer) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return f.err
+	}
+	_, err := fmt.Fprintf(w, "%s %s/%s %s follow=%v tail=%d", f.logs, host, app, container, follow, tail)
+	return err
 }
 
 func (f *fakeAgents) Remove(_ context.Context, host, app string, volumes, keep bool) error {
@@ -2066,5 +2091,159 @@ func TestForgetLastChildFinishesParent(t *testing.T) {
 	}
 	if _, err := r.st.GetApp(ctx, "platform"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("the App of Apps stays: %v", err)
+	}
+}
+
+func (s *fakeStore) AgentStatus(_ context.Context, app string) (domain.AgentStatus, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.statuses[app]
+	if !ok {
+		return st, domain.ErrNotFound
+	}
+	return st, nil
+}
+
+func (s *fakeStore) setStatus(app string, st domain.AgentStatus) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.statuses == nil {
+		s.statuses = map[string]domain.AgentStatus{}
+	}
+	s.statuses[app] = st
+}
+
+// M4-02: an Agent Host's Applications show what their Agent reported: Health, drift (never re-synced from here, Q82),
+// resources and details, logs; offline the last report, with since when the Host is gone and how old it is (Q38).
+func TestAgentViews(t *testing.T) {
+	r, ag := agentRig(t)
+	ctx := t.Context()
+	a := app("web")
+	a.Host, a.AutoSync, a.SelfHeal = "edge", true, true
+	r.c.CreateApp(ctx, a)
+	r.waitIdle(t, "web")
+	a, _ = r.st.GetApp(ctx, "web") // as created: kind compose
+	if v, _ := r.c.GetApp(ctx, "web"); v.Health != domain.HealthUnknown || v.SyncStatus != domain.Synced {
+		t.Fatalf("before any report: %s %s", v.Health, v.SyncStatus)
+	}
+	if live, err := r.c.Resources(ctx, "web"); err != nil || live.Health != domain.HealthUnknown || live.Containers == nil {
+		t.Fatalf("resources before any report: %+v %v", live, err)
+	}
+
+	reported := time.Date(2026, 11, 9, 15, 0, 0, 0, time.UTC)
+	st := domain.AgentStatus{Revision: "aaaaaaaa", Health: domain.Healthy, At: reported,
+		Live: domain.LiveState{Services: []string{"web"}, Health: domain.Healthy,
+			Containers: []domain.Container{{ID: "c1", Name: "web-1", Service: "web", State: "running"}},
+			Resources: []domain.Resource{{Kind: "volume", Name: "web_data"}, {Kind: "bind", Name: "compose.yaml"},
+				{Kind: "env_file", Name: ".env", Secret: true}, {Kind: "bind", Name: "uploads"}}},
+		Details: map[string]map[string]string{"volume/web_data": {"driver": "local"}}}
+	r.st.setStatus("web", st)
+	events, unsub := r.c.Subscribe()
+	defer unsub()
+	r.c.AgentStatusChanged(ctx, "web")
+	if v := awaitEvent(t, events, "app", "web").Data.(domain.AppView); v.Health != domain.Healthy || v.SyncStatus != domain.Synced {
+		t.Fatalf("reported Healthy: %s %s", v.Health, v.SyncStatus)
+	}
+	r.c.AgentStatusChanged(ctx, "nope") // a report for an app the Control Plane doesn't have: nothing
+
+	st.Drifted, st.Drift = true, []domain.ServiceDiff{{Service: "web", Change: "changed", Fields: []string{"image"}}}
+	r.st.setStatus("web", st)
+	ops, _ := r.st.ListOps(ctx, "web")
+	v := r.c.reconcile(ctx, a)
+	r.waitIdle(t, "web")
+	if v.SyncStatus != domain.OutOfSync || !strings.Contains(v.SyncMessage, "live state drifted") {
+		t.Fatalf("drift: %s %q", v.SyncStatus, v.SyncMessage)
+	}
+	if now, _ := r.st.ListOps(ctx, "web"); len(now) != len(ops) {
+		t.Fatal("the Control Plane re-synced drift its Agent heals")
+	}
+	st.Revision = "older" // drift reported for a Revision no longer deployed: not this one's
+	r.st.setStatus("web", st)
+	if v := r.c.reconcile(ctx, a); v.SyncStatus != domain.Synced {
+		t.Fatalf("an old report's drift: %s", v.SyncStatus)
+	}
+
+	live, _ := r.c.Resources(ctx, "web")
+	if len(live.Containers) != 1 || len(live.Resources) != 4 {
+		t.Fatalf("resources: %+v", live)
+	}
+	for _, tc := range []struct{ kind, name, want string }{
+		{"volume", "web_data", "local"},
+		{"bind", "compose.yaml", "services: {}"},
+		{"env_file", ".env", "decrypted on the Host"},
+		{"bind", "uploads", "on the Host only"},
+	} {
+		d, err := r.c.ResourceDetail(ctx, "web", tc.kind, tc.name)
+		if err != nil || !strings.Contains(fmt.Sprint(d.Content, d.Info), tc.want) {
+			t.Fatalf("%s %s: %+v %v", tc.kind, tc.name, d, err)
+		}
+	}
+	var logs strings.Builder
+	ag.logs = "line"
+	if err := r.c.Logs(ctx, "web", "c1", true, 50, &logs); err != nil || logs.String() != "line edge/web c1 follow=true tail=50" {
+		t.Fatalf("logs %q %v", logs.String(), err)
+	}
+
+	left := reported.Add(time.Hour)
+	r.st.mu.Lock()
+	h := r.st.hosts["edge"]
+	h.Agent = &domain.AgentInfo{Version: "v0.2.0", OS: "linux", EngineVersion: "29.1.0", LeftAt: left}
+	r.st.hosts["edge"] = h
+	r.st.mu.Unlock()
+	ag.mu.Lock()
+	ag.offline = true
+	ag.mu.Unlock()
+	v = r.c.reconcile(ctx, a)
+	if v.Health != domain.Healthy || !strings.Contains(v.SyncMessage, "Host edge offline since "+left.Local().Format(time.DateTime)) ||
+		!strings.Contains(v.SyncMessage, "last known state from "+reported.Local().Format(time.DateTime)) || strings.HasPrefix(v.SyncMessage, ";") {
+		t.Fatalf("offline: %s %q", v.Health, v.SyncMessage)
+	}
+	hosts, _ := r.c.ListHosts(ctx)
+	i := slices.IndexFunc(hosts, func(h domain.HostView) bool { return h.Name == "edge" })
+	if hs := hosts[i].Status; hs.Connected || hs.ServerVersion != "29.1.0" || hs.OS != "linux" || !strings.Contains(hs.Error, "offline since") {
+		t.Fatalf("host card offline: %+v", hs)
+	}
+	ag.mu.Lock()
+	ag.offline = false
+	ag.mu.Unlock()
+	hosts, _ = r.c.ListHosts(ctx)
+	if hs := hosts[i].Status; !hs.Connected || hs.Error != "" {
+		t.Fatalf("host card online: %+v", hs)
+	}
+}
+
+// A file's details for an Agent Host's app, when its content can't be had: never deployed, the render or the blob
+// failing; a big file shows its first 256 KiB.
+func TestAgentDetailEdges(t *testing.T) {
+	r, _ := agentRig(t)
+	ctx := t.Context()
+	r.g.mu.Lock()
+	r.g.appFiles = map[string]string{"big.txt": strings.Repeat("x", maxResourceContent+10)}
+	r.g.mu.Unlock()
+	a := app("web")
+	a.Host, a.Kind = "edge", domain.KindCompose
+	r.st.CreateApp(ctx, a)
+	r.st.setStatus("web", domain.AgentStatus{Live: domain.LiveState{Resources: []domain.Resource{
+		{Kind: "bind", Name: "compose.yaml"}, {Kind: "bind", Name: "big.txt"}}}})
+	if _, err := r.c.ResourceDetail(ctx, "web", "bind", "compose.yaml"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("never deployed: %v", err)
+	}
+	id, _ := r.st.CreateOp(ctx, domain.SyncOperation{App: "web", Revision: "aaaaaaaa"})
+	r.st.FinishOp(ctx, id, domain.OpSucceeded, "")
+	d, err := r.c.ResourceDetail(ctx, "web", "bind", "big.txt")
+	if err != nil || len(d.Content) != maxResourceContent || d.Info["truncated"] == "" {
+		t.Fatalf("a big file: %d bytes, %v, %v", len(d.Content), d.Info, err)
+	}
+	r.g.mu.Lock()
+	r.g.blobErr = errors.New("source server down")
+	r.g.mu.Unlock()
+	if _, err := r.c.ResourceDetail(ctx, "web", "bind", "compose.yaml"); err == nil || err.Error() != "source server down" {
+		t.Fatalf("blob: %v", err)
+	}
+	r.g.mu.Lock()
+	r.g.renderErr = errors.New("render failed")
+	r.g.mu.Unlock()
+	if _, err := r.c.ResourceDetail(ctx, "web", "bind", "compose.yaml"); err == nil || err.Error() != "render failed" {
+		t.Fatalf("render: %v", err)
 	}
 }

@@ -10,8 +10,10 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -70,6 +72,8 @@ type Hub struct {
 	Removed func(ctx context.Context, host, app string)
 	// Progress is told of a Sync's progress on an Agent (Q87); may be nil
 	Progress func(ctx context.Context, app string, p domain.ProgressEvent)
+	// Status is told an Application's report from its Agent was stored (M4-02); may be nil
+	Status func(ctx context.Context, app string)
 
 	mu    sync.Mutex
 	conns map[string]*session // by Host
@@ -88,6 +92,7 @@ type session struct {
 	// all it may ask for, so no Host reads another's files by guessing hashes
 	deploys map[uint64]chan *agentv1.SyncOperationReport
 	removes map[uint64]chan *agentv1.AppRemoved // RemoveApps waiting for their answer, by envelope id
+	logs    map[uint64]chan *agentv1.LogChunk   // LogsRequests being answered, by envelope id
 	sent    map[uint64]*agentv1.DesiredState    // in flight, by op: a resync re-sends one the Agent doesn't have
 	files   map[string]bool
 }
@@ -139,7 +144,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s := &session{conn: c, at: domain.AgentConnection{Address: addr, Since: h.now()}, approved: make(chan struct{}), key: key,
-		deploys: map[uint64]chan *agentv1.SyncOperationReport{}, removes: map[uint64]chan *agentv1.AppRemoved{}, sent: map[uint64]*agentv1.DesiredState{}, files: map[string]bool{}}
+		deploys: map[uint64]chan *agentv1.SyncOperationReport{}, removes: map[uint64]chan *agentv1.AppRemoved{}, logs: map[uint64]chan *agentv1.LogChunk{}, sent: map[uint64]*agentv1.DesiredState{}, files: map[string]bool{}}
 	if host.Approved {
 		s.once.Do(func() { close(s.approved) })
 	}
@@ -152,10 +157,16 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() {
 		h.mu.Lock()
-		if h.conns[host.Name] == s {
+		gone := h.conns[host.Name] == s
+		if gone {
 			delete(h.conns, host.Name)
 		}
 		h.mu.Unlock()
+		if gone { // "offline since" (Q38)
+			if err := h.store.AgentLeft(context.WithoutCancel(ctx), host.Name, h.now()); err != nil {
+				h.log.ErrorContext(ctx, "record the agent leaving", "err", err)
+			}
+		}
 	}()
 	fingerprint := domain.Fingerprint(key)
 	h.log.InfoContext(ctx, "agent connected", "fingerprint", fingerprint, "approved", host.Approved, "remote", addr)
@@ -202,6 +213,18 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		case e.GetRegistryAuthRequest() != nil:
 			go h.registryAuth(ctx, host.Name, s, e.Id, e.GetRegistryAuthRequest())
+		case e.GetStatusReport() != nil:
+			h.status(ctx, host.Name, e.GetStatusReport())
+		case e.GetLogChunk() != nil:
+			s.mu.Lock()
+			out := s.logs[e.ReplyTo]
+			s.mu.Unlock()
+			if out != nil {
+				select {
+				case out <- e.GetLogChunk():
+				case <-ctx.Done():
+				}
+			}
 		case e.GetSyncProgress() != nil:
 			if p := e.GetSyncProgress(); h.Progress != nil {
 				h.Progress(ctx, p.App, domain.ProgressEvent{OpID: int64(p.Op), Resource: p.Resource, Status: p.Status, Text: p.Text})
@@ -592,6 +615,78 @@ func (h *Hub) resync(ctx context.Context, host string, s *session, r *agentv1.Re
 	}
 	if h.Resynced != nil {
 		h.Resynced(ctx, host)
+	}
+}
+
+// status keeps an Application's report from its Agent (M4-02): only for an Application on that Host.
+func (h *Hub) status(ctx context.Context, host string, r *agentv1.StatusReport) {
+	st := domain.AgentStatus{Revision: r.Revision, Health: domain.HealthStatus(r.Health), Drifted: r.Drifted,
+		Message: r.Message, At: time.Unix(r.TimeUnix, 0)}
+	for _, part := range []struct {
+		b []byte
+		v any
+	}{{r.LiveState, &st.Live}, {r.Drift, &st.Drift}, {r.Details, &st.Details}} {
+		if len(part.b) == 0 {
+			continue
+		}
+		if err := json.Unmarshal(part.b, part.v); err != nil {
+			h.log.WarnContext(ctx, "an agent's status report", "app", r.App, "err", err)
+			return
+		}
+	}
+	if err := h.store.SaveAgentStatus(ctx, host, r.App, st); err != nil {
+		h.log.WarnContext(ctx, "keep an agent's status report", "app", r.App, "err", err)
+		return
+	}
+	if h.Status != nil {
+		h.Status(ctx, r.App)
+	}
+}
+
+// Online reports whether the Host's Agent is connected now.
+func (h *Hub) Online(host string) bool { return h.session(host) != nil }
+
+// Logs writes an Application's logs from its Host's Agent to w (container: a container's ID or name, or a service;
+// empty: every container), following them until ctx ends when follow is set. ErrOffline without a connected Agent.
+func (h *Hub) Logs(ctx context.Context, host, app, container string, follow bool, tail int, w io.Writer) error {
+	s, err := h.approved(host)
+	if err != nil {
+		return err
+	}
+	e := &agentv1.Envelope{Body: &agentv1.Envelope_LogsRequest{LogsRequest: &agentv1.LogsRequest{App: app, Service: container,
+		Tail: uint32(max(tail, 0)), Follow: follow}}}
+	chunks := make(chan *agentv1.LogChunk, 16)
+	s.mu.Lock() // registered before the first chunk can be read
+	err = s.conn.Send(ctx, e)
+	s.logs[e.Id] = chunks
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.logs, e.Id)
+		s.mu.Unlock()
+	}()
+	if err != nil {
+		return fmt.Errorf("host %s: %w", host, ErrDisconnected)
+	}
+	for {
+		select {
+		case c := <-chunks:
+			if c.Done {
+				if c.Error != "" {
+					return errors.New(c.Error)
+				}
+				return nil
+			}
+			if _, err := w.Write(c.Data); err != nil { // the viewer went away
+				s.conn.Send(context.WithoutCancel(ctx), &agentv1.Envelope{ReplyTo: e.Id, Body: &agentv1.Envelope_LogsStop{LogsStop: &agentv1.LogsStop{}}})
+				return err
+			}
+		case <-ctx.Done():
+			s.conn.Send(context.WithoutCancel(ctx), &agentv1.Envelope{ReplyTo: e.Id, Body: &agentv1.Envelope_LogsStop{LogsStop: &agentv1.LogsStop{}}})
+			return ctx.Err()
+		case <-s.conn.Done():
+			return fmt.Errorf("host %s: %w", host, ErrDisconnected)
+		}
 	}
 }
 

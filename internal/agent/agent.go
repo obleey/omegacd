@@ -33,6 +33,7 @@ type Agent struct {
 	mu sync.Mutex
 
 	recorded  chan struct{} // an outbox entry was recorded: send it now if connected (M3-06)
+	reports   *reporter     // status reports to the Control Plane (M4-02)
 	deploying sync.Map      // the ops of Desired States being deployed: one sent again (a resync) isn't deployed twice
 }
 
@@ -56,8 +57,10 @@ func (ag *Agent) lock() (unlock func(), err error) {
 
 // New is the Agent; log nil logs nothing.
 func New(db *DB, cache *Cache, work *WorkDir, secrets *Secrets, engine domain.Engine, log *slog.Logger) *Agent {
-	return &Agent{db: db, cache: cache, work: work, secrets: secrets, engine: engine, log: cmp.Or(log, logging.Discard),
+	ag := &Agent{db: db, cache: cache, work: work, secrets: secrets, engine: engine, log: cmp.Or(log, logging.Discard),
 		recorded: make(chan struct{}, 1)}
+	ag.reports = &reporter{ag: ag, pending: map[string]bool{}}
+	return ag
 }
 
 // application is how internal/engine sees a: a Compose project on the local Host.

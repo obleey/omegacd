@@ -6,7 +6,7 @@ https://github.com/obleey/omegacd.
 ## Where things stand
 
 - **`main` is v0.2 in development**: a breaking redesign to pull-based Agents and a separate Source Server. Read
-  [docs/v0.2/README.md](docs/v0.2/README.md) first: architecture, every design decision (Q1–Q97), and the work as
+  [docs/v0.2/README.md](docs/v0.2/README.md) first: architecture, every design decision (Q1–Q98), and the work as
   tickets in [docs/v0.2/milestones/](docs/v0.2/milestones/). Work milestones in order (M1 → M8).
 - **v0.1 is deprecated** (Q97): `release-0.1` (push over SSH/TLS, last tag `v0.1.0-rc.10`) is frozen, no fixes; there
   is no v0.1.0 release. v0.2.0 is OmegaCD's first stable release. Write no tests or features for v0.1-only code: M4-05
@@ -55,6 +55,9 @@ https://github.com/obleey/omegacd.
   (generated code excluded). A line no test can reach (an error that can't happen) is marked in the code: a comment
   `coverage: unreachable, <reason>` on its block's first line; every other uncovered line fails CI (`make cover`). Until
   M4-10 brings existing code there, every PR covers 100% of its reachable changed lines and lowers nothing.
+  **Logging (Q62):** nothing fails silently. Every error path logs, or returns to a caller that logs it; every decision
+  logs at debug; never a secret. Checked on each PR's changed lines like coverage; a path's test checks its log line
+  where the log is what tells an operator what happened.
   A change that touches no shipped code (docs, the plan, test-only fixes) skips the Linux gate: the changed tests run
   locally, CI checks the push.
   **Two loops:** a target that fails is stopped at its first failure (the others go on); fix it by rerunning only the

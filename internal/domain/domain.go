@@ -211,6 +211,7 @@ type AgentInfo struct {
 	EngineVersion string    `json:"engineVersion,omitempty"`
 	Rootless      bool      `json:"rootless,omitempty"`
 	SeenAt        time.Time `json:"seenAt"`
+	LeftAt        time.Time `json:"leftAt,omitzero"` // when its connection ended; zero while it's connected
 	// Refused says why the Control Plane refused it, such as an outdated version; empty when it was served
 	Refused string `json:"refused,omitempty"`
 }
@@ -247,6 +248,19 @@ type AgentReport struct {
 	Message, Trigger        string
 	Op                      int64
 	At                      time.Time
+}
+
+// AgentStatus is an Application's state as its Host's Agent last reported it (M4-02, Q23): the Control Plane's view of
+// it, online and, with its time, while the Host is offline (Q38).
+type AgentStatus struct {
+	Revision string
+	Health   HealthStatus
+	Drifted  bool
+	Message  string
+	Live     LiveState
+	Drift    []ServiceDiff
+	Details  map[string]map[string]string // "kind/name" of each volume and network → its details
+	At       time.Time
 }
 
 // AgentConnection is where and since when an Agent was connected.
@@ -479,6 +493,12 @@ type Store interface {
 	// SetAppDeleting records that the Application is being deleted (Q83), how ("containers", "volumes" or "keep"),
 	// until its Agent confirms; "" clears it.
 	SetAppDeleting(ctx context.Context, name, how string) error
+	// SaveAgentStatus keeps an Application's latest report from its Host's Agent; ErrNotFound unless the Application is
+	// on that Host. AgentStatus is the latest, ErrNotFound before any.
+	SaveAgentStatus(ctx context.Context, host, app string, st AgentStatus) error
+	AgentStatus(ctx context.Context, app string) (AgentStatus, error)
+	// AgentLeft records when the Host's Agent's connection ended (AgentInfo.LeftAt).
+	AgentLeft(ctx context.Context, host string, at time.Time) error
 	// RecordAgent keeps what the Host's Agent said about itself.
 	RecordAgent(ctx context.Context, host string, info AgentInfo) error
 	// LockHost locks the Host with the connections that shared its key; UnlockHost clears it.

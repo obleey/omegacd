@@ -269,3 +269,10 @@ is declared. Their details (syntax, UI, messages) are decided when each is built
   `v0.1.0-rc.10` stays v0.1's last release, marked deprecated with the `release-0.1` branch, which is frozen (no
   fixes). v0.1-only code gets no tests or features: M4-05 deletes it, and M4-10's coverage starts after that. What
   v0.1 still had to test on a real VPS moves to v0.2's real-world run (M7-04). Supersedes Q54's "fixes only" branch.
+
+## Status from Agents (2026-11-09)
+
+- **Q98** M4-02 is split: M4-02 has the Agent report Health, Live State, drift and resources as they change, the
+  Control Plane keeping the latest report for the last-known state offline, and logs on demand; new M4-11 has the
+  Agent compute the Diff of a Revision not yet deployed, staged in its work dir (RAM, Q19) and never deployed. Order:
+  M4-02, M4-11, then M4-03.
