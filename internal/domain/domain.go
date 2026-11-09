@@ -186,6 +186,23 @@ type Host struct {
 	// Locked holds the two live connections that used the Host's key at once (Q28, Q75): until an admin unlocks the
 	// Host or revokes it (deletes it), its Agent is refused. Its Applications keep running.
 	Locked []AgentConnection `json:"locked,omitempty"`
+	// Agent is what the Host's Agent said about itself when it last connected (Q41); nil before.
+	Agent *AgentInfo `json:"agent,omitempty"`
+}
+
+// AgentInfo is an Agent's Hello, as last received.
+type AgentInfo struct {
+	Version       string    `json:"version"`
+	Protocol      uint32    `json:"protocol"`
+	Hostname      string    `json:"hostname,omitempty"`
+	OS            string    `json:"os,omitempty"`
+	Arch          string    `json:"arch,omitempty"`
+	Engine        string    `json:"engine,omitempty"` // docker or podman
+	EngineVersion string    `json:"engineVersion,omitempty"`
+	Rootless      bool      `json:"rootless,omitempty"`
+	SeenAt        time.Time `json:"seenAt"`
+	// Refused says why the Control Plane refused it, such as an outdated version; empty when it was served
+	Refused string `json:"refused,omitempty"`
 }
 
 // AgentConnection is where and since when an Agent was connected.
@@ -401,6 +418,8 @@ type Store interface {
 	// ConfirmSigningKey records that the Agent authenticated with key: the current key ends a rotation, the previous
 	// one undoes it (the Agent never switched).
 	ConfirmSigningKey(ctx context.Context, host string, key []byte) error
+	// RecordAgent keeps what the Host's Agent said about itself.
+	RecordAgent(ctx context.Context, host string, info AgentInfo) error
 	// LockHost locks the Host with the connections that shared its key; UnlockHost clears it.
 	LockHost(ctx context.Context, host string, conns []AgentConnection) error
 	UnlockHost(ctx context.Context, host string) error

@@ -536,7 +536,8 @@ func TestHostEnrollment(t *testing.T) {
 			{Host: domain.Host{Name: "local"}},
 			{Host: domain.Host{Name: "web", Fingerprint: "SHA256:abc", AgeRecipient: "age1web"}},
 			{Host: domain.Host{Name: "db"}},
-			{Host: domain.Host{Name: "cache", Fingerprint: "SHA256:def", Approved: true}},
+			{Host: domain.Host{Name: "cache", Fingerprint: "SHA256:def", Approved: true, Agent: &domain.AgentInfo{Version: "v0.2.1"}}},
+			{Host: domain.Host{Name: "old", Fingerprint: "SHA256:jkl", Approved: true, Agent: &domain.AgentInfo{Version: "v0.0.9", Refused: "too old"}}},
 			{Host: domain.Host{Name: "copied", Fingerprint: "SHA256:ghi", Approved: true,
 				Locked: []domain.AgentConnection{{Address: "10.0.0.1"}, {Address: "10.0.0.2"}}}},
 		},
@@ -551,7 +552,7 @@ func TestHostEnrollment(t *testing.T) {
 	}
 	r = run(t, srv, nil, "", "host", "list")
 	for _, want := range []string{"to approve SHA256:abc", "age1web", "approved SHA256:def", "invited", "(docker socket)",
-		"LOCKED: two connections (10.0.0.1, 10.0.0.2)"} {
+		"LOCKED: two connections (10.0.0.1, 10.0.0.2)", "agent v0.2.1", "REFUSED: Agent v0.0.9"} {
 		if !strings.Contains(r.stdout, want) {
 			t.Fatalf("list lacks %q:\n%s", want, r.stdout)
 		}

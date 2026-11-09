@@ -44,7 +44,7 @@ is after v0.2, Q77). A locked Host shows both connections, with unlock or revoke
 and revocation closing the live connection.
 
 ### M3-04 · Version handshake
-**Status:** todo
+**Status:** done (2026-11-09, PR #109)
 **Depends on:** M3-01
 
 Hello carries Agent and protocol versions (Q41): Agents one minor version behind are served; older are refused with a

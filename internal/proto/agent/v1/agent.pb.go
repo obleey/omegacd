@@ -362,6 +362,8 @@ func (*Envelope_RotateKey) isEnvelope_Body() {}
 
 func (*Envelope_KeyRotation) isEnvelope_Body() {}
 
+// Hello comes before the ChallengeResponse; the Control Plane records it and serves Agents of its minor version and
+// one behind (Q41).
 type Hello struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	AgentVersion    string                 `protobuf:"bytes,1,opt,name=agent_version,json=agentVersion,proto3" json:"agent_version,omitempty"`

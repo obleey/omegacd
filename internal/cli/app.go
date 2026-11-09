@@ -688,7 +688,14 @@ func (c *CLI) hostList(ctx context.Context, args []string) error {
 		case u == "":
 			u, agent = "(agent)", "to approve "+h.Fingerprint
 		}
-		rows = append(rows, []string{h.Name, u, strconv.FormatBool(h.Status.Connected), h.Status.ServerVersion,
+		version := h.Status.ServerVersion
+		if a := h.Agent; u == "(agent)" && a != nil {
+			version = "agent " + a.Version
+			if a.Refused != "" { // the reason in full: -o json
+				agent = "REFUSED: Agent " + a.Version
+			}
+		}
+		rows = append(rows, []string{h.Name, u, strconv.FormatBool(h.Status.Connected), version,
 			strconv.Itoa(h.Status.Containers), cmp.Or(h.KeyRecipient, h.AgeRecipient, "(none)"), cmp.Or(agent, "-"), strings.Join(h.Apps, ", ")})
 	}
 	c.table([]string{"NAME", "URL", "CONNECTED", "VERSION", "CONTAINERS", "HOST KEY", "AGENT", "APPS"}, rows, 2)

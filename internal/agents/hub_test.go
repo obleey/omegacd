@@ -37,6 +37,12 @@ func newHub(t *testing.T) (*Hub, *store.Store, string) {
 // the first answer to its challenge response.
 func agent(t *testing.T, url string, key ed25519.PrivateKey, invite string, sign func(nonce []byte) []byte) (*wire.Conn, *agentv1.Envelope) {
 	t.Helper()
+	return agentV(t, url, key, invite, sign, &agentv1.Hello{AgentVersion: "(devel)", ProtocolVersion: 1})
+}
+
+// agentV is agent saying hello (nil: none).
+func agentV(t *testing.T, url string, key ed25519.PrivateKey, invite string, sign func(nonce []byte) []byte, hello *agentv1.Hello) (*wire.Conn, *agentv1.Envelope) {
+	t.Helper()
 	ctx := t.Context()
 	c, err := wire.Dial(ctx, url, nil)
 	if err != nil {
@@ -49,6 +55,9 @@ func agent(t *testing.T, url string, key ed25519.PrivateKey, invite string, sign
 	}
 	if sign == nil {
 		sign = func(nonce []byte) []byte { return ed25519.Sign(key, append([]byte(ChallengePrefix), nonce...)) }
+	}
+	if hello != nil {
+		c.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_Hello{Hello: hello}})
 	}
 	if invite != "" {
 		c.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_Enroll{Enroll: &agentv1.Enroll{Invite: invite, AgeRecipient: "age1test"}}})
@@ -191,6 +200,11 @@ func approvedAgent(t *testing.T, h *Hub, st *store.Store, url, host string) ed25
 		t.Fatal(err)
 	}
 	c.Close()
+	for deadline := time.Now().Add(10 * time.Second); h.session(host) != nil; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) { // the hub hears the close a moment later: tests that want it gone wait
+			t.Fatal("the hub still has the connection")
+		}
+	}
 	return key
 }
 
@@ -397,4 +411,38 @@ func TestRevocation(t *testing.T) {
 	}
 	_, e := agent(t, url, key, "", nil)
 	refused(t, e, "no Host has the key")
+}
+
+// Q41: Agents of the Control Plane's minor version and one behind are served; two behind and newer ones are refused
+// with what to upgrade. Every Agent's Hello is recorded, a refused one with the reason.
+func TestVersionHandshake(t *testing.T) {
+	h, st, url := newHub(t)
+	h.version = "v0.3.1"
+	key := approvedAgent(t, h, st, url, "web")
+	for _, tc := range []struct{ version, refused string }{
+		{"v0.3.0", ""},
+		{"v0.2.7", ""},
+		{"v0.1.9", "Agent v0.1.9 is too old for this Control Plane (v0.3.1), which serves Agents from v0.2 on: upgrade the Agent"},
+		{"v0.4.0", "Agent v0.4.0 is newer than this Control Plane (v0.3.1): upgrade the Control Plane to v0.4 or later first"},
+	} {
+		hello := &agentv1.Hello{AgentVersion: tc.version, ProtocolVersion: 1, Hostname: "web-1", Os: "linux", Arch: "arm64",
+			Engine: "podman", EngineVersion: "5.4.2", Rootless: true}
+		c, e := agentV(t, url, key, "", nil, hello)
+		if tc.refused == "" && !e.GetEnrollmentStatus().GetApproved() {
+			t.Fatalf("%s: got %v", tc.version, e)
+		}
+		if tc.refused != "" {
+			refused(t, e, tc.refused)
+		}
+		c.Close()
+		host, _ := st.GetHost(t.Context(), "web")
+		a := host.Agent
+		if a == nil || a.Version != tc.version || a.Hostname != "web-1" || a.OS != "linux" || a.Arch != "arm64" ||
+			a.Engine != "podman" || a.EngineVersion != "5.4.2" || !a.Rootless || a.Protocol != 1 || a.SeenAt.IsZero() ||
+			!strings.Contains(a.Refused, tc.refused) || (tc.refused == "") != (a.Refused == "") {
+			t.Fatalf("%s: recorded %+v", tc.version, a)
+		}
+	}
+	_, e := agentV(t, url, key, "", nil, nil)
+	refused(t, e, "no Hello")
 }
