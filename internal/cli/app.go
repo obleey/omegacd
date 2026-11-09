@@ -671,14 +671,65 @@ func (c *CLI) hostList(ctx context.Context, args []string) error {
 	}
 	var rows [][]string
 	for _, h := range hosts {
-		u := h.URL
-		if u == "" {
+		u, agent := h.URL, ""
+		switch {
+		case h.Name == domain.LocalHost:
 			u = "(docker socket)"
+		case u == "" && h.Fingerprint == "":
+			u, agent = "(agent)", "invited"
+		case u == "" && h.Approved:
+			u, agent = "(agent)", "approved "+h.Fingerprint
+		case u == "":
+			u, agent = "(agent)", "to approve "+h.Fingerprint
 		}
 		rows = append(rows, []string{h.Name, u, strconv.FormatBool(h.Status.Connected), h.Status.ServerVersion,
-			strconv.Itoa(h.Status.Containers), cmp.Or(h.KeyRecipient, "(none)"), strings.Join(h.Apps, ", ")})
+			strconv.Itoa(h.Status.Containers), cmp.Or(h.KeyRecipient, h.AgeRecipient, "(none)"), cmp.Or(agent, "-"), strings.Join(h.Apps, ", ")})
 	}
-	c.table([]string{"NAME", "URL", "CONNECTED", "VERSION", "CONTAINERS", "HOST KEY", "APPS"}, rows, 2)
+	c.table([]string{"NAME", "URL", "CONNECTED", "VERSION", "CONTAINERS", "HOST KEY", "AGENT", "APPS"}, rows, 2)
+	return nil
+}
+
+func (c *CLI) hostAdd(ctx context.Context, args []string) error {
+	var o opts
+	pos, err := parse(c.flags("host add", &o), args, 1, 1)
+	if err != nil {
+		return err
+	}
+	cl, err := c.client(o)
+	if err != nil {
+		return err
+	}
+	var res struct {
+		Invite    string    `json:"invite"`
+		ExpiresAt time.Time `json:"expiresAt"`
+	}
+	if err := cl.do(ctx, "POST", "/api/settings/hosts/"+url.PathEscape(pos[0])+"/invite", nil, &res); err != nil {
+		return err
+	}
+	if o.output == "json" {
+		return c.printJSON(res)
+	}
+	fmt.Fprintf(c.Stdout, "Host %s: run its Agent with this invite, once, before %s:\n\n"+
+		"  OMEGACD_AGENT_CONTROL_PLANE=%s OMEGACD_AGENT_INVITE=%s omegacd agent\n\n"+
+		"Then approve it, after comparing the fingerprint the Agent prints with the one omegacd host list shows:\n\n"+
+		"  omegacd host approve %s SHA256:…\n", pos[0], res.ExpiresAt.Local().Format("2006-01-02 15:04"), cl.server, res.Invite, pos[0])
+	return nil
+}
+
+func (c *CLI) hostApprove(ctx context.Context, args []string) error {
+	var o opts
+	pos, err := parse(c.flags("host approve", &o), args, 2, 2)
+	if err != nil {
+		return err
+	}
+	cl, err := c.client(o)
+	if err != nil {
+		return err
+	}
+	if err := cl.do(ctx, "POST", "/api/settings/hosts/"+url.PathEscape(pos[0])+"/approve", map[string]string{"fingerprint": pos[1]}, nil); err != nil {
+		return err
+	}
+	fmt.Fprintf(c.Stdout, "Host %s approved\n", pos[0])
 	return nil
 }
 

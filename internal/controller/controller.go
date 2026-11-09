@@ -1652,7 +1652,10 @@ func (c *Controller) hostView(ctx context.Context, h domain.Host, apps []string)
 	if apps == nil {
 		apps = []string{}
 	}
-	v := domain.HostView{Host: h, Status: c.cfg.Engine.HostStatus(ctx, h.Name), Apps: apps}
+	v := domain.HostView{Host: h, Status: domain.HostStatus{Name: h.Name}, Apps: apps}
+	if h.URL != "" || h.Name == domain.LocalHost { // a Host with an Agent reports through it, from M4-02 on
+		v.Status = c.cfg.Engine.HostStatus(ctx, h.Name)
+	}
 	if keys, err := c.hostKeys(ctx, h.Name); err != nil {
 		c.cfg.Log.Warn("list host keys", "host", h.Name, "err", err)
 	} else if len(keys) > 0 && keys[0].Current {
@@ -1674,6 +1677,25 @@ func (c *Controller) appsByHost(ctx context.Context) (map[string][]string, error
 	}
 	return m, nil
 }
+
+func (c *Controller) InviteHost(ctx context.Context, name string) (string, time.Time, error) {
+	name = strings.TrimSpace(name)
+	if !nameRE.MatchString(name) {
+		return "", time.Time{}, fmt.Errorf("%w: name must be lowercase letters, digits, '-' or '_'", domain.ErrInvalid)
+	}
+	if name == domain.LocalHost {
+		return "", time.Time{}, fmt.Errorf("%w: %q is the built-in Host", domain.ErrInvalid, domain.LocalHost)
+	}
+	expires := time.Now().Add(inviteValidity).Truncate(time.Second)
+	invite, err := c.cfg.Store.CreateInvite(ctx, name, expires)
+	if err == nil {
+		c.cfg.Log.Info("host invited", "host", name, "expires", expires)
+	}
+	return invite, expires, err
+}
+
+// inviteValidity is how long an invite lasts (Q73): long enough to install an Agent, and a new one is a click away.
+const inviteValidity = time.Hour
 
 func (c *Controller) SaveHost(ctx context.Context, h domain.Host, create bool) (domain.HostView, error) {
 	h.Name, h.URL, h.WorkDir = strings.TrimSpace(h.Name), strings.TrimSpace(h.URL), strings.TrimSpace(h.WorkDir)

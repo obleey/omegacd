@@ -23,6 +23,8 @@ message Envelope {
     LogChunk log_chunk = 20;
     OutboxEntry outbox_entry = 21;
     Error error = 22;
+    Enroll enroll = 23;
+    EnrollmentStatus enrollment_status = 24;
   }
 }
 
@@ -43,7 +45,22 @@ message Challenge {
 
 message ChallengeResponse {
   bytes public_key = 1; // ed25519, identifies the Host
-  bytes signature = 2; // of the nonce
+  bytes signature = 2; // of "omegacd-agent-v1 challenge\n" followed by the nonce
+}
+
+// Enroll comes before the ChallengeResponse on an Agent's first connection (Q22): the invite registers the response's
+// public key, and age_recipient (the Agent's Host Key, M2-05), to the Host the invite was made for.
+message Enroll {
+  string invite = 1;
+  string age_recipient = 2;
+}
+
+// EnrollmentStatus answers an authenticated Agent: waiting for an admin to approve its key (Q28, Q74), and again once
+// approved. Until then the Control Plane sends it nothing else.
+message EnrollmentStatus {
+  string host = 1;
+  bool approved = 2;
+  string fingerprint = 3; // of the public key, as the admin sees it: "SHA256:" and base64, like ssh-keygen -l
 }
 
 message DesiredState {

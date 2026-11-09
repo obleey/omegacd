@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/obleey/omegacd/internal/agents"
 	"github.com/obleey/omegacd/internal/domain"
 	"github.com/obleey/omegacd/internal/logging"
 )
@@ -33,6 +34,7 @@ type Config struct {
 	UI            fs.FS
 	// TrustedProxies may set X-Forwarded-For; see ParseTrustedProxies.
 	TrustedProxies []netip.Prefix
+	Agents         *agents.Hub  // the Agents' connections; nil: none are accepted
 	Log            *slog.Logger // nil: nothing logged
 }
 
@@ -84,6 +86,8 @@ func New(cfg Config) http.Handler {
 	mux.HandleFunc("PUT /api/settings/hosts/{name}", s.saveHost)
 	mux.HandleFunc("DELETE /api/settings/hosts/{name}", s.deleteHost)
 	mux.HandleFunc("POST /api/settings/hosts/{name}/test", s.testHost)
+	mux.HandleFunc("POST /api/settings/hosts/{name}/invite", s.inviteHost)
+	mux.HandleFunc("POST /api/settings/hosts/{name}/approve", s.approveHost)
 	mux.HandleFunc("GET /api/settings/hosts/{name}/keys", s.hostKeys)
 	mux.HandleFunc("POST /api/settings/hosts/{name}/keys/generate", s.generateHostKey)
 	mux.HandleFunc("POST /api/settings/hosts/{name}/keys/import", s.importHostKey)
@@ -93,6 +97,9 @@ func New(cfg Config) http.Handler {
 	mux.HandleFunc("DELETE /api/settings/tokens/{id}", s.deleteToken)
 
 	mux.HandleFunc("POST /api/webhooks/{provider}", s.webhook)
+	if cfg.Agents != nil {
+		mux.Handle("GET "+agentsPath, cfg.Agents) // authenticated by the Agent's signed challenge, not a session
+	}
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("%s %s: %w", r.Method, r.URL.Path, domain.ErrNotFound))
 	})
@@ -108,8 +115,11 @@ func New(cfg Config) http.Handler {
 	return s.logRequests(s.auth(mux))
 }
 
+const agentsPath = "/api/agents/v1/connect"
+
 func isPublic(p string) bool {
-	return !strings.HasPrefix(p, "/api/") || p == "/api/auth/login" || p == "/api/version" || strings.HasPrefix(p, "/api/webhooks/")
+	return !strings.HasPrefix(p, "/api/") || p == "/api/auth/login" || p == "/api/version" || strings.HasPrefix(p, "/api/webhooks/") ||
+		p == agentsPath
 }
 
 type statusWriter struct {

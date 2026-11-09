@@ -365,6 +365,28 @@ func (s *server) saveHost(w http.ResponseWriter, r *http.Request) {
 	respond(w, saveStatus(r), v, err)
 }
 
+// inviteHost adds a Host by name, or gives a Host no Agent has enrolled for yet a new invite (Q22, Q73).
+func (s *server) inviteHost(w http.ResponseWriter, r *http.Request) {
+	invite, expires, err := s.Controller.InviteHost(r.Context(), r.PathValue("name"))
+	respond(w, http.StatusCreated, map[string]any{"invite": invite, "expiresAt": expires}, err)
+}
+
+// approveHost approves the Host's Agent; the request names the fingerprint the admin compared (Q28).
+func (s *server) approveHost(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Fingerprint string `json:"fingerprint"`
+	}
+	if err := decode(w, r, &req); err != nil {
+		writeError(w, err)
+		return
+	}
+	if s.Agents == nil {
+		writeError(w, fmt.Errorf("%w: this server accepts no Agents", domain.ErrInvalid))
+		return
+	}
+	respond(w, http.StatusNoContent, nil, s.Agents.Approve(r.Context(), r.PathValue("name"), req.Fingerprint))
+}
+
 func (s *server) deleteHost(w http.ResponseWriter, r *http.Request) {
 	respond(w, http.StatusNoContent, nil, s.Controller.DeleteHost(r.Context(), r.PathValue("name")))
 }

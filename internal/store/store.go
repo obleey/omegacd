@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strings"
 	"time"
 
 	"modernc.org/sqlite"
@@ -112,6 +113,16 @@ CREATE TABLE host_keys (
 ALTER TABLE apps ADD COLUMN dirs TEXT NOT NULL DEFAULT '[]';
 `, `
 ALTER TABLE apps ADD COLUMN work_dir TEXT NOT NULL DEFAULT '';
+`, `
+ALTER TABLE hosts ADD COLUMN signing_key BLOB;
+ALTER TABLE hosts ADD COLUMN age_recipient TEXT NOT NULL DEFAULT '';
+ALTER TABLE hosts ADD COLUMN approved INTEGER NOT NULL DEFAULT 0;
+CREATE UNIQUE INDEX hosts_signing_key ON hosts(signing_key);
+CREATE TABLE invites (
+	host TEXT PRIMARY KEY REFERENCES hosts(name) ON DELETE CASCADE,
+	hash TEXT NOT NULL UNIQUE,
+	expires_at INTEGER NOT NULL
+);
 `}
 
 type Store struct {
@@ -462,14 +473,21 @@ const defaultWorkDir = "/var/lib/omegacd"
 
 const hostCols = `name, url, work_dir, ssh_private_key, tls_ca, tls_cert, tls_key, created_at`
 
+// hostSelect reads a Host with its Agent's enrollment, which SaveHost never changes
+const hostSelect = `SELECT ` + hostCols + `, signing_key, age_recipient, approved FROM hosts`
+
 func (s *Store) scanHost(r scanner) (domain.Host, error) {
 	var h domain.Host
 	var sealed [4]string
 	var created int64
-	if err := r.Scan(&h.Name, &h.URL, &h.WorkDir, &sealed[0], &sealed[1], &sealed[2], &sealed[3], &created); err != nil {
+	if err := r.Scan(&h.Name, &h.URL, &h.WorkDir, &sealed[0], &sealed[1], &sealed[2], &sealed[3], &created,
+		&h.SigningKey, &h.AgeRecipient, &h.Approved); err != nil {
 		return h, mapErr(err)
 	}
 	h.CreatedAt = fromUnix(created)
+	if len(h.SigningKey) > 0 {
+		h.Fingerprint = domain.Fingerprint(h.SigningKey)
+	}
 	for i, dst := range []*string{&h.SSHPrivateKey, &h.TLSCA, &h.TLSCert, &h.TLSKey} {
 		var err error
 		if *dst, err = s.sealer.Open(sealed[i]); err != nil {
@@ -481,7 +499,7 @@ func (s *Store) scanHost(r scanner) (domain.Host, error) {
 }
 
 func (s *Store) ListHosts(ctx context.Context) ([]domain.Host, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+hostCols+` FROM hosts ORDER BY name`)
+	rows, err := s.db.QueryContext(ctx, hostSelect+` ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -498,7 +516,100 @@ func (s *Store) ListHosts(ctx context.Context) ([]domain.Host, error) {
 }
 
 func (s *Store) GetHost(ctx context.Context, name string) (domain.Host, error) {
-	return s.scanHost(s.db.QueryRowContext(ctx, `SELECT `+hostCols+` FROM hosts WHERE name = ?`, name))
+	return s.scanHost(s.db.QueryRowContext(ctx, hostSelect+` WHERE name = ?`, name))
+}
+
+func (s *Store) HostBySigningKey(ctx context.Context, key []byte) (domain.Host, error) {
+	if len(key) == 0 {
+		return domain.Host{}, domain.ErrNotFound
+	}
+	return s.scanHost(s.db.QueryRowContext(ctx, hostSelect+` WHERE signing_key = ?`, key))
+}
+
+// ---- enrollment ----
+
+func (s *Store) CreateInvite(ctx context.Context, host string, expires time.Time) (string, error) {
+	b := make([]byte, 32)
+	rand.Read(b)
+	invite := "omegacd-invite-" + hex.EncodeToString(b)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	var url string
+	var key []byte
+	err = tx.QueryRowContext(ctx, `SELECT url, signing_key FROM hosts WHERE name = ?`, host).Scan(&url, &key)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		if _, err := tx.ExecContext(ctx, `INSERT INTO hosts (`+hostCols+`) VALUES (?, '', ?, '', '', '', '', ?)`,
+			host, defaultWorkDir, toUnix(time.Now())); err != nil {
+			return "", mapErr(err)
+		}
+	case err != nil:
+		return "", err
+	case url != "":
+		return "", fmt.Errorf("%w: Host %s is reached over SSH or TLS (%s), not through an Agent", domain.ErrInvalid, host, url)
+	case len(key) > 0:
+		return "", fmt.Errorf("%w: an Agent is enrolled for Host %s already", domain.ErrAlreadyExists, host)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO invites (host, hash, expires_at) VALUES (?, ?, ?)
+		ON CONFLICT (host) DO UPDATE SET hash = excluded.hash, expires_at = excluded.expires_at`,
+		host, hashToken(invite), toUnix(expires)); err != nil {
+		return "", err
+	}
+	return invite, tx.Commit()
+}
+
+// errInvite is all an Agent learns about an invite it can't use: not which of unknown, used or expired
+var errInvite = fmt.Errorf("%w: the invite is unknown, used or expired: add the Host again for a new one", domain.ErrInvalid)
+
+func (s *Store) Enroll(ctx context.Context, invite string, signingKey []byte, ageRecipient string, now time.Time) (domain.Host, error) {
+	if len(signingKey) == 0 || ageRecipient == "" {
+		return domain.Host{}, fmt.Errorf("%w: enrolling needs the Agent's signing key and age recipient", domain.ErrInvalid)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.Host{}, err
+	}
+	defer tx.Rollback()
+	var host string
+	var expires int64
+	err = tx.QueryRowContext(ctx, `DELETE FROM invites WHERE hash = ? RETURNING host, expires_at`, hashToken(invite)).Scan(&host, &expires)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Host{}, errInvite
+	}
+	if err != nil {
+		return domain.Host{}, err
+	}
+	if !now.Before(fromUnix(expires)) {
+		tx.Commit() // an expired invite is used up too
+		return domain.Host{}, errInvite
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE hosts SET signing_key = ?, age_recipient = ?, approved = 0 WHERE name = ?`,
+		signingKey, ageRecipient, host); err != nil {
+		return domain.Host{}, mapErr(err)
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.Host{}, err
+	}
+	return s.GetHost(ctx, host)
+}
+
+func (s *Store) ApproveHost(ctx context.Context, host, fingerprint string) error {
+	h, err := s.GetHost(ctx, host)
+	if err != nil {
+		return err
+	}
+	if h.Fingerprint == "" {
+		return fmt.Errorf("%w: no Agent has enrolled for Host %s yet", domain.ErrInvalid, host)
+	}
+	if strings.TrimSpace(fingerprint) != h.Fingerprint {
+		return fmt.Errorf("%w: Host %s's Agent has the key %s, not %s: compare again with what the Agent printed",
+			domain.ErrInvalid, host, h.Fingerprint, fingerprint)
+	}
+	// the key too: approved is for the key just compared, not one that replaced it meanwhile
+	return affected(s.db.ExecContext(ctx, `UPDATE hosts SET approved = 1 WHERE name = ? AND signing_key = ?`, host, h.SigningKey))
 }
 
 func (s *Store) SaveHost(ctx context.Context, h domain.Host) error {

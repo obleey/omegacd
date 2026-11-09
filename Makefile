@@ -51,7 +51,7 @@ test-all:
 # test-all on the supported Linux Hosts: Ubuntu 24.04 and Debian 13, amd64 and arm64, the same tests on each
 # (test/linux.sh: Hetzner servers from ../omegacd-testinfra)
 test-linux:
-	test/linux.sh all
+	test/linux.sh
 
 # end-to-end: throwaway OmegaCDs driven through the CLI against the local Docker engine (see test/e2e/run.sh)
 e2e: build
