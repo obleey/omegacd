@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -545,5 +546,67 @@ func TestDeploy(t *testing.T) {
 	c.Close() // the connection drops before the report
 	if err := <-done; !errors.Is(err, ErrDisconnected) {
 		t.Fatalf("dropped mid-Sync: %v", err)
+	}
+}
+
+// M3-06: an outbox entry is applied once however often it arrives, each arrival acknowledged.
+func TestOutboxExactlyOnce(t *testing.T) {
+	h, st, url := newHub(t)
+	ctx := t.Context()
+	var reported atomic.Int32
+	h.Reported = func(context.Context, string) { reported.Add(1) }
+	key := approvedAgent(t, h, st, url, "web")
+	if err := st.CreateApp(ctx, domain.Application{Name: "app", Host: "web"}); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := agent(t, url, key, "", nil)
+	got := reading(c)
+	entry := &agentv1.OutboxEntry{Seq: 1, TimeUnix: time.Now().Unix(), Event: &agentv1.OutboxEntry_SyncOperationReport{
+		SyncOperationReport: &agentv1.SyncOperationReport{App: "app", Revision: "r1", Trigger: "self-heal", Phase: "Succeeded"}}}
+	for range 3 { // a lost ack: the Agent sends it again on its next connection
+		c.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_OutboxEntry{OutboxEntry: entry}})
+		if e := next(t, got); e.GetOutboxAck().GetSeq() != 1 {
+			t.Fatalf("want the ack, got %v", e)
+		}
+	}
+	if ops, _ := st.ListOps(ctx, "app"); len(ops) != 1 || ops[0].Trigger != "self-heal" || reported.Load() != 1 {
+		t.Fatalf("applied %d times, reported %d", len(ops), reported.Load())
+	}
+}
+
+// M3-06: a Desired State lost on the way is sent again at the Agent's next resync, and the controller hears of it.
+func TestResyncHealsALostSignal(t *testing.T) {
+	h, st, url := newHub(t)
+	ctx := t.Context()
+	resynced := make(chan string, 4)
+	h.Resynced = func(_ context.Context, host string) { resynced <- host }
+	key := approvedAgent(t, h, st, url, "web")
+	c, _ := agent(t, url, key, "", nil)
+	got := reading(c)
+	sum := sha256.Sum256([]byte("v2"))
+	ds := &agentv1.DesiredState{App: "app", Op: 9, Checksum: hex.EncodeToString(sum[:])}
+	done := make(chan error, 1)
+	go func() { done <- h.Deploy(ctx, "web", ds) }()
+	next(t, got) // the Agent never sees this one: lost on the way
+
+	old := sha256.Sum256([]byte("v1"))
+	c.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_Resync{Resync: &agentv1.Resync{Checksums: map[string][]byte{"app": old[:]}}}})
+	if e := next(t, got); e.GetDesiredState().GetOp() != 9 {
+		t.Fatalf("want the lost Desired State again, got %v", e)
+	}
+	if host := <-resynced; host != "web" {
+		t.Fatal(host)
+	}
+	c.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_SyncOperationReport{SyncOperationReport: &agentv1.SyncOperationReport{
+		App: "app", Op: 9, Phase: "Succeeded"}}})
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	c.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_Resync{Resync: &agentv1.Resync{Checksums: map[string][]byte{"app": sum[:]}}}})
+	<-resynced
+	select {
+	case e := <-got:
+		t.Fatalf("an Agent that has it got it again: %v", e)
+	case <-time.After(200 * time.Millisecond):
 	}
 }

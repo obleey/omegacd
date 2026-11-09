@@ -490,3 +490,53 @@ func TestKeyRotationAndLock(t *testing.T) {
 	}
 	wantErr(t, s.LockHost(ctx, "nope", conns), domain.ErrNotFound)
 }
+
+// M3-06: an outbox entry applies once, only to Applications on the Agent's own Host.
+func TestApplyAgentReport(t *testing.T) {
+	s, _ := open(t)
+	for _, h := range []string{"edge", "other"} {
+		inv, _ := s.CreateInvite(ctx, h, time.Now().Add(time.Hour))
+		_, err := s.Enroll(ctx, inv, []byte("key-"+h), "age1"+h, time.Now())
+		must(t, err)
+	}
+	must(t, s.CreateApp(ctx, domain.Application{Name: "web", Host: "edge", AutoSync: true}))
+	must(t, s.CreateApp(ctx, domain.Application{Name: "db", Host: "other"}))
+	id, err := s.CreateOp(ctx, domain.SyncOperation{App: "web", Revision: "r1", TreeHash: "t1"})
+	must(t, err)
+	must(t, s.SetOpPhase(ctx, id, domain.OpRunning, "Host edge disconnected"))
+
+	applied, err := s.ApplyAgentReport(ctx, "edge", 1, domain.AgentReport{App: "web", Op: id, Phase: domain.OpSucceeded, Message: "synced"})
+	must(t, err)
+	op, _ := s.GetOp(ctx, id)
+	if !applied || op.Phase != domain.OpSucceeded || op.Message != "synced" || op.FinishedAt.IsZero() {
+		t.Fatalf("applied %v, op %+v", applied, op)
+	}
+	again, err := s.ApplyAgentReport(ctx, "edge", 1, domain.AgentReport{App: "web", Trigger: "self-heal", Phase: domain.OpSucceeded})
+	must(t, err)
+	if ops, _ := s.ListOps(ctx, "web"); again || len(ops) != 1 {
+		t.Fatalf("an entry sent again applied again: %v, %d ops", again, len(ops))
+	}
+
+	waiting, _ := s.CreateOp(ctx, domain.SyncOperation{App: "web", Revision: "r2"})
+	must(t, s.SetOpPhase(ctx, waiting, domain.OpWaiting, "waiting for Host edge"))
+	at := time.Date(2026, 11, 9, 3, 0, 0, 0, time.UTC)
+	_, err = s.ApplyAgentReport(ctx, "edge", 2, domain.AgentReport{App: "web", Revision: "r0", Checksum: "t0", Trigger: "rollback",
+		Phase: domain.OpSucceeded, At: at})
+	must(t, err)
+	ops, _ := s.ListOps(ctx, "web")
+	a, _ := s.GetApp(ctx, "web")
+	if len(ops) != 3 || ops[0].Trigger != "rollback" || ops[0].TreeHash != "t0" || !ops[0].StartedAt.Equal(at) || !a.RolledBack || a.AutoSync {
+		t.Fatalf("a rollback on the Host: ops %+v, app rolled back %v auto-sync %v", ops, a.RolledBack, a.AutoSync)
+	}
+	if op, _ := s.GetOp(ctx, waiting); op.Phase != domain.OpSuperseded {
+		t.Fatalf("a Sync waiting for the Host would undo its rollback on reconnect: %+v", op)
+	}
+
+	_, err = s.ApplyAgentReport(ctx, "edge", 3, domain.AgentReport{App: "db", Trigger: "self-heal", Phase: domain.OpFailed})
+	must(t, err)
+	if ops, _ := s.ListOps(ctx, "db"); len(ops) != 0 {
+		t.Fatalf("an Agent reported on another Host's Application: %+v", ops)
+	}
+	_, err = s.ApplyAgentReport(ctx, "nope", 1, domain.AgentReport{App: "web"})
+	wantErr(t, err, domain.ErrNotFound)
+}

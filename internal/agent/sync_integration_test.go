@@ -58,6 +58,9 @@ func TestAgentSyncsThroughHub(t *testing.T) {
 	srv := httptest.NewServer(hub)
 	defer srv.Close()
 	invite, _ := st.CreateInvite(ctx, "edge", time.Now().Add(time.Hour))
+	if err := st.CreateApp(ctx, domain.Application{Name: name, Host: "edge", AutoSync: true}); err != nil {
+		t.Fatal(err)
+	}
 	key, _ := SigningKey(t.TempDir())
 	actx, stop := context.WithCancel(ctx)
 	go ag.Connect(actx, Connection{URL: srv.URL, Invite: invite, Key: key, AgeRecipient: recipient})
@@ -118,4 +121,28 @@ func TestAgentSyncsThroughHub(t *testing.T) {
 	eventually(t, "the Host offline", func() bool {
 		return errors.Is(hub.Deploy(ctx, "edge", desiredState(a, r1, 5)), agents.ErrOffline)
 	})
+
+	// M3-06: offline, a rollback on the Host goes to the outbox; on reconnect it arrives, once
+	if err := ag.Rollback(ctx, name, "r2"); err != nil {
+		t.Fatal(err)
+	}
+	rollbacks := func() (n int) {
+		ops, _ := st.ListOps(ctx, name)
+		for _, op := range ops {
+			if op.Trigger == "rollback" {
+				n++
+			}
+		}
+		return n
+	}
+	for range 2 { // and a second connection sends nothing again: it was acknowledged
+		actx, stop = context.WithCancel(ctx)
+		go ag.Connect(actx, Connection{URL: srv.URL, Key: key, AgeRecipient: recipient})
+		eventually(t, "the rollback reported", func() bool { return rollbacks() == 1 })
+		eventually(t, "the outbox emptied by the ack", func() bool { e, _ := ag.db.Outbox(ctx); return len(e) == 0 })
+		stop()
+	}
+	if app, _ := st.GetApp(ctx, name); rollbacks() != 1 || !app.RolledBack || app.AutoSync {
+		t.Fatalf("rollbacks %d, app rolled back %v, auto-sync %v (Q25)", rollbacks(), app.RolledBack, app.AutoSync)
+	}
 }

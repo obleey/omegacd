@@ -179,10 +179,17 @@ func (ag *Agent) serve(ctx context.Context, conn *wire.Conn, c *Connection) erro
 			}
 			c.Key = next
 			ag.log.Info("signing key rotated", "fingerprint", e.GetEnrollmentStatus().GetFingerprint())
+		case e.GetOutboxAck() != nil:
+			if err := ag.db.Ack(ctx, e.GetOutboxAck().Seq); err != nil {
+				ag.log.Error("outbox ack", "err", err)
+			}
 		case e.GetEnrollmentStatus() != nil:
 			s := e.GetEnrollmentStatus()
 			if s.Approved {
 				ag.log.Info("connected to the Control Plane, approved", "host", s.Host)
+				if ag.db != nil { // an Agent without its state (tests of the connection alone) has nothing to sync
+					go ag.keepInSync(ctx, conn)
+				}
 			} else {
 				ag.log.Warn("enrolled, waiting for an admin to approve this Agent: the fingerprint the Control Plane shows "+
 					"must be this one", "host", s.Host, "fingerprint", s.Fingerprint)

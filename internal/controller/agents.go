@@ -35,3 +35,52 @@ func (c *Controller) deploy(ctx context.Context, a domain.Application, op domain
 	c.cfg.Log.DebugContext(ctx, "desired state to the agent", "files", len(ds.Files), "tree", r.Checksum)
 	return c.cfg.Agents.Deploy(ctx, a.Host, ds)
 }
+
+// AgentReported shows what an Agent's report changed (M3-06): its Sync Operations, then its status.
+func (c *Controller) AgentReported(ctx context.Context, app string) {
+	a, err := c.cfg.Store.GetApp(ctx, app)
+	if err != nil {
+		return
+	}
+	if ops, err := c.cfg.Store.ListOps(ctx, app); err == nil && len(ops) > 0 {
+		c.emit(domain.Event{Type: "op", App: app, Data: ops[0]})
+	}
+	c.reconcile(ctx, a)
+}
+
+// Resynced runs the Syncs that waited for the Host (Q81) now that its Agent is back, each as the same Sync Operation.
+func (c *Controller) Resynced(ctx context.Context, host string) {
+	apps, err := c.cfg.Store.ListApps(ctx)
+	if err != nil {
+		c.cfg.Log.ErrorContext(ctx, "list applications", "err", err)
+		return
+	}
+	for _, a := range apps {
+		if a.Host != host || a.Kind != domain.KindCompose {
+			continue
+		}
+		ops, err := c.cfg.Store.ListOps(ctx, a.Name)
+		if err != nil || len(ops) == 0 || ops[0].Phase != domain.OpWaiting {
+			continue
+		}
+		op := ops[0]
+		c.mu.Lock()
+		s := c.state(a.Name)
+		busy := s.syncing || s.deleting
+		if !busy {
+			s.syncing = true
+		}
+		c.mu.Unlock()
+		if busy {
+			continue
+		}
+		if err := c.cfg.Store.SetOpPhase(ctx, op.ID, domain.OpRunning, "Host "+host+" is back"); err != nil {
+			c.setSyncing(a.Name, false)
+			continue
+		}
+		op.Phase = domain.OpRunning
+		c.cfg.Log.InfoContext(ctx, "host back: running the sync that waited for it", "app", a.Name, "op", op.ID)
+		c.emit(domain.Event{Type: "op", App: a.Name, Data: op})
+		go c.runSync(a, op)
+	}
+}

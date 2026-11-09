@@ -74,7 +74,8 @@ http {
 	}
 	proxyPort := free.Addr().(*net.TCPAddr).Port
 	free.Close()
-	out, err := exec.Command("docker", "run", "-d", "--rm", "--add-host", "host.docker.internal:host-gateway",
+	// no --rm: a container that died keeps its log for hostPort to show
+	out, err := exec.Command("docker", "run", "-d", "--add-host", "host.docker.internal:host-gateway",
 		"-p", fmt.Sprintf("127.0.0.1:%d:80", proxyPort), "-v", filepath.Join(dir, "nginx.conf")+":/etc/nginx/nginx.conf:ro",
 		"docker.io/library/nginx:1.29-alpine").CombinedOutput()
 	if err != nil {
@@ -99,7 +100,9 @@ func hostPort(t *testing.T, container string) string {
 			}
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("nginx never answered: %v", err)
+			state, _ := exec.Command("docker", "inspect", "-f", "{{.State.Status}} exit {{.State.ExitCode}}", container).CombinedOutput()
+			logs, _ := exec.Command("docker", "logs", "--tail", "30", container).CombinedOutput()
+			t.Fatalf("nginx never answered: %v; container %s; its log:\n%s", err, strings.TrimSpace(string(state)), logs)
 		}
 	}
 }

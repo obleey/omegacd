@@ -130,6 +130,8 @@ ALTER TABLE hosts ADD COLUMN locked TEXT NOT NULL DEFAULT '';
 ALTER TABLE hosts ADD COLUMN agent TEXT NOT NULL DEFAULT '';
 `, `
 ALTER TABLE hosts ADD COLUMN allow_ips TEXT NOT NULL DEFAULT '[]';
+`, `
+ALTER TABLE hosts ADD COLUMN outbox_seq INTEGER NOT NULL DEFAULT 0;
 `}
 
 type Store struct {
@@ -596,6 +598,50 @@ func (s *Store) SetAllowIPs(ctx context.Context, host string, cidrs []string) er
 		b = []byte("[]")
 	}
 	return affected(s.db.ExecContext(ctx, `UPDATE hosts SET allow_ips = ? WHERE name = ?`, string(b), host))
+}
+
+func (s *Store) ApplyAgentReport(ctx context.Context, host string, seq uint64, r domain.AgentReport) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var last uint64
+	if err := tx.QueryRowContext(ctx, `SELECT outbox_seq FROM hosts WHERE name = ?`, host).Scan(&last); err != nil {
+		return false, mapErr(err)
+	}
+	if seq <= last {
+		return false, nil
+	}
+	if r.At.IsZero() {
+		r.At = time.Now() // finished_at 0 would read as unfinished
+	}
+	at := toUnix(r.At)
+	if r.Op != 0 {
+		// a report on a Sync the Control Plane sent; one on another Host's Application, or already finished, changes nothing
+		_, err = tx.ExecContext(ctx, `UPDATE ops SET phase=?, message=?, finished_at=?, tree_hash=COALESCE(NULLIF(?, ''), tree_hash)
+			WHERE id=? AND app=? AND finished_at=0 AND app IN (SELECT name FROM apps WHERE host=?)`,
+			r.Phase, r.Message, at, r.Checksum, r.Op, r.App, host)
+	} else {
+		_, err = tx.ExecContext(ctx, `INSERT INTO ops (app, revision, tree_hash, phase, message, trigger, started_at, finished_at)
+			SELECT name, ?, ?, ?, ?, ?, ?, ? FROM apps WHERE name=? AND host=?`,
+			r.Revision, r.Checksum, r.Phase, r.Message, r.Trigger, at, at, r.App, host)
+		if err == nil && r.Trigger == "rollback" && r.Phase == domain.OpSucceeded {
+			_, err = tx.ExecContext(ctx, `UPDATE apps SET rolled_back=1, auto_sync=0 WHERE name=? AND host=?`, r.App, host)
+		}
+		if err == nil && r.Trigger == "rollback" && r.Phase == domain.OpSucceeded {
+			// the rollback on the Host is the later, deliberate act: a Sync still waiting must not undo it on reconnect
+			_, err = tx.ExecContext(ctx, `UPDATE ops SET phase=?, message='superseded by a rollback on the Host', finished_at=?
+				WHERE app=? AND phase=?`, domain.OpSuperseded, at, r.App, domain.OpWaiting)
+		}
+	}
+	if err != nil {
+		return false, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE hosts SET outbox_seq=? WHERE name=?`, seq, host); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
 }
 
 func (s *Store) RecordAgent(ctx context.Context, host string, info domain.AgentInfo) error {

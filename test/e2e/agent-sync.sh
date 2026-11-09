@@ -90,6 +90,28 @@ check "a Sync to an offline Host waits for it (Q81)" '"$BIN" app history $APP -o
 import json,sys; op=json.load(sys.stdin)[0]; assert op[\"phase\"]==\"Waiting\" and \"waiting for Host edge\" in op[\"message\"], op"'
 check "its containers keep running meanwhile" '[ -n "$(ctr)" ]'
 
+# M3-06: back online, the Sync that waited runs; a rollback run on the Host while offline arrives exactly once
+hist() { "$BIN" app history $APP -o json | python3 -c "import json,sys; ops=json.load(sys.stdin); $1"; }
+WAIT=$(hist 'print(ops[0]["id"])')
+: > "$T/agent.log"; agent
+for _ in $(seq 120); do [ "$(hist "print([o for o in ops if o['id']==$WAIT][0]['phase'])")" = Succeeded ] && break; sleep 1; done
+check "the Sync that waited runs when its Agent is back, as the same Sync Operation (Q81)" \
+  '[ "$(hist "print([o for o in ops if o[\"id\"]==$WAIT][0][\"phase\"])")" = Succeeded ] && sleep 2 && docker logs $(ctr) 2>&1 | grep -q "conf v2"'
+REV1=$(hist "print([o for o in ops if o['id']==$OP][0]['revision'])")
+rollbacks() { hist 'print(sum(1 for o in ops if o["trigger"]=="rollback"))'; }
+BEFORE=$(rollbacks) # the rollback through the Control Plane above
+kill $AGENT; wait $AGENT 2>/dev/null
+out=$(env -i PATH="$PATH" HOME="$T/edge" XDG_RUNTIME_DIR="$T/edge/run" ${DOCKER_HOST:+DOCKER_HOST=$DOCKER_HOST} "$BIN" agent rollback $APP "$REV1" 2>&1); rc=$?
+check "offline, a rollback on the Host itself (Q25)" '[ $rc -eq 0 ] && sleep 2 && docker logs $(ctr) 2>&1 | tail -3 | grep -q "conf v1"'
+agent
+for _ in $(seq 60); do [ "$(rollbacks)" = $((BEFORE + 1)) ] && break; sleep 1; done
+check "back online, the Agent reports it from its outbox" '[ "$(rollbacks)" = $((BEFORE + 1)) ]'
+check "the Control Plane shows it rolled back on the Host, Auto-Sync off" '"$BIN" app get $APP -o json | python3 -c "
+import json,sys; v=json.load(sys.stdin); assert v[\"rolledBack\"] and not v[\"autoSync\"], v"'
+kill $AGENT; wait $AGENT 2>/dev/null; : > "$T/agent.log"; agent
+waitfor "$T/agent.log" "connected to the Control Plane, approved"; sleep 3
+check "exactly once: another connection doesn't report it again" '[ "$(rollbacks)" = $((BEFORE + 1)) ]'
+
 out=$(env -i PATH="$PATH" HOME="$T/other" OMEGACD_AGENT_CONTROL_PLANE=http://cp.example.com "$BIN" agent 2>&1); rc=$?
 check "an Agent refuses plain http to another machine (Q95)" '[ $rc -ne 0 ] && echo "$out" | grep -q "https only"'
 

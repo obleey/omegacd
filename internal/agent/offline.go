@@ -208,17 +208,27 @@ func reclaim(ctx context.Context, root, dir, image string) error {
 	return nil
 }
 
+// record puts a report in the outbox and has a live connection send it (M3-06).
+func (ag *Agent) record(ctx context.Context, rep *agentv1.SyncOperationReport) error {
+	if _, err := ag.db.Record(ctx, &agentv1.OutboxEntry{Event: &agentv1.OutboxEntry_SyncOperationReport{SyncOperationReport: rep}}); err != nil {
+		return err
+	}
+	select {
+	case ag.recorded <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
 // report runs do and records it in the outbox as a Sync Operation the Agent started (Q24).
 func (ag *Agent) report(ctx context.Context, a App, r Revision, trigger string, do func() error) error {
 	err := do()
-	rep := &agentv1.SyncOperationReport{App: a.Name, Revision: r.Revision, Trigger: trigger, Phase: string(domain.OpSucceeded)}
+	rep := &agentv1.SyncOperationReport{App: a.Name, Revision: r.Revision, Checksum: r.Checksum, Trigger: trigger,
+		Phase: string(domain.OpSucceeded)}
 	if err != nil {
 		rep.Phase, rep.Message = string(domain.OpFailed), err.Error()
 	}
-	if _, rerr := ag.db.Record(ctx, &agentv1.OutboxEntry{Event: &agentv1.OutboxEntry_SyncOperationReport{SyncOperationReport: rep}}); rerr != nil {
-		return errors.Join(err, rerr)
-	}
-	return err
+	return errors.Join(err, ag.record(ctx, rep))
 }
 
 // selfHeal re-applies an Application's deployed Revision from the cache when it has Self-Heal on and its containers
