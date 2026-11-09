@@ -253,9 +253,19 @@ is declared. Their details (syntax, UI, messages) are decided when each is built
 
 ## Coverage (2026-11-09)
 
-- **Q96** Coverage is measured combined: unit, integration and e2e (the binary built with `go build -cover`, its
-  coverage collected while the e2e scripts drive it), generated protobuf code excluded. Every PR covers 100% of its
-  reachable changed lines; a changed line no test reaches is named in the PR with why it can't be reached (an error
-  that can't happen, such as encoding a fixed struct). CI fails if total coverage drops (a ratchet). Literal 100% of
-  all code was rejected: it would need fault-injection hooks in production code for errors that can't happen. Set up
-  by M4-09; older code is raised over time.
+- **Q96** Coverage is **100% of all reachable code, existing code included**, measured combined: unit, integration
+  and e2e (the binary built with `go build -cover`, its coverage collected while the e2e scripts drive it), generated
+  protobuf code excluded. A line no test can reach (an error that can't happen, such as encoding a fixed struct into
+  memory or a healthy SQLite transaction failing) is marked in the code with a comment `coverage: unreachable, <reason>`
+  on its block's first line (M4-09: a marker moves with the code and is reviewed with it, where a list of line numbers
+  would go stale); any other uncovered line fails CI. No fault-injection hooks are added to production code just to reach
+  such lines. M4-09 builds the measurement and the CI check (at first: a PR's changed lines, and no drop in total);
+  M4-10 brings the existing code to 100%, after which CI checks all of it. (Refined the same day: first only new code
+  was required; the user wants all code.)
+
+## v0.1 (2026-11-09)
+
+- **Q97** v0.1 is deprecated. v0.2.0 is a new OmegaCD and its first stable release; there is no v0.1.0:
+  `v0.1.0-rc.10` stays v0.1's last release, marked deprecated with the `release-0.1` branch, which is frozen (no
+  fixes). v0.1-only code gets no tests or features: M4-05 deletes it, and M4-10's coverage starts after that. What
+  v0.1 still had to test on a real VPS moves to v0.2's real-world run (M7-04). Supersedes Q54's "fixes only" branch.

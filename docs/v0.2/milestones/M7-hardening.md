@@ -40,8 +40,14 @@ from a backup and rebuild it from nothing (Q24, Q30, Q31).
 **Depends on:** M6-01
 
 Your VPS and a Host behind NAT, installed with `install.sh`, a real stack imported and taken over, a week of normal use.
+It also covers what v0.1 never tested on a real server (Q97): a fresh install following the README only, the VPS's
+own Host Key and its secrets, `omegacd import` of the stacks already running there and their takeover, a private Git
+repository over SSH, and images from a private registry.
 
-**Done when:** recorded in TESTING.md with what was found and fixed.
+The scenarios, with steps and expected results, are TESTING.md's "Real-world run (v0.2, M7-04)" checklist: each ticket
+that builds one of its parts adds its exact commands.
+
+**Done when:** every row of that checklist is run and recorded in TESTING.md with what was found and fixed.
 
 ### M7-05 · Documentation
 **Status:** todo

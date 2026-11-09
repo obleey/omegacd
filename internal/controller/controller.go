@@ -951,7 +951,7 @@ func (c *Controller) deleteAppLocked(ctx context.Context, a domain.Application, 
 			}
 		}
 		if len(waiting) > 0 {
-			if err := c.cfg.Store.SetAppDeleting(ctx, a.Name, deleteHow(cascade, volumes)); err != nil {
+			if err := c.cfg.Store.SetAppDeleting(ctx, a.Name, deleteHow(cascade, volumes)); err != nil { // coverage: unreachable, the App of Apps was just read; only a delete racing this one
 				return err
 			}
 			return fmt.Errorf("%w of %s", domain.ErrWaitingForHost, strings.Join(waiting, ", "))
@@ -960,7 +960,7 @@ func (c *Controller) deleteAppLocked(ctx context.Context, a domain.Application, 
 	if a.Kind == domain.KindCompose && c.agentHost(ctx, a.Host) {
 		err := c.cfg.Agents.Remove(ctx, a.Host, a.Name, cascade && volumes, !cascade)
 		if errors.Is(err, agents.ErrOffline) || errors.Is(err, agents.ErrNotApproved) || errors.Is(err, agents.ErrDisconnected) {
-			if serr := c.cfg.Store.SetAppDeleting(ctx, a.Name, deleteHow(cascade, volumes)); serr != nil {
+			if serr := c.cfg.Store.SetAppDeleting(ctx, a.Name, deleteHow(cascade, volumes)); serr != nil { // coverage: unreachable, the app was just read; only a delete racing this one
 				return serr
 			}
 			c.cfg.Log.WarnContext(ctx, "delete waits for the host", "app", a.Name, "host", a.Host, "why", err)

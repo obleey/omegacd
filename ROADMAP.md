@@ -22,7 +22,8 @@ OmegaCD is early. This is the plan, most important first — it changes as real 
 - [x] `omegacd import`: move stacks started by hand into Git from your laptop over SSH — config into Git, data stays, secrets encrypted for the Host Key, `adopt: true` definitions
 - [x] Release candidates `v0.1.0-rc.1` … `rc.4`: binaries and multi-arch image published by CI
 
-Still to test before v0.1.0 (see [TESTING.md](TESTING.md)):
+v0.1 is deprecated (Q97): `v0.1.0-rc.10` is its last release, there is no v0.1.0; what was still to test moves to
+v0.2's real-world run (M7-04):
 
 - [ ] Fresh install on a clean VPS with the install script, following the README only
 - [ ] That VPS as a remote Host (SSH): deploy, files, health, logs, its own Host Key
@@ -33,8 +34,8 @@ Still to test before v0.1.0 (see [TESTING.md](TESTING.md)):
 ## v0.2 — pull-based Agents (in development on `main`)
 
 A breaking redesign, and the MVP: what a small team needs to run its Compose Hosts with it, on Debian/Ubuntu; more
-platforms (the RHEL family) and features come after it. v0.1 continues on the `release-0.1` branch for fixes only,
-and both are released together.
+platforms (the RHEL family) and features come after it. v0.2.0 is OmegaCD's first stable release; v0.1 stays on the
+frozen `release-0.1` branch, deprecated.
 The plan: [docs/v0.2](docs/v0.2/README.md) (architecture, decisions, 8 milestones of tickets).
 
 - **Agents** on every Host dial out to the Control Plane over one WebSocket and run Compose themselves; push over SSH/TLS goes away

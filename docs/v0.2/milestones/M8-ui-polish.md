@@ -45,10 +45,13 @@ line with fixes only).
 
 **Done when:** reviewed.
 
-### M8-06 · Release v0.1.0 and v0.2.0
+### M8-06 · Release v0.2.0
 **Status:** todo
 **Depends on:** M8-05, M7-04
 
-Tag `v0.1.0` on `release-0.1` and `v0.2.0` on `main`; images public; GitHub releases with the notes.
+Tag `v0.2.0` on `main`, OmegaCD's first stable release (Q97); images public; the GitHub release with the notes. v0.1 is
+deprecated: `v0.1.0-rc.10`'s GitHub release and the `release-0.1` branch say so and point to v0.2.0; there is no
+v0.1.0.
 
-**Done when:** both releases are published and installable with `install.sh`.
+**Done when:** v0.2.0 is published and installable with `install.sh`, and v0.1's last release and branch say they are
+deprecated.

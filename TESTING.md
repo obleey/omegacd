@@ -13,7 +13,52 @@
 | On the supported Linux Hosts (Q61) | the whole suite (`make test-all`) on **Ubuntu 24.04** and **Debian 13**, amd64 and arm64: four Hetzner servers, native, each with its distribution's own Docker, Compose and Podman (Ubuntu: Docker 29.1, Compose 2.40, Podman 4.9; Debian: Docker 26.1, Compose 2.26, Podman 5.4). All four run the same tests on the same engines: rootful and rootless Docker, rootless Podman in a container, and the server's own rootless Podman as the test's user. Files on Linux's own disk with real owners and modes | `make test-linux` (Hetzner servers from the separate omegacd-testinfra project: `make up` before, `make down` after); CI: Go, Agent engines and End to end on amd64 and arm64 runners |
 | Security | secret scan of the full Git history | gitleaks (CI) |
 
-## Real-world checklist (v0.1)
+## Coverage (Q96)
+
+Every kind of test counts: unit, integration, the Agent on every engine, and the e2e scripts, whose binary is built
+with `go build -cover` so every OmegaCD process they start records what it ran. Generated protobuf code is left out.
+
+```sh
+make cover          # the whole suite with coverage on (needs what make test-all needs), then the check
+go run ./test/coverage -base origin/main -floor test/coverage-floor cover/*.out   # the check alone
+```
+
+It prints each package's share and the total. It fails when a block no test reaches has a line changed against
+`main`, or when the total drops below `test/coverage-floor`. A block no test *can* reach (an error that can't happen,
+such as encoding a fixed struct into memory) is marked in the code with a comment `coverage: unreachable, <reason>` on
+its first line, and reviewed like any code. CI runs the same check in its Coverage job, merging the profiles of every
+job (amd64 and arm64). The floor starts just under the first measured total (84.0%, 2026-11-09: 987 uncovered blocks, 16
+marked unreachable); it only goes up, and after M4-10 it is 100%.
+
+## Real-world run (v0.2, M7-04)
+
+What the maintainer runs by hand on real machines before v0.2.0, once install (M6) and the UI (M5) exist. Each row
+gets its exact commands as the ticket that builds it lands (named in brackets until then). Record the date, version
+and result; everything found is fixed and recorded here before the release.
+
+**Needed:** a machine for the Control Plane with a domain and TLS through a reverse proxy; two Hosts, one public VPS and
+one behind NAT (one of them rootless Podman); a Git repository (Forgejo) with two or three real Compose apps; `age`
+and `sops` on a laptop.
+
+| # | Scenario | Steps | Expected | Result |
+|---|---|---|---|---|
+| 1 | Install | `install.sh` full mode, or the `.deb` (M6-01, M6-09), on the Control Plane machine; behind the reverse proxy (M6-06) | up over https; first login asks for a new password; the built-in Agent manages that machine as `local` with no enrollment step (M4-04) | |
+| 2 | Add Host | UI → Add Host (M5-01) → copy the one command → run it on the VPS → compare the fingerprint the Agent prints with the UI's → Approve; again for the Host behind NAT and a rootless Podman Host | each Host card online with engine, version, rootless, OS/arch (M5-02); nothing opened inbound on the Hosts | |
+| 3 | Secrets | copy the Host Key and its `.sops.yaml` rule from the Host card (M5-02); `sops edit` a `.env`; push | deploys with the values; they show nowhere in the UI (`KEY=••••`), the Control Plane's logs or disk | |
+| 4 | Apps | create apps from Git in the UI and from `app.yaml`; an App of Apps; a Forgejo webhook | a push deploys within seconds; Diff, logs, Health and resources show (M4-02); Prune removes what Git dropped | |
+| 5 | Private sources | a private Git repository over SSH; an image from a private registry (credentials in Settings) | both work; the credentials show nowhere in plaintext | |
+| 6 | Self-healing | `docker stop` a container of an app with Self-Heal; reboot a Host | it comes back on its own; after the reboot every app runs again, secrets back in RAM | |
+| 7 | Control Plane down | stop the Control Plane for an hour; on a Host, `omegacd agent rollback APP REVISION`; start the Control Plane | apps keep running; the rollback shows in History as rolled back on the Host, Auto-Sync off | |
+| 8 | Host offline | cut a Host's network; Sync an app to it; restore the network | the Sync shows Waiting, then runs by itself when the Host is back | |
+| 9 | Security | copy a Host's state dir to another machine and start an Agent there; unlock; rotate the key; set an IP allowlist from elsewhere; delete a Host | the copy locks the Host (both addresses shown); rotation keeps it connected; an Agent outside the allowlist is refused; a deleted Host's Agent is cut off | |
+| 10 | Takeover | `omegacd import --host NAME` of the stacks already running on the VPS (M6-05); review, push, Sync | config into Git, data untouched, taken over without recreating unchanged containers | |
+| 11 | Upgrade | upgrade the Control Plane, then the Agents one by one | Agents one minor behind keep working; older ones refused, their apps running, flagged outdated in the UI (M5-03) | |
+| 12 | Delete | delete apps with and without volumes, keeping containers; `--forget` one whose Host is gone | each does exactly what it says; a delete to an offline Host waits and finishes when it is back | |
+| 13 | A week of normal use | use it for real: deploys, edits, a reboot or two | nothing lost, nothing surprising; whatever is, is fixed and recorded here | |
+
+## Real-world checklist (v0.1, deprecated)
+
+v0.1 is deprecated (Q97); kept for its history.
 
 Run against a real OmegaCD with a real stack (the reference stack is an App of Apps with Caddy, WordPress + MariaDB,
 Forgejo, Umami + Postgres, Uptime Kuma, Prometheus + Grafana). Record the date, version and result.
