@@ -203,3 +203,47 @@ is declared. Their details (syntax, UI, messages) are decided when each is built
   offline. Agents never notify (no credentials on Hosts).
 - **Q72** SSO, RBAC, ApplicationSet's UI, Swarm and self-upgrade touch only the Control Plane: nothing in M3. Agent
   self-update stays later (Q41).
+
+## Control Plane in pull mode (design check before M4, 2026-11-09)
+
+- **Q79** M3-06 (resync, outbox drain) moves after M4-01 and depends on it: it heals real Syncs and drains real Sync
+  Operations, end to end through the binary, instead of stand-ins.
+- **Q80** Agents sit behind the controller's existing engine seam (`domain.Engine`): the controller and its tests stay.
+  Push Hosts (SSH/TLS) and Agent Hosts coexist, chosen per Host, until M4-05 deletes push; `local` uses the Docker
+  socket until the built-in Agent (M4-04).
+- **Q81** A Sync to an offline Host is a Sync Operation "Waiting for Host", kept in the database (it survives a Control
+  Plane restart). No separate queue: on reconnect the resync (M3-06) finds the difference and delivers it. A newer
+  Sync supersedes a waiting one (Q38).
+- **Q82** Self-Heal always runs on the Agent, online too; the Control Plane no longer self-heals and records the
+  Agent's reports as Sync Operations with trigger `self-heal`. One implementation, faster, the same History.
+- **Q83** Deleting an Application goes through the Agent with a new `RemoveApp` message (delete volumes, keep
+  containers), so `app delete`, `--volumes` and `--cascade=false` keep their meaning. To an offline Host it waits like
+  a Sync: the Application shows "Deleting, waiting for Host" and leaves the Control Plane only once its Agent confirms.
+- **Q84** Registry credentials stay on the Control Plane (Settings unchanged).
+- **Q85** The Agent asks for a registry's credentials when it is about to pull from it (image names may come from an
+  encrypted `.env` only the Agent reads); the Control Plane answers only for Hosts it serves an Application to.
+- **Q86** No plaintext anywhere: the answer is age-encrypted to the Host's Host Key (its public half from enrollment),
+  so it is ciphertext on the wire whatever the transport or proxy; sealed at rest on the Control Plane; on the Agent
+  decrypted in memory for that pull only, never written; never in any log.
+- **Q87** Live Sync progress (pulling, creating, started, …) is streamed by the Agent in a new message, so the UI's
+  live progress view keeps working.
+- **Q88** The built-in Agent's Host is `local` (the Control Plane's machine, today's name and default); its state dir
+  is in the Control Plane's data dir, its work dir `OMEGACD_WORKDIR`.
+- **Q89** The built-in Agent may run as the Control Plane's user, root included (the image runs as root today), with a
+  warning: it holds the Docker socket anyway. M6-02 makes the image run as a non-root user in the socket's group.
+- **Q90** After M4-05's fresh schema, the Control Plane refuses a v0.1 database with a message (export the Application
+  definitions with v0.1's `app export`, then reinstall) and leaves the file untouched (Q18).
+- **Q91** Resync never deletes: Applications on a Host the Control Plane doesn't know are "on the Host, not managed"
+  (Q30) and keep running; only `RemoveApp` removes anything from a Host.
+- **Q92** `app delete --forget` (and the UI's delete dialog) removes an Application whose Host is gone for good from
+  the Control Plane only, after a confirmation that its containers, if any still exist, are left alone.
+- **Q93** A Sync whose connection drops finishes on the Agent, and its result arrives through the outbox on reconnect;
+  meanwhile it shows "Running, Host disconnected", never failed.
+- **Q94** M4-01 is split: M4-01 Sync through Agents (files, blob transfer, Sync Operations, waiting for the Host,
+  Rollback, Self-Heal reports, Q95); new M4-08 deletes through Agents (Q83, Q92), registry credentials on request (Q85,
+  Q86), live progress (Q87). Order: M4-01, M3-06, M4-08, M4-02, then the rest of M4.
+- **Q95** The Agent trusts a Control Plane only over TLS: it refuses `http://` except on loopback (`localhost`,
+  `127.0.0.1`, `::1`: development and the built-in Agent), since over plain HTTP anyone in between could pose as the
+  Control Plane and deploy to the Host; the Agent's signature proves the Agent, only TLS proves the Control Plane.
+  `OMEGACD_AGENT_CA_FILE` trusts a private CA. Part of M4-01, the first ticket where the Control Plane sends what
+  deploys.

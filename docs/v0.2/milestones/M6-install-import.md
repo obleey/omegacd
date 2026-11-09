@@ -22,9 +22,10 @@ found by the test servers; the docs say so.
 **Depends on:** M4-04
 
 `deploy/compose.yaml` (full: Control Plane + optional standalone Source Server service) and `deploy/agent.yaml`
-(socket, state volume, work dir at the same path both sides, rootless variant with the user socket) (Q21).
+(socket, state volume, work dir at the same path both sides, rootless variant with the user socket) (Q21). The image
+runs as a non-root user in the Docker socket's group (`group_add`), not root (Q89).
 
-**Done when:** `docker compose up -d` brings each up; the Agent refuses a mount without path parity.
+**Done when:** `docker compose up -d` brings each up, as a non-root user; the Agent refuses a mount without path parity.
 
 ### M6-03 · systemd units
 **Status:** todo
