@@ -344,6 +344,7 @@ func runAgent(log *slog.Logger) error {
 	ag := agent.New(db, cache, work, secrets, eng, log.With("component", "agent"))
 	if cfg.ControlPlane != "" {
 		go ag.Connect(ctx, agent.Connection{URL: cfg.ControlPlane, Invite: cfg.Invite, Key: signingKey,
+			KeyPath:      filepath.Join(cfg.StateDir, "signing.key"),
 			AgeRecipient: hostKey.Recipient().String()})
 	}
 	return ag.Run(ctx)

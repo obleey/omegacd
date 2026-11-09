@@ -89,3 +89,63 @@ func waitLog(t *testing.T, log *logging.Buffer, want string) {
 		}
 	}
 }
+
+// The Agent rotates its key when asked, without a gap: it keeps its connection, writes the new key over the old one
+// owner-only once the Control Plane has it, and connects with it next time.
+func TestConnectRotates(t *testing.T) {
+	ctx := t.Context()
+	id, _ := age.GenerateX25519Identity()
+	st, err := store.Open(filepath.Join(t.TempDir(), "omegacd.db"), crypto.NewSealer(id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	hub := agents.New(st, nil)
+	srv := httptest.NewServer(hub)
+	defer srv.Close()
+	invite, _ := st.CreateInvite(ctx, "web", time.Now().Add(time.Hour))
+	dir := t.TempDir()
+	key, _ := SigningKey(dir)
+	var log logging.Buffer
+	l, _ := logging.New(&log, "info", "text")
+	go New(nil, nil, nil, nil, nil, l).Connect(ctx, Connection{URL: srv.URL, Invite: invite, Key: key,
+		KeyPath: filepath.Join(dir, "signing.key"), AgeRecipient: "age1web"})
+	waitLog(t, &log, "waiting for an admin")
+	hub.Approve(ctx, "web", domain.Fingerprint(key.Public().(ed25519.PublicKey)))
+	waitLog(t, &log, "approved")
+
+	fp, err := hub.Rotate(ctx, "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitLog(t, &log, "signing key rotated")
+	now, err := SigningKey(dir)
+	if err != nil || domain.Fingerprint(now.Public().(ed25519.PublicKey)) != fp {
+		t.Fatalf("the key file holds another key than %s: %v", fp, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "signing.key.next")); err == nil {
+		t.Fatal("signing.key.next left behind")
+	}
+	if strings.Count(log.String(), "connected to the Control Plane, approved") != 1 {
+		t.Fatalf("the connection didn't stay up:\n%s", log.String())
+	}
+}
+
+// A key readable by others is refused (Q77), and a rotation left unfinished by a crash is cleaned up at the start.
+func TestSigningKeyOwnerOnly(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := SigningKey(dir); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(dir, "signing.key.next"), []byte("half a rotation"), 0o600)
+	if _, err := SigningKey(dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "signing.key.next")); err == nil {
+		t.Fatal("an unfinished rotation's key is still there")
+	}
+	os.Chmod(filepath.Join(dir, "signing.key"), 0o644)
+	if _, err := SigningKey(dir); err == nil || !strings.Contains(err.Error(), "chmod 600") {
+		t.Fatalf("a key others can read: %v", err)
+	}
+}

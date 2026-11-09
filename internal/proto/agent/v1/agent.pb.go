@@ -45,6 +45,8 @@ type Envelope struct {
 	//	*Envelope_Error
 	//	*Envelope_Enroll
 	//	*Envelope_EnrollmentStatus
+	//	*Envelope_RotateKey
+	//	*Envelope_KeyRotation
 	Body          isEnvelope_Body `protobuf_oneof:"body"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -236,6 +238,24 @@ func (x *Envelope) GetEnrollmentStatus() *EnrollmentStatus {
 	return nil
 }
 
+func (x *Envelope) GetRotateKey() *RotateKey {
+	if x != nil {
+		if x, ok := x.Body.(*Envelope_RotateKey); ok {
+			return x.RotateKey
+		}
+	}
+	return nil
+}
+
+func (x *Envelope) GetKeyRotation() *KeyRotation {
+	if x != nil {
+		if x, ok := x.Body.(*Envelope_KeyRotation); ok {
+			return x.KeyRotation
+		}
+	}
+	return nil
+}
+
 type isEnvelope_Body interface {
 	isEnvelope_Body()
 }
@@ -300,6 +320,14 @@ type Envelope_EnrollmentStatus struct {
 	EnrollmentStatus *EnrollmentStatus `protobuf:"bytes,24,opt,name=enrollment_status,json=enrollmentStatus,proto3,oneof"`
 }
 
+type Envelope_RotateKey struct {
+	RotateKey *RotateKey `protobuf:"bytes,25,opt,name=rotate_key,json=rotateKey,proto3,oneof"`
+}
+
+type Envelope_KeyRotation struct {
+	KeyRotation *KeyRotation `protobuf:"bytes,26,opt,name=key_rotation,json=keyRotation,proto3,oneof"`
+}
+
 func (*Envelope_Hello) isEnvelope_Body() {}
 
 func (*Envelope_Challenge) isEnvelope_Body() {}
@@ -329,6 +357,10 @@ func (*Envelope_Error) isEnvelope_Body() {}
 func (*Envelope_Enroll) isEnvelope_Body() {}
 
 func (*Envelope_EnrollmentStatus) isEnvelope_Body() {}
+
+func (*Envelope_RotateKey) isEnvelope_Body() {}
+
+func (*Envelope_KeyRotation) isEnvelope_Body() {}
 
 type Hello struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
@@ -642,6 +674,99 @@ func (x *EnrollmentStatus) GetFingerprint() string {
 	return ""
 }
 
+// RotateKey asks the Agent for a new signing key (Q76: an admin's click). It answers with a KeyRotation, which the
+// Control Plane answers with an EnrollmentStatus carrying the new key's fingerprint (reply_to), or an Error.
+type RotateKey struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RotateKey) Reset() {
+	*x = RotateKey{}
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RotateKey) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RotateKey) ProtoMessage() {}
+
+func (x *RotateKey) ProtoReflect() protoreflect.Message {
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RotateKey.ProtoReflect.Descriptor instead.
+func (*RotateKey) Descriptor() ([]byte, []int) {
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{6}
+}
+
+// KeyRotation is the Agent's new signing key, signed by the current one: "omegacd-agent-v1 rotate\n" followed by
+// public_key. The Agent switches to it once the Control Plane has it; until it authenticates with it, the old key works
+// too, so a crash in between locks nobody out.
+type KeyRotation struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	PublicKey     []byte                 `protobuf:"bytes,1,opt,name=public_key,json=publicKey,proto3" json:"public_key,omitempty"`
+	Signature     []byte                 `protobuf:"bytes,2,opt,name=signature,proto3" json:"signature,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *KeyRotation) Reset() {
+	*x = KeyRotation{}
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *KeyRotation) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*KeyRotation) ProtoMessage() {}
+
+func (x *KeyRotation) ProtoReflect() protoreflect.Message {
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use KeyRotation.ProtoReflect.Descriptor instead.
+func (*KeyRotation) Descriptor() ([]byte, []int) {
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *KeyRotation) GetPublicKey() []byte {
+	if x != nil {
+		return x.PublicKey
+	}
+	return nil
+}
+
+func (x *KeyRotation) GetSignature() []byte {
+	if x != nil {
+		return x.Signature
+	}
+	return nil
+}
+
 type DesiredState struct {
 	state        protoimpl.MessageState `protogen:"open.v1"`
 	App          string                 `protobuf:"bytes,1,opt,name=app,proto3" json:"app,omitempty"`
@@ -658,7 +783,7 @@ type DesiredState struct {
 
 func (x *DesiredState) Reset() {
 	*x = DesiredState{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[6]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -670,7 +795,7 @@ func (x *DesiredState) String() string {
 func (*DesiredState) ProtoMessage() {}
 
 func (x *DesiredState) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[6]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -683,7 +808,7 @@ func (x *DesiredState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DesiredState.ProtoReflect.Descriptor instead.
 func (*DesiredState) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{6}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *DesiredState) GetApp() string {
@@ -739,7 +864,7 @@ type File struct {
 
 func (x *File) Reset() {
 	*x = File{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[7]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -751,7 +876,7 @@ func (x *File) String() string {
 func (*File) ProtoMessage() {}
 
 func (x *File) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[7]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -764,7 +889,7 @@ func (x *File) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use File.ProtoReflect.Descriptor instead.
 func (*File) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{7}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *File) GetPath() string {
@@ -800,7 +925,7 @@ type BlobRequest struct {
 
 func (x *BlobRequest) Reset() {
 	*x = BlobRequest{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[8]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -812,7 +937,7 @@ func (x *BlobRequest) String() string {
 func (*BlobRequest) ProtoMessage() {}
 
 func (x *BlobRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[8]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -825,7 +950,7 @@ func (x *BlobRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BlobRequest.ProtoReflect.Descriptor instead.
 func (*BlobRequest) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{8}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *BlobRequest) GetSha256() [][]byte {
@@ -853,7 +978,7 @@ type BlobChunk struct {
 
 func (x *BlobChunk) Reset() {
 	*x = BlobChunk{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[9]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -865,7 +990,7 @@ func (x *BlobChunk) String() string {
 func (*BlobChunk) ProtoMessage() {}
 
 func (x *BlobChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[9]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -878,7 +1003,7 @@ func (x *BlobChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BlobChunk.ProtoReflect.Descriptor instead.
 func (*BlobChunk) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{9}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *BlobChunk) GetSha256() []byte {
@@ -911,7 +1036,7 @@ type Resync struct {
 
 func (x *Resync) Reset() {
 	*x = Resync{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[10]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -923,7 +1048,7 @@ func (x *Resync) String() string {
 func (*Resync) ProtoMessage() {}
 
 func (x *Resync) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[10]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -936,7 +1061,7 @@ func (x *Resync) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Resync.ProtoReflect.Descriptor instead.
 func (*Resync) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{10}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *Resync) GetChecksums() map[string][]byte {
@@ -960,7 +1085,7 @@ type StatusReport struct {
 
 func (x *StatusReport) Reset() {
 	*x = StatusReport{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[11]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -972,7 +1097,7 @@ func (x *StatusReport) String() string {
 func (*StatusReport) ProtoMessage() {}
 
 func (x *StatusReport) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[11]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -985,7 +1110,7 @@ func (x *StatusReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatusReport.ProtoReflect.Descriptor instead.
 func (*StatusReport) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{11}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *StatusReport) GetApp() string {
@@ -1038,7 +1163,7 @@ type SyncOperationReport struct {
 
 func (x *SyncOperationReport) Reset() {
 	*x = SyncOperationReport{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[12]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1050,7 +1175,7 @@ func (x *SyncOperationReport) String() string {
 func (*SyncOperationReport) ProtoMessage() {}
 
 func (x *SyncOperationReport) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[12]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1063,7 +1188,7 @@ func (x *SyncOperationReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SyncOperationReport.ProtoReflect.Descriptor instead.
 func (*SyncOperationReport) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{12}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *SyncOperationReport) GetApp() string {
@@ -1113,7 +1238,7 @@ type LogsRequest struct {
 
 func (x *LogsRequest) Reset() {
 	*x = LogsRequest{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[13]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1125,7 +1250,7 @@ func (x *LogsRequest) String() string {
 func (*LogsRequest) ProtoMessage() {}
 
 func (x *LogsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[13]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1138,7 +1263,7 @@ func (x *LogsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogsRequest.ProtoReflect.Descriptor instead.
 func (*LogsRequest) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{13}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *LogsRequest) GetApp() string {
@@ -1178,7 +1303,7 @@ type LogChunk struct {
 
 func (x *LogChunk) Reset() {
 	*x = LogChunk{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[14]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1190,7 +1315,7 @@ func (x *LogChunk) String() string {
 func (*LogChunk) ProtoMessage() {}
 
 func (x *LogChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[14]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1203,7 +1328,7 @@ func (x *LogChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogChunk.ProtoReflect.Descriptor instead.
 func (*LogChunk) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{14}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *LogChunk) GetData() []byte {
@@ -1229,7 +1354,7 @@ type OutboxEntry struct {
 
 func (x *OutboxEntry) Reset() {
 	*x = OutboxEntry{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[15]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1241,7 +1366,7 @@ func (x *OutboxEntry) String() string {
 func (*OutboxEntry) ProtoMessage() {}
 
 func (x *OutboxEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[15]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1254,7 +1379,7 @@ func (x *OutboxEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OutboxEntry.ProtoReflect.Descriptor instead.
 func (*OutboxEntry) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{15}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *OutboxEntry) GetSeq() uint64 {
@@ -1321,7 +1446,7 @@ type Error struct {
 
 func (x *Error) Reset() {
 	*x = Error{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[16]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1333,7 +1458,7 @@ func (x *Error) String() string {
 func (*Error) ProtoMessage() {}
 
 func (x *Error) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[16]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1346,7 +1471,7 @@ func (x *Error) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Error.ProtoReflect.Descriptor instead.
 func (*Error) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{16}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *Error) GetMessage() string {
@@ -1360,7 +1485,7 @@ var File_omegacd_agent_v1_agent_proto protoreflect.FileDescriptor
 
 const file_omegacd_agent_v1_agent_proto_rawDesc = "" +
 	"\n" +
-	"\x1comegacd/agent/v1/agent.proto\x12\x10omegacd.agent.v1\"\x9d\b\n" +
+	"\x1comegacd/agent/v1/agent.proto\x12\x10omegacd.agent.v1\"\x9f\t\n" +
 	"\bEnvelope\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x04R\x02id\x12\x19\n" +
 	"\breply_to\x18\x02 \x01(\x04R\areplyTo\x12/\n" +
@@ -1380,7 +1505,10 @@ const file_omegacd_agent_v1_agent_proto_rawDesc = "" +
 	"\foutbox_entry\x18\x15 \x01(\v2\x1d.omegacd.agent.v1.OutboxEntryH\x00R\voutboxEntry\x12/\n" +
 	"\x05error\x18\x16 \x01(\v2\x17.omegacd.agent.v1.ErrorH\x00R\x05error\x122\n" +
 	"\x06enroll\x18\x17 \x01(\v2\x18.omegacd.agent.v1.EnrollH\x00R\x06enroll\x12Q\n" +
-	"\x11enrollment_status\x18\x18 \x01(\v2\".omegacd.agent.v1.EnrollmentStatusH\x00R\x10enrollmentStatusB\x06\n" +
+	"\x11enrollment_status\x18\x18 \x01(\v2\".omegacd.agent.v1.EnrollmentStatusH\x00R\x10enrollmentStatus\x12<\n" +
+	"\n" +
+	"rotate_key\x18\x19 \x01(\v2\x1b.omegacd.agent.v1.RotateKeyH\x00R\trotateKey\x12B\n" +
+	"\fkey_rotation\x18\x1a \x01(\v2\x1d.omegacd.agent.v1.KeyRotationH\x00R\vkeyRotationB\x06\n" +
 	"\x04body\"\xf2\x01\n" +
 	"\x05Hello\x12#\n" +
 	"\ragent_version\x18\x01 \x01(\tR\fagentVersion\x12)\n" +
@@ -1403,7 +1531,12 @@ const file_omegacd_agent_v1_agent_proto_rawDesc = "" +
 	"\x10EnrollmentStatus\x12\x12\n" +
 	"\x04host\x18\x01 \x01(\tR\x04host\x12\x1a\n" +
 	"\bapproved\x18\x02 \x01(\bR\bapproved\x12 \n" +
-	"\vfingerprint\x18\x03 \x01(\tR\vfingerprint\"\xc6\x01\n" +
+	"\vfingerprint\x18\x03 \x01(\tR\vfingerprint\"\v\n" +
+	"\tRotateKey\"J\n" +
+	"\vKeyRotation\x12\x1d\n" +
+	"\n" +
+	"public_key\x18\x01 \x01(\fR\tpublicKey\x12\x1c\n" +
+	"\tsignature\x18\x02 \x01(\fR\tsignature\"\xc6\x01\n" +
 	"\fDesiredState\x12\x10\n" +
 	"\x03app\x18\x01 \x01(\tR\x03app\x12\x1a\n" +
 	"\brevision\x18\x02 \x01(\tR\brevision\x12,\n" +
@@ -1467,7 +1600,7 @@ func file_omegacd_agent_v1_agent_proto_rawDescGZIP() []byte {
 	return file_omegacd_agent_v1_agent_proto_rawDescData
 }
 
-var file_omegacd_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
+var file_omegacd_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
 var file_omegacd_agent_v1_agent_proto_goTypes = []any{
 	(*Envelope)(nil),            // 0: omegacd.agent.v1.Envelope
 	(*Hello)(nil),               // 1: omegacd.agent.v1.Hello
@@ -1475,44 +1608,48 @@ var file_omegacd_agent_v1_agent_proto_goTypes = []any{
 	(*ChallengeResponse)(nil),   // 3: omegacd.agent.v1.ChallengeResponse
 	(*Enroll)(nil),              // 4: omegacd.agent.v1.Enroll
 	(*EnrollmentStatus)(nil),    // 5: omegacd.agent.v1.EnrollmentStatus
-	(*DesiredState)(nil),        // 6: omegacd.agent.v1.DesiredState
-	(*File)(nil),                // 7: omegacd.agent.v1.File
-	(*BlobRequest)(nil),         // 8: omegacd.agent.v1.BlobRequest
-	(*BlobChunk)(nil),           // 9: omegacd.agent.v1.BlobChunk
-	(*Resync)(nil),              // 10: omegacd.agent.v1.Resync
-	(*StatusReport)(nil),        // 11: omegacd.agent.v1.StatusReport
-	(*SyncOperationReport)(nil), // 12: omegacd.agent.v1.SyncOperationReport
-	(*LogsRequest)(nil),         // 13: omegacd.agent.v1.LogsRequest
-	(*LogChunk)(nil),            // 14: omegacd.agent.v1.LogChunk
-	(*OutboxEntry)(nil),         // 15: omegacd.agent.v1.OutboxEntry
-	(*Error)(nil),               // 16: omegacd.agent.v1.Error
-	nil,                         // 17: omegacd.agent.v1.Resync.ChecksumsEntry
+	(*RotateKey)(nil),           // 6: omegacd.agent.v1.RotateKey
+	(*KeyRotation)(nil),         // 7: omegacd.agent.v1.KeyRotation
+	(*DesiredState)(nil),        // 8: omegacd.agent.v1.DesiredState
+	(*File)(nil),                // 9: omegacd.agent.v1.File
+	(*BlobRequest)(nil),         // 10: omegacd.agent.v1.BlobRequest
+	(*BlobChunk)(nil),           // 11: omegacd.agent.v1.BlobChunk
+	(*Resync)(nil),              // 12: omegacd.agent.v1.Resync
+	(*StatusReport)(nil),        // 13: omegacd.agent.v1.StatusReport
+	(*SyncOperationReport)(nil), // 14: omegacd.agent.v1.SyncOperationReport
+	(*LogsRequest)(nil),         // 15: omegacd.agent.v1.LogsRequest
+	(*LogChunk)(nil),            // 16: omegacd.agent.v1.LogChunk
+	(*OutboxEntry)(nil),         // 17: omegacd.agent.v1.OutboxEntry
+	(*Error)(nil),               // 18: omegacd.agent.v1.Error
+	nil,                         // 19: omegacd.agent.v1.Resync.ChecksumsEntry
 }
 var file_omegacd_agent_v1_agent_proto_depIdxs = []int32{
 	1,  // 0: omegacd.agent.v1.Envelope.hello:type_name -> omegacd.agent.v1.Hello
 	2,  // 1: omegacd.agent.v1.Envelope.challenge:type_name -> omegacd.agent.v1.Challenge
 	3,  // 2: omegacd.agent.v1.Envelope.challenge_response:type_name -> omegacd.agent.v1.ChallengeResponse
-	6,  // 3: omegacd.agent.v1.Envelope.desired_state:type_name -> omegacd.agent.v1.DesiredState
-	8,  // 4: omegacd.agent.v1.Envelope.blob_request:type_name -> omegacd.agent.v1.BlobRequest
-	9,  // 5: omegacd.agent.v1.Envelope.blob_chunk:type_name -> omegacd.agent.v1.BlobChunk
-	10, // 6: omegacd.agent.v1.Envelope.resync:type_name -> omegacd.agent.v1.Resync
-	11, // 7: omegacd.agent.v1.Envelope.status_report:type_name -> omegacd.agent.v1.StatusReport
-	12, // 8: omegacd.agent.v1.Envelope.sync_operation_report:type_name -> omegacd.agent.v1.SyncOperationReport
-	13, // 9: omegacd.agent.v1.Envelope.logs_request:type_name -> omegacd.agent.v1.LogsRequest
-	14, // 10: omegacd.agent.v1.Envelope.log_chunk:type_name -> omegacd.agent.v1.LogChunk
-	15, // 11: omegacd.agent.v1.Envelope.outbox_entry:type_name -> omegacd.agent.v1.OutboxEntry
-	16, // 12: omegacd.agent.v1.Envelope.error:type_name -> omegacd.agent.v1.Error
+	8,  // 3: omegacd.agent.v1.Envelope.desired_state:type_name -> omegacd.agent.v1.DesiredState
+	10, // 4: omegacd.agent.v1.Envelope.blob_request:type_name -> omegacd.agent.v1.BlobRequest
+	11, // 5: omegacd.agent.v1.Envelope.blob_chunk:type_name -> omegacd.agent.v1.BlobChunk
+	12, // 6: omegacd.agent.v1.Envelope.resync:type_name -> omegacd.agent.v1.Resync
+	13, // 7: omegacd.agent.v1.Envelope.status_report:type_name -> omegacd.agent.v1.StatusReport
+	14, // 8: omegacd.agent.v1.Envelope.sync_operation_report:type_name -> omegacd.agent.v1.SyncOperationReport
+	15, // 9: omegacd.agent.v1.Envelope.logs_request:type_name -> omegacd.agent.v1.LogsRequest
+	16, // 10: omegacd.agent.v1.Envelope.log_chunk:type_name -> omegacd.agent.v1.LogChunk
+	17, // 11: omegacd.agent.v1.Envelope.outbox_entry:type_name -> omegacd.agent.v1.OutboxEntry
+	18, // 12: omegacd.agent.v1.Envelope.error:type_name -> omegacd.agent.v1.Error
 	4,  // 13: omegacd.agent.v1.Envelope.enroll:type_name -> omegacd.agent.v1.Enroll
 	5,  // 14: omegacd.agent.v1.Envelope.enrollment_status:type_name -> omegacd.agent.v1.EnrollmentStatus
-	7,  // 15: omegacd.agent.v1.DesiredState.files:type_name -> omegacd.agent.v1.File
-	17, // 16: omegacd.agent.v1.Resync.checksums:type_name -> omegacd.agent.v1.Resync.ChecksumsEntry
-	11, // 17: omegacd.agent.v1.OutboxEntry.status_report:type_name -> omegacd.agent.v1.StatusReport
-	12, // 18: omegacd.agent.v1.OutboxEntry.sync_operation_report:type_name -> omegacd.agent.v1.SyncOperationReport
-	19, // [19:19] is the sub-list for method output_type
-	19, // [19:19] is the sub-list for method input_type
-	19, // [19:19] is the sub-list for extension type_name
-	19, // [19:19] is the sub-list for extension extendee
-	0,  // [0:19] is the sub-list for field type_name
+	6,  // 15: omegacd.agent.v1.Envelope.rotate_key:type_name -> omegacd.agent.v1.RotateKey
+	7,  // 16: omegacd.agent.v1.Envelope.key_rotation:type_name -> omegacd.agent.v1.KeyRotation
+	9,  // 17: omegacd.agent.v1.DesiredState.files:type_name -> omegacd.agent.v1.File
+	19, // 18: omegacd.agent.v1.Resync.checksums:type_name -> omegacd.agent.v1.Resync.ChecksumsEntry
+	13, // 19: omegacd.agent.v1.OutboxEntry.status_report:type_name -> omegacd.agent.v1.StatusReport
+	14, // 20: omegacd.agent.v1.OutboxEntry.sync_operation_report:type_name -> omegacd.agent.v1.SyncOperationReport
+	21, // [21:21] is the sub-list for method output_type
+	21, // [21:21] is the sub-list for method input_type
+	21, // [21:21] is the sub-list for extension type_name
+	21, // [21:21] is the sub-list for extension extendee
+	0,  // [0:21] is the sub-list for field type_name
 }
 
 func init() { file_omegacd_agent_v1_agent_proto_init() }
@@ -1536,8 +1673,10 @@ func file_omegacd_agent_v1_agent_proto_init() {
 		(*Envelope_Error)(nil),
 		(*Envelope_Enroll)(nil),
 		(*Envelope_EnrollmentStatus)(nil),
+		(*Envelope_RotateKey)(nil),
+		(*Envelope_KeyRotation)(nil),
 	}
-	file_omegacd_agent_v1_agent_proto_msgTypes[15].OneofWrappers = []any{
+	file_omegacd_agent_v1_agent_proto_msgTypes[17].OneofWrappers = []any{
 		(*OutboxEntry_StatusReport)(nil),
 		(*OutboxEntry_SyncOperationReport)(nil),
 	}
@@ -1547,7 +1686,7 @@ func file_omegacd_agent_v1_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_omegacd_agent_v1_agent_proto_rawDesc), len(file_omegacd_agent_v1_agent_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   18,
+			NumMessages:   20,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

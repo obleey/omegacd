@@ -88,6 +88,8 @@ func New(cfg Config) http.Handler {
 	mux.HandleFunc("POST /api/settings/hosts/{name}/test", s.testHost)
 	mux.HandleFunc("POST /api/settings/hosts/{name}/invite", s.inviteHost)
 	mux.HandleFunc("POST /api/settings/hosts/{name}/approve", s.approveHost)
+	mux.HandleFunc("POST /api/settings/hosts/{name}/rotate", s.rotateHost)
+	mux.HandleFunc("POST /api/settings/hosts/{name}/unlock", s.unlockHost)
 	mux.HandleFunc("GET /api/settings/hosts/{name}/keys", s.hostKeys)
 	mux.HandleFunc("POST /api/settings/hosts/{name}/keys/generate", s.generateHostKey)
 	mux.HandleFunc("POST /api/settings/hosts/{name}/keys/import", s.importHostKey)

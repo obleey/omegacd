@@ -677,6 +677,12 @@ func (c *CLI) hostList(ctx context.Context, args []string) error {
 			u = "(docker socket)"
 		case u == "" && h.Fingerprint == "":
 			u, agent = "(agent)", "invited"
+		case u == "" && len(h.Locked) > 0:
+			var at []string
+			for _, c := range h.Locked {
+				at = append(at, c.Address)
+			}
+			u, agent = "(agent)", "LOCKED: two connections ("+strings.Join(at, ", ")+")"
 		case u == "" && h.Approved:
 			u, agent = "(agent)", "approved "+h.Fingerprint
 		case u == "":
@@ -714,6 +720,47 @@ func (c *CLI) hostAdd(ctx context.Context, args []string) error {
 		"Then approve it, after comparing the fingerprint the Agent prints with the one omegacd host list shows:\n\n"+
 		"  omegacd host approve %s SHA256:…\n", pos[0], res.ExpiresAt.Local().Format("2006-01-02 15:04"), cl.server, res.Invite, pos[0])
 	return nil
+}
+
+// hostAction runs a host command that POSTs to /api/settings/hosts/NAME/action (or DELETEs, action "") and says done.
+func (c *CLI) hostAction(ctx context.Context, cmd, method, action string, args []string, done func(host, fingerprint string) string) error {
+	var o opts
+	pos, err := parse(c.flags(cmd, &o), args, 1, 1)
+	if err != nil {
+		return err
+	}
+	cl, err := c.client(o)
+	if err != nil {
+		return err
+	}
+	var res map[string]string
+	p := "/api/settings/hosts/" + url.PathEscape(pos[0])
+	if action != "" {
+		p += "/" + action
+	}
+	if err := cl.do(ctx, method, p, nil, &res); err != nil {
+		return err
+	}
+	fmt.Fprintln(c.Stdout, done(pos[0], res["fingerprint"]))
+	return nil
+}
+
+func (c *CLI) hostRotate(ctx context.Context, args []string) error {
+	return c.hostAction(ctx, "host rotate", "POST", "rotate", args, func(h, fp string) string {
+		return "Host " + h + ": its Agent's new key is " + fp
+	})
+}
+
+func (c *CLI) hostUnlock(ctx context.Context, args []string) error {
+	return c.hostAction(ctx, "host unlock", "POST", "unlock", args, func(h, _ string) string {
+		return "Host " + h + " unlocked: its Agent can connect again"
+	})
+}
+
+func (c *CLI) hostDelete(ctx context.Context, args []string) error {
+	return c.hostAction(ctx, "host delete", "DELETE", "", args, func(h, _ string) string {
+		return "Host " + h + " deleted: its Agent's key is revoked"
+	})
 }
 
 func (c *CLI) hostApprove(ctx context.Context, args []string) error {

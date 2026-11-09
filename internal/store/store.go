@@ -123,6 +123,9 @@ CREATE TABLE invites (
 	hash TEXT NOT NULL UNIQUE,
 	expires_at INTEGER NOT NULL
 );
+`, `
+ALTER TABLE hosts ADD COLUMN previous_signing_key BLOB;
+ALTER TABLE hosts ADD COLUMN locked TEXT NOT NULL DEFAULT '';
 `}
 
 type Store struct {
@@ -474,15 +477,21 @@ const defaultWorkDir = "/var/lib/omegacd"
 const hostCols = `name, url, work_dir, ssh_private_key, tls_ca, tls_cert, tls_key, created_at`
 
 // hostSelect reads a Host with its Agent's enrollment, which SaveHost never changes
-const hostSelect = `SELECT ` + hostCols + `, signing_key, age_recipient, approved FROM hosts`
+const hostSelect = `SELECT ` + hostCols + `, signing_key, age_recipient, approved, locked FROM hosts`
 
 func (s *Store) scanHost(r scanner) (domain.Host, error) {
 	var h domain.Host
 	var sealed [4]string
 	var created int64
+	var locked string
 	if err := r.Scan(&h.Name, &h.URL, &h.WorkDir, &sealed[0], &sealed[1], &sealed[2], &sealed[3], &created,
-		&h.SigningKey, &h.AgeRecipient, &h.Approved); err != nil {
+		&h.SigningKey, &h.AgeRecipient, &h.Approved, &locked); err != nil {
 		return h, mapErr(err)
+	}
+	if locked != "" {
+		if err := json.Unmarshal([]byte(locked), &h.Locked); err != nil {
+			return h, fmt.Errorf("host %s: locked: %w", h.Name, err)
+		}
 	}
 	h.CreatedAt = fromUnix(created)
 	if len(h.SigningKey) > 0 {
@@ -523,7 +532,39 @@ func (s *Store) HostBySigningKey(ctx context.Context, key []byte) (domain.Host, 
 	if len(key) == 0 {
 		return domain.Host{}, domain.ErrNotFound
 	}
-	return s.scanHost(s.db.QueryRowContext(ctx, hostSelect+` WHERE signing_key = ?`, key))
+	return s.scanHost(s.db.QueryRowContext(ctx, hostSelect+` WHERE signing_key = ?1 OR previous_signing_key = ?1`, key))
+}
+
+func (s *Store) RotateSigningKey(ctx context.Context, host string, old, next []byte) error {
+	if len(next) == 0 {
+		return fmt.Errorf("%w: no new key", domain.ErrInvalid)
+	}
+	err := affected(s.db.ExecContext(ctx, `UPDATE hosts SET previous_signing_key = signing_key, signing_key = ?
+		WHERE name = ? AND signing_key = ?`, next, host, old))
+	if errors.Is(err, domain.ErrNotFound) {
+		return fmt.Errorf("%w: Host %s's key changed meanwhile", domain.ErrInvalid, host)
+	}
+	return err
+}
+
+func (s *Store) ConfirmSigningKey(ctx context.Context, host string, key []byte) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE hosts SET
+		signing_key = CASE WHEN previous_signing_key = ?1 THEN previous_signing_key ELSE signing_key END,
+		previous_signing_key = NULL
+		WHERE name = ?2 AND ?1 IN (signing_key, previous_signing_key)`, key, host)
+	return mapErr(err)
+}
+
+func (s *Store) LockHost(ctx context.Context, host string, conns []domain.AgentConnection) error {
+	b, err := json.Marshal(conns)
+	if err != nil {
+		return err
+	}
+	return affected(s.db.ExecContext(ctx, `UPDATE hosts SET locked = ? WHERE name = ?`, string(b), host))
+}
+
+func (s *Store) UnlockHost(ctx context.Context, host string) error {
+	return affected(s.db.ExecContext(ctx, `UPDATE hosts SET locked = '' WHERE name = ?`, host))
 }
 
 // ---- enrollment ----
