@@ -448,3 +448,45 @@ func TestEnrollment(t *testing.T) {
 		t.Fatalf("%d invites left", n)
 	}
 }
+
+func TestKeyRotationAndLock(t *testing.T) {
+	s, _ := open(t)
+	invite, err := s.CreateInvite(ctx, "web", time.Now().Add(time.Hour))
+	must(t, err)
+	_, err = s.Enroll(ctx, invite, []byte("key-1"), "age1web", time.Now())
+	must(t, err)
+
+	wantErr(t, s.RotateSigningKey(ctx, "web", []byte("not its key"), []byte("key-2")), domain.ErrInvalid)
+	must(t, s.RotateSigningKey(ctx, "web", []byte("key-1"), []byte("key-2")))
+	for _, k := range []string{"key-1", "key-2"} { // both, until the Agent authenticates with one
+		if h, err := s.HostBySigningKey(ctx, []byte(k)); err != nil || h.Name != "web" {
+			t.Fatalf("by %s: %+v %v", k, h, err)
+		}
+	}
+	if h, _ := s.GetHost(ctx, "web"); h.Fingerprint != domain.Fingerprint([]byte("key-2")) {
+		t.Fatalf("shows %s, want the new key", h.Fingerprint)
+	}
+	must(t, s.ConfirmSigningKey(ctx, "web", []byte("key-2"))) // the Agent switched
+	_, err = s.HostBySigningKey(ctx, []byte("key-1"))
+	wantErr(t, err, domain.ErrNotFound)
+
+	must(t, s.RotateSigningKey(ctx, "web", []byte("key-2"), []byte("key-3")))
+	must(t, s.ConfirmSigningKey(ctx, "web", []byte("key-2"))) // it never switched (a crash): the old key is back
+	if h, _ := s.GetHost(ctx, "web"); h.Fingerprint != domain.Fingerprint([]byte("key-2")) {
+		t.Fatalf("shows %s, want the old key back", h.Fingerprint)
+	}
+	_, err = s.HostBySigningKey(ctx, []byte("key-3"))
+	wantErr(t, err, domain.ErrNotFound)
+
+	since := time.Date(2026, 11, 9, 10, 0, 0, 0, time.UTC)
+	conns := []domain.AgentConnection{{Address: "10.0.0.1", Since: since}, {Address: "10.0.0.2", Since: since.Add(time.Hour)}}
+	must(t, s.LockHost(ctx, "web", conns))
+	if h, _ := s.GetHost(ctx, "web"); !reflect.DeepEqual(h.Locked, conns) {
+		t.Fatalf("locked: %+v", h.Locked)
+	}
+	must(t, s.UnlockHost(ctx, "web"))
+	if h, _ := s.GetHost(ctx, "web"); h.Locked != nil {
+		t.Fatalf("still locked: %+v", h.Locked)
+	}
+	wantErr(t, s.LockHost(ctx, "nope", conns), domain.ErrNotFound)
+}

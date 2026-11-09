@@ -731,7 +731,13 @@ func TestEnrollmentAPI(t *testing.T) {
 	e.expect("POST", "/api/settings/hosts/local/invite", "", 400)
 	e.expect("POST", "/api/settings/hosts/web/approve", `{"fingerprint":"SHA256:wrong"}`, 400)
 	e.expect("POST", "/api/settings/hosts/web/approve", `{"fingerprint":"SHA256:right"}`, 204)
+	if b := e.expect("POST", "/api/settings/hosts/web/rotate", "", 400); !strings.Contains(b, "not connected") {
+		t.Fatal(b)
+	}
+	e.expect("POST", "/api/settings/hosts/web/unlock", "", 204)
 }
+
+func (s *fakeStore) UnlockHost(context.Context, string) error { return nil }
 
 // The Agents' endpoint needs no session (an Agent signs a challenge instead) and upgrades through the API's
 // middleware: the Agent gets its challenge.

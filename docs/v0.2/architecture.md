@@ -156,7 +156,10 @@ only the Control Plane, never Agents or users. A reverse proxy in between must p
    waiting Agent stays connected and is sent nothing but `EnrollmentStatus` until then, and hears its approval at once.
 4. Every connection authenticates by **signing a fresh challenge**: no bearer tokens to store or rotate. Works
    behind TLS-terminating proxies.
-5. A second live connection with the same key **locks** the Host until an admin acts. Optional IP allowlist per
+5. A second live connection with the same key **locks** the Host until an admin acts (M3-03: only if the first
+   still answers a ping; a dead one is replaced, so a network change or restart doesn't lock). Rotation: the Agent
+   signs its new key with the old one and switches once the Control Plane has it; the old key stays valid until the
+   Agent authenticates with either, and using the old one undoes the rotation, so a crash between locks nobody out. Optional IP allowlist per
    Host (real client address via `OMEGACD_TRUSTED_PROXIES`). One-click key rotation and revocation.
 6. A Host can be renamed only while no Application uses it.
 

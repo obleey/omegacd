@@ -183,6 +183,15 @@ type Host struct {
 	Fingerprint  string `json:"fingerprint,omitempty"`
 	AgeRecipient string `json:"ageRecipient,omitempty"`
 	Approved     bool   `json:"approved"`
+	// Locked holds the two live connections that used the Host's key at once (Q28, Q75): until an admin unlocks the
+	// Host or revokes it (deletes it), its Agent is refused. Its Applications keep running.
+	Locked []AgentConnection `json:"locked,omitempty"`
+}
+
+// AgentConnection is where and since when an Agent was connected.
+type AgentConnection struct {
+	Address string    `json:"address"`
+	Since   time.Time `json:"since"`
 }
 
 // Fingerprint is how an admin compares an Agent's signing key with what the Agent prints: "SHA256:" and the unpadded
@@ -384,7 +393,17 @@ type Store interface {
 	// Enroll uses up invite (ErrInvalid if unknown, used or expired at now): its Host gets the Agent's keys, waiting
 	// for approval.
 	Enroll(ctx context.Context, invite string, signingKey []byte, ageRecipient string, now time.Time) (Host, error)
-	HostBySigningKey(ctx context.Context, key []byte) (Host, error) // ErrNotFound for a key no Host has
+	// HostBySigningKey finds the Host by its Agent's key, or by its previous key while a rotation isn't confirmed;
+	// ErrNotFound for a key no Host has.
+	HostBySigningKey(ctx context.Context, key []byte) (Host, error)
+	// RotateSigningKey makes next the Host's key if old is its key now; old stays valid until ConfirmSigningKey.
+	RotateSigningKey(ctx context.Context, host string, old, next []byte) error
+	// ConfirmSigningKey records that the Agent authenticated with key: the current key ends a rotation, the previous
+	// one undoes it (the Agent never switched).
+	ConfirmSigningKey(ctx context.Context, host string, key []byte) error
+	// LockHost locks the Host with the connections that shared its key; UnlockHost clears it.
+	LockHost(ctx context.Context, host string, conns []AgentConnection) error
+	UnlockHost(ctx context.Context, host string) error
 	// ApproveHost approves the Host's key if fingerprint is the key's (ErrInvalid otherwise, or without a key).
 	ApproveHost(ctx context.Context, host, fingerprint string) error
 

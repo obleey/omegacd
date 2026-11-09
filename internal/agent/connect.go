@@ -27,16 +27,22 @@ const ProtocolVersion = 1
 // connection signs a challenge with it. Owner-only, like the Host Key.
 func SigningKey(stateDir string) (ed25519.PrivateKey, error) {
 	path := filepath.Join(stateDir, "signing.key")
-	b, err := os.ReadFile(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		_, key, err := ed25519.GenerateKey(nil)
-		if err != nil {
-			return nil, err
-		}
-		pem := fmt.Sprintf("# created: %s\n# fingerprint: %s\n%s\n", time.Now().Format(time.RFC3339),
-			domain.Fingerprint(key.Public().(ed25519.PublicKey)), base64.StdEncoding.EncodeToString(key.Seed()))
-		return key, writeNew(path, []byte(pem))
+	// a rotation the Agent didn't finish: the Control Plane takes the old key back at the next connection
+	if err := os.Remove(path + ".next"); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
 	}
+	fi, err := os.Stat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		key, err := newSigningKey(path)
+		return key, err
+	}
+	if err != nil {
+		return nil, err
+	}
+	if fi.Mode().Perm()&0o077 != 0 { // Q77: owner-only
+		return nil, fmt.Errorf("%s can be read by others (mode %v): chmod 600 it, and rotate the key if anyone may have copied it", path, fi.Mode().Perm())
+	}
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -53,26 +59,48 @@ func SigningKey(stateDir string) (ed25519.PrivateKey, error) {
 	return nil, fmt.Errorf("%s: not an omegacd signing key", path)
 }
 
+// newSigningKey writes a new key to path, owner-only; never over an existing file.
+func newSigningKey(path string) (ed25519.PrivateKey, error) {
+	_, key, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		return nil, err
+	}
+	pem := fmt.Sprintf("# created: %s\n# fingerprint: %s\n%s\n", time.Now().Format(time.RFC3339),
+		domain.Fingerprint(key.Public().(ed25519.PublicKey)), base64.StdEncoding.EncodeToString(key.Seed()))
+	return key, writeNew(path, []byte(pem))
+}
+
+// rotate writes a new signing key to path, owner-only, replacing one a refused rotation left.
+func rotate(path string) (ed25519.PrivateKey, error) {
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
+	}
+	return newSigningKey(path)
+}
+
 // Connection is how the Agent reaches its Control Plane.
 type Connection struct {
-	URL          string // the Control Plane's, e.g. https://omegacd.example.com
-	Invite       string // sent until the Agent is enrolled; the Control Plane ignores it after
-	Key          ed25519.PrivateKey
-	AgeRecipient string // of the Host Key, registered at enrollment
+	URL          string             // the Control Plane's, e.g. https://omegacd.example.com
+	Invite       string             // sent until the Agent is enrolled; the Control Plane ignores it after
+	Key          ed25519.PrivateKey // a rotation replaces it
+	KeyPath      string             // where Key is kept: a rotation writes the new one next to it, then replaces it
+	AgeRecipient string             // of the Host Key, registered at enrollment
 }
 
 // Connect holds the connection to the Control Plane until ctx ends, reconnecting with backoff (Q20, Q51).
 func (ag *Agent) Connect(ctx context.Context, c Connection) {
 	url := strings.TrimSuffix(c.URL, "/") + "/api/agents/v1/connect"
 	wire.Keep(ctx, func(ctx context.Context) (*wire.Conn, error) { return wire.Dial(ctx, url, nil) },
-		func(ctx context.Context, conn *wire.Conn) error { return ag.serve(ctx, conn, c) },
+		func(ctx context.Context, conn *wire.Conn) error { return ag.serve(ctx, conn, &c) },
 		func(err error) {
 			ag.log.Warn("no connection to the Control Plane; trying again", "url", c.URL, "err", err)
 		})
 }
 
 // serve answers the challenge, enrolling with the invite if there is one, then reads until the connection ends.
-func (ag *Agent) serve(ctx context.Context, conn *wire.Conn, c Connection) error {
+func (ag *Agent) serve(ctx context.Context, conn *wire.Conn, c *Connection) error {
+	var rotation uint64 // the KeyRotation waiting for its answer
+	var next ed25519.PrivateKey
 	for {
 		e, err := conn.Recv(ctx)
 		if err != nil {
@@ -95,6 +123,37 @@ func (ag *Agent) serve(ctx context.Context, conn *wire.Conn, c Connection) error
 					return err
 				}
 			}
+		case e.GetRotateKey() != nil:
+			if rotation != 0 {
+				continue
+			}
+			var err error
+			if next, err = rotate(c.KeyPath + ".next"); err != nil {
+				ag.log.Error("key rotation: no new key", "err", err)
+				continue
+			}
+			pub := next.Public().(ed25519.PublicKey)
+			r := &agentv1.Envelope{Body: &agentv1.Envelope_KeyRotation{KeyRotation: &agentv1.KeyRotation{PublicKey: pub,
+				Signature: ed25519.Sign(c.Key, append([]byte(agents.RotatePrefix), pub...))}}}
+			if err := conn.Send(ctx, r); err != nil {
+				return err
+			}
+			rotation = r.Id
+		case rotation != 0 && e.ReplyTo == rotation:
+			rotation = 0
+			if e.GetError() != nil {
+				ag.log.Error("the Control Plane refused the new signing key; the old one stays", "err", e.GetError().Message)
+				os.Remove(c.KeyPath + ".next")
+				continue
+			}
+			// the Control Plane has the new key, and the old one until the Agent authenticates with the new
+			if err := os.Rename(c.KeyPath+".next", c.KeyPath); err != nil {
+				ag.log.Error("key rotation: the new key couldn't replace the old one, which the Control Plane takes back "+
+					"at the next connection", "err", err)
+				continue
+			}
+			c.Key = next
+			ag.log.Info("signing key rotated", "fingerprint", e.GetEnrollmentStatus().GetFingerprint())
 		case e.GetEnrollmentStatus() != nil:
 			s := e.GetEnrollmentStatus()
 			if s.Approved {

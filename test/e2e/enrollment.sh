@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # End-to-end: an Agent enrolls with the Control Plane through the real binary (M3-02): Host added by name, single-use
-# invite, the Agent's key registered, approved only with the fingerprint both sides show (Q22, Q28, Q73, Q74).
+# invite, the Agent's key registered, approved only with the fingerprint both sides show (Q22, Q28, Q73, Q74); then
+# its key rotated, a copy of it locking the Host, unlocked, and revoked by deleting the Host (M3-03, Q75, Q76).
 set -u # no pipefail: grep -q closing the pipe early must not fail a check
 BIN=${OMEGACD_BIN:-$(cd "$(dirname "$0")/../.." && pwd)/bin/omegacd}
 T=$(mktemp -d "${TMPDIR:-/tmp}/omegacd-e2en.XXXX")
@@ -30,8 +31,8 @@ agent() {
   PIDS+=($!)
   eval "PID_$name=$!"
 }
-# waitfor FILE TEXT: until FILE says TEXT (10 s)
-waitfor() { for _ in $(seq 100); do grep -qF -- "$2" "$1" 2>/dev/null && return 0; sleep 0.1; done; return 1; }
+# waitfor FILE TEXT [SECONDS]: until FILE says TEXT (default 10 s)
+waitfor() { for _ in $(seq $((${3:-10} * 10))); do grep -qF -- "$2" "$1" 2>/dev/null && return 0; sleep 0.1; done; return 1; }
 
 out=$("$BIN" host add web 2>&1)
 INVITE=$(echo "$out" | grep -o 'omegacd-invite-[0-9a-f]*' | head -1)
@@ -71,8 +72,31 @@ check "an enrolled Host gets no new invite" '[ $rc -ne 0 ] && echo "$out" | grep
 out=$("$BIN" host add local 2>&1); rc=$?
 check "the built-in Host can't be invited" '[ $rc -ne 0 ] && echo "$out" | grep -q "built-in Host"'
 
-check "no invite in any log (Q62)" '! grep -qF "$INVITE" "$T/server.log" "$T/web.log" "$T/thief.log" "$T/stranger.log"'
+# M3-03: rotation, locking, revocation
+KEY=$T/web/.local/share/omegacd-agent/signing.key
+out=$("$BIN" host rotate web 2>&1); rc=$?
+NEWFP=$(echo "$out" | grep -o 'SHA256:[A-Za-z0-9+/]*')
+check "host rotate: the Agent makes a new key, its fingerprint printed" '[ $rc -eq 0 ] && [ -n "$NEWFP" ] && [ "$NEWFP" != "$FP" ]'
+check "the Agent switched to it, on the same connection" 'waitfor "$T/web.log" "signing key rotated" && [ "$(grep -c "connected to the Control Plane" "$T/web.log")" = 1 ]'
+check "the key file is the new key, owner-only" 'grep -qF "# fingerprint: $NEWFP" "$KEY" && [ "$(ls -l "$KEY" | cut -c1-10)" = -rw------- ]'
+check "the Control Plane shows the new fingerprint, still approved" '"$BIN" host list | grep -qF "approved $NEWFP"'
+kill $PID_web; wait $PID_web 2>/dev/null; : > "$T/web.log"
+agent web
+check "restarted, it connects with the new key" 'waitfor "$T/web.log" "connected to the Control Plane, approved" && grep -qF "fingerprint=$NEWFP" "$T/web.log"'
+
+cp -Rp "$T/web" "$T/clone" # a copied state dir: someone has the key
+agent clone
+check "a second live connection with the same key locks the Host" 'waitfor "$T/clone.log" "Host web is locked: two connections used its key at once"'
+check "the first connection is cut with the reason too" 'waitfor "$T/web.log" "Host web is locked"'
+check "host list shows it locked, with both addresses" '"$BIN" host list | grep -q "^web .*LOCKED: two connections (127.0.0.1, 127.0.0.1)"'
+kill $PID_clone; wait $PID_clone 2>/dev/null; : > "$T/web.log"
+check "host unlock: the Agent connects again" '"$BIN" host unlock web | grep -q "unlocked" && waitfor "$T/web.log" "connected to the Control Plane, approved" 70'
+
+check "host delete revokes the key: the live connection closes" '"$BIN" host delete web | grep -q "key is revoked" && waitfor "$T/web.log" "no Host has the key" 70'
+
+check "no invite in any log (Q62)" '! grep -qF "$INVITE" "$T/server.log" "$T/web.log" "$T/thief.log" "$T/stranger.log" "$T/clone.log"'
+check "no signing key in any log (Q62)" '! grep -qF "$(tail -1 "$KEY")" "$T/server.log" "$T/web.log" "$T/clone.log"'
 check "no password in the log (Q62)" '! grep -qF e2e-password-123 "$T/server.log"'
 
-[ $fail -eq 0 ] && echo "ALL PASSED" || { for l in server web thief stranger; do echo "--- $l log"; tail -15 "$T/$l.log"; done; }
+[ $fail -eq 0 ] && echo "ALL PASSED" || { for l in server web thief stranger clone; do echo "--- $l log"; tail -15 "$T/$l.log"; done; }
 exit $fail

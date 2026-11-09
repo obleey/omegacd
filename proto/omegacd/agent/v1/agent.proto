@@ -25,6 +25,8 @@ message Envelope {
     Error error = 22;
     Enroll enroll = 23;
     EnrollmentStatus enrollment_status = 24;
+    RotateKey rotate_key = 25;
+    KeyRotation key_rotation = 26;
   }
 }
 
@@ -61,6 +63,18 @@ message EnrollmentStatus {
   string host = 1;
   bool approved = 2;
   string fingerprint = 3; // of the public key, as the admin sees it: "SHA256:" and base64, like ssh-keygen -l
+}
+
+// RotateKey asks the Agent for a new signing key (Q76: an admin's click). It answers with a KeyRotation, which the
+// Control Plane answers with an EnrollmentStatus carrying the new key's fingerprint (reply_to), or an Error.
+message RotateKey {}
+
+// KeyRotation is the Agent's new signing key, signed by the current one: "omegacd-agent-v1 rotate\n" followed by
+// public_key. The Agent switches to it once the Control Plane has it; until it authenticates with it, the old key works
+// too, so a crash in between locks nobody out.
+message KeyRotation {
+  bytes public_key = 1;
+  bytes signature = 2;
 }
 
 message DesiredState {

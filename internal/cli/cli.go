@@ -97,6 +97,9 @@ func init() { // init breaks the cycle commands → run funcs → flags → comm
 		"host list":         {"host list", (*CLI).hostList},
 		"host add":          {"host add NAME   (a Host reached through an Agent: prints the command that enrolls it, with a single-use invite valid an hour; again: a new invite)", (*CLI).hostAdd},
 		"host approve":      {"host approve NAME FINGERPRINT   (after comparing it with the fingerprint the Agent printed)", (*CLI).hostApprove},
+		"host rotate":       {"host rotate NAME   (the Host's connected Agent makes a new signing key; prints its fingerprint)", (*CLI).hostRotate},
+		"host unlock":       {"host unlock NAME   (a Host locked by two connections with its key: when the second had a harmless cause)", (*CLI).hostUnlock},
+		"host delete":       {"host delete NAME   (revokes its Agent's key and closes its connection; a key that may be stolen: delete, then add the Host again)", (*CLI).hostDelete},
 		"host test":         {"host test NAME", (*CLI).hostTest},
 		"host key show":     {"host key show HOST", (*CLI).hostKeyShow},
 		"host key generate": {"host key generate HOST", (*CLI).hostKeyGenerate},
@@ -106,7 +109,7 @@ func init() { // init breaks the cycle commands → run funcs → flags → comm
 }
 
 var order = []string{"login", "logout", "version", "keygen", "source-certs", "import", "app list", "app get", "app create", "app delete", "app sync", "app refresh",
-	"app diff", "app history", "app rollback", "app wait", "app logs", "app export", "host list", "host add", "host approve", "host test",
+	"app diff", "app history", "app rollback", "app wait", "app logs", "app export", "host list", "host add", "host approve", "host rotate", "host unlock", "host delete", "host test",
 	"host key show", "host key generate", "host key import", "host key remove"}
 
 func (c *CLI) usage() {
@@ -418,7 +421,7 @@ func (cl *client) do(ctx context.Context, method, path string, body, out any) er
 		return err
 	}
 	defer resp.Body.Close()
-	if out == nil {
+	if out == nil || resp.StatusCode == http.StatusNoContent {
 		return nil
 	}
 	return json.NewDecoder(resp.Body).Decode(out)

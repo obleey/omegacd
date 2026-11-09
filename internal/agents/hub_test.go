@@ -177,3 +177,224 @@ func TestAuthTimeout(t *testing.T) {
 		}
 	}
 }
+
+// approvedAgent enrolls a key for host, approved, and returns it.
+func approvedAgent(t *testing.T, h *Hub, st *store.Store, url, host string) ed25519.PrivateKey {
+	t.Helper()
+	invite, err := st.CreateInvite(t.Context(), host, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := newKey()
+	c, _ := agent(t, url, key, invite, nil)
+	if err := h.Approve(t.Context(), host, domain.Fingerprint(key.Public().(ed25519.PublicKey))); err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+	return key
+}
+
+// reading keeps reading c, as an Agent does (which answers pings), and hands on what arrives.
+func reading(c *wire.Conn) <-chan *agentv1.Envelope {
+	ch := make(chan *agentv1.Envelope, 16)
+	go func() {
+		defer close(ch)
+		for {
+			e, err := c.Recv(context.Background())
+			if err != nil {
+				return
+			}
+			ch <- e
+		}
+	}()
+	return ch
+}
+
+func next(t *testing.T, ch <-chan *agentv1.Envelope) *agentv1.Envelope {
+	t.Helper()
+	select {
+	case e := <-ch:
+		return e
+	case <-time.After(10 * time.Second):
+		t.Fatal("nothing arrived")
+		return nil
+	}
+}
+
+// A signature captured from one connection is worth nothing on the next: every challenge is fresh.
+func TestReplayedSignatureRefused(t *testing.T) {
+	h, st, url := newHub(t)
+	key := approvedAgent(t, h, st, url, "web")
+	var captured []byte
+	c, e := agent(t, url, key, "", func(nonce []byte) []byte {
+		captured = ed25519.Sign(key, append([]byte(ChallengePrefix), nonce...))
+		return captured
+	})
+	if !e.GetEnrollmentStatus().GetApproved() {
+		t.Fatalf("got %v", e)
+	}
+	c.Close()
+	_, e = agent(t, url, key, "", func([]byte) []byte { return captured })
+	refused(t, e, "signature doesn't verify")
+}
+
+// Two live connections with one key lock the Host (Q28, Q75): both are closed with the reason, the Agent is refused
+// until an admin unlocks it, and the lock names both connections.
+func TestDuplicateConnectionLocks(t *testing.T) {
+	h, st, url := newHub(t)
+	ctx := t.Context()
+	key := approvedAgent(t, h, st, url, "web")
+	first, _ := agent(t, url, key, "", nil)
+	got := reading(first)
+
+	_, e := agent(t, url, key, "", nil) // a copy of the key, connected while the first still answers
+	refused(t, e, "Host web is locked: two connections used its key at once (127.0.0.1 since ")
+	if e := next(t, got); e.GetError() == nil || !strings.Contains(e.GetError().Message, "locked") {
+		t.Fatalf("the first connection got %v, want the lock", e)
+	}
+	host, _ := st.GetHost(ctx, "web")
+	if len(host.Locked) != 2 || host.Locked[0].Address != "127.0.0.1" || host.Locked[0].Since.After(host.Locked[1].Since) {
+		t.Fatalf("locked with %+v", host.Locked)
+	}
+	_, e = agent(t, url, key, "", nil)
+	refused(t, e, "Host web is locked")
+
+	if err := h.Unlock(ctx, "web"); err != nil {
+		t.Fatal(err)
+	}
+	if _, e = agent(t, url, key, "", nil); !e.GetEnrollmentStatus().GetApproved() {
+		t.Fatalf("after unlock: %v", e)
+	}
+}
+
+// A connection that no longer answers (the Agent's network changed, it restarted) is replaced, not a reason to lock.
+func TestDeadConnectionReplaced(t *testing.T) {
+	aliveTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { aliveTimeout = 5 * time.Second })
+	h, st, url := newHub(t)
+	key := approvedAgent(t, h, st, url, "web")
+	agent(t, url, key, "", nil) // never reads again: never answers a ping
+	if _, e := agent(t, url, key, "", nil); !e.GetEnrollmentStatus().GetApproved() {
+		t.Fatalf("got %v", e)
+	}
+	if host, _ := st.GetHost(t.Context(), "web"); host.Locked != nil {
+		t.Fatalf("locked: %+v", host.Locked)
+	}
+}
+
+// rotateWith answers the Control Plane's RotateKey on c with next, signed by sign, and returns the answer to it.
+func rotateWith(t *testing.T, c *wire.Conn, got <-chan *agentv1.Envelope, nextKey, sign ed25519.PrivateKey) *agentv1.Envelope {
+	t.Helper()
+	if e := next(t, got); e.GetRotateKey() == nil {
+		t.Fatalf("want RotateKey, got %v", e)
+	}
+	pub := nextKey.Public().(ed25519.PublicKey)
+	r := &agentv1.Envelope{Body: &agentv1.Envelope_KeyRotation{KeyRotation: &agentv1.KeyRotation{PublicKey: pub,
+		Signature: ed25519.Sign(sign, append([]byte(RotatePrefix), pub...))}}}
+	c.Send(t.Context(), r)
+	e := next(t, got)
+	if e.ReplyTo != r.Id {
+		t.Fatalf("want the answer to %d, got %v", r.Id, e)
+	}
+	return e
+}
+
+// Rotation without a gap (Q76): the connection stays up, the next one uses the new key; until it does, the old key
+// still works, and using it undoes the rotation.
+func TestRotation(t *testing.T) {
+	h, st, url := newHub(t)
+	ctx := t.Context()
+	old := approvedAgent(t, h, st, url, "web")
+	c, _ := agent(t, url, old, "", nil)
+	got := reading(c)
+
+	nextKey := newKey()
+	want := domain.Fingerprint(nextKey.Public().(ed25519.PublicKey))
+	done := make(chan error, 1)
+	var fp string
+	go func() { var err error; fp, err = h.Rotate(ctx, "web"); done <- err }()
+	if e := rotateWith(t, c, got, nextKey, old); e.GetEnrollmentStatus().GetFingerprint() != want {
+		t.Fatalf("answered %v", e)
+	}
+	if err := <-done; err != nil || fp != want {
+		t.Fatalf("Rotate: %s %v", fp, err)
+	}
+	if err := h.Send(ctx, "web", &agentv1.Envelope{Body: &agentv1.Envelope_DesiredState{DesiredState: &agentv1.DesiredState{App: "a"}}}); err != nil {
+		t.Fatalf("the connection is gone after the rotation: %v", err)
+	}
+	if host, _ := st.GetHost(ctx, "web"); host.Fingerprint != want || !host.Approved {
+		t.Fatalf("after the rotation: %+v", host)
+	}
+	c.Close()
+	if _, e := agent(t, url, nextKey, "", nil); !e.GetEnrollmentStatus().GetApproved() {
+		t.Fatalf("the new key: %v", e)
+	}
+	_, e := agent(t, url, old, "", nil)
+	refused(t, e, "no Host has the key")
+
+	// a rotation the Agent never finished (it crashed before switching): it comes back with the old key
+	c, _ = agent(t, url, nextKey, "", nil)
+	got = reading(c)
+	go func() { _, err := h.Rotate(ctx, "web"); done <- err }()
+	rotateWith(t, c, got, newKey(), nextKey)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+	if _, e := agent(t, url, nextKey, "", nil); !e.GetEnrollmentStatus().GetApproved() {
+		t.Fatalf("the old key after an unfinished rotation: %v", e)
+	}
+	if host, _ := st.GetHost(ctx, "web"); host.Fingerprint != want {
+		t.Fatalf("shows %s, want the key the Agent still has", host.Fingerprint)
+	}
+}
+
+func TestRotationRefused(t *testing.T) {
+	h, st, url := newHub(t)
+	ctx := t.Context()
+	key := approvedAgent(t, h, st, url, "web")
+	if _, err := h.Rotate(ctx, "web"); !errors.Is(err, ErrOffline) {
+		t.Fatalf("offline: %v", err)
+	}
+	c, _ := agent(t, url, key, "", nil)
+	got := reading(c)
+	done := make(chan error, 1)
+	go func() { _, err := h.Rotate(ctx, "web"); done <- err }()
+	if e := rotateWith(t, c, got, newKey(), newKey()); e.GetError() == nil { // signed by a key the Host doesn't have
+		t.Fatalf("a new key signed by another was taken: %v", e)
+	}
+	if err := <-done; err == nil {
+		t.Fatal("Rotate succeeded")
+	}
+	if host, _ := st.GetHost(ctx, "web"); host.Fingerprint != domain.Fingerprint(key.Public().(ed25519.PublicKey)) {
+		t.Fatalf("the key changed: %+v", host)
+	}
+
+	invite, _ := st.CreateInvite(ctx, "db", time.Now().Add(time.Hour))
+	agent(t, url, newKey(), invite, nil)
+	if _, err := h.Rotate(ctx, "db"); !errors.Is(err, ErrNotApproved) {
+		t.Fatalf("unapproved: %v", err)
+	}
+}
+
+// Revocation is deleting the Host (Q22): its live connection closes, and its key is refused.
+func TestRevocation(t *testing.T) {
+	h, st, url := newHub(t)
+	key := approvedAgent(t, h, st, url, "web")
+	c, _ := agent(t, url, key, "", nil)
+	got := reading(c)
+	if err := st.DeleteHost(t.Context(), "web"); err != nil {
+		t.Fatal(err)
+	}
+	h.Disconnect("web")
+	select {
+	case _, ok := <-got:
+		if ok {
+			t.Fatal("got a message instead of the close")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the revoked Agent is still connected")
+	}
+	_, e := agent(t, url, key, "", nil)
+	refused(t, e, "no Host has the key")
+}

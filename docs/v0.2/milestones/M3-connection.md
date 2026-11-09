@@ -32,7 +32,7 @@ auto-approve (Q74).
 matches on both sides.
 
 ### M3-03 · Signed challenges, locking, rotation, revocation
-**Status:** todo
+**Status:** done (2026-11-09, PR #104)
 **Depends on:** M3-02
 
 Every connection authenticates by signing a fresh challenge (Q22); no bearer tokens. A second live connection with

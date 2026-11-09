@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/obleey/omegacd/internal/agents"
 	"github.com/obleey/omegacd/internal/appdef"
 	"github.com/obleey/omegacd/internal/domain"
 	"github.com/obleey/omegacd/internal/source"
@@ -380,15 +381,46 @@ func (s *server) approveHost(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	if s.Agents == nil {
-		writeError(w, fmt.Errorf("%w: this server accepts no Agents", domain.ErrInvalid))
+	if s.noAgents(w) {
 		return
 	}
 	respond(w, http.StatusNoContent, nil, s.Agents.Approve(r.Context(), r.PathValue("name"), req.Fingerprint))
 }
 
+// rotateHost has the Host's connected Agent make a new signing key (Q76).
+func (s *server) rotateHost(w http.ResponseWriter, r *http.Request) {
+	if s.noAgents(w) {
+		return
+	}
+	fingerprint, err := s.Agents.Rotate(r.Context(), r.PathValue("name"))
+	if errors.Is(err, agents.ErrOffline) || errors.Is(err, agents.ErrNotApproved) {
+		err = fmt.Errorf("%w: %v", domain.ErrInvalid, err)
+	}
+	respond(w, http.StatusOK, map[string]string{"fingerprint": fingerprint}, err)
+}
+
+// unlockHost lets a Host locked by two connections with its key connect again (Q75).
+func (s *server) unlockHost(w http.ResponseWriter, r *http.Request) {
+	if s.noAgents(w) {
+		return
+	}
+	respond(w, http.StatusNoContent, nil, s.Agents.Unlock(r.Context(), r.PathValue("name")))
+}
+
+func (s *server) noAgents(w http.ResponseWriter) bool {
+	if s.Agents == nil {
+		writeError(w, fmt.Errorf("%w: this server accepts no Agents", domain.ErrInvalid))
+	}
+	return s.Agents == nil
+}
+
+// deleteHost also revokes its Agent's key: its live connection is closed, and the key known nowhere (Q22).
 func (s *server) deleteHost(w http.ResponseWriter, r *http.Request) {
-	respond(w, http.StatusNoContent, nil, s.Controller.DeleteHost(r.Context(), r.PathValue("name")))
+	err := s.Controller.DeleteHost(r.Context(), r.PathValue("name"))
+	if err == nil && s.Agents != nil {
+		s.Agents.Disconnect(r.PathValue("name"))
+	}
+	respond(w, http.StatusNoContent, nil, err)
 }
 
 func (s *server) testHost(w http.ResponseWriter, r *http.Request) {

@@ -130,6 +130,10 @@ func (c *Conn) Recv(ctx context.Context) (*agentv1.Envelope, error) {
 	return e, nil
 }
 
+// Ping reports whether the peer answers a ping within ctx: whether the connection is still alive. Its reader must be
+// reading.
+func (c *Conn) Ping(ctx context.Context) error { return c.ws.Ping(ctx) }
+
 // Close ends the connection.
 func (c *Conn) Close() error {
 	c.fail(errClosed)
