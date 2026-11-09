@@ -373,6 +373,9 @@ func TestAgentDiffThroughHub(t *testing.T) {
 	if err != nil || len(services) == 0 || services[0].Change != "added" {
 		t.Fatalf("an app never deployed: %+v %v", services, err)
 	}
+	if fi, err := os.Stat(ag.work.Root); err != nil || fi.Mode().Perm() != 0o750 {
+		t.Fatalf("the work root as the Diff left it: %v %v", fi.Mode(), err) // the engine, maybe another user, traverses it
+	}
 	if err := hub.Deploy(ctx, "edge", desiredState(a, src.revision(name, "r1", files("first")), 1)); err != nil {
 		t.Fatal(err)
 	}

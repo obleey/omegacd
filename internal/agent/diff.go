@@ -27,6 +27,7 @@ const stagingDir = ".omegacd-diff"
 // nothing is recorded: the cache and its Revisions stay as they are.
 func (ag *Agent) diff(ctx context.Context, ds *agentv1.DesiredState, fetch func(hash string) ([]byte, error)) ([]domain.ServiceDiff, error) {
 	a, r := fromDesired(ds)
+	os.MkdirAll(ag.work.Root, 0o750) // as the WorkDir makes it, for an engine running as another user; a failure shows below
 	if err := os.MkdirAll(filepath.Join(ag.work.Root, stagingDir), 0o700); err != nil {
 		return nil, err
 	}
