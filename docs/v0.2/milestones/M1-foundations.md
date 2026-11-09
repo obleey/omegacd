@@ -7,7 +7,7 @@ interface. See [architecture](../architecture.md#source-server-q5-q12-q13-q15-q1
 **Status:** done (2026-11-06, from rc.10 `25de111`)
 **Depends on:** —
 
-v0.1 fixes go to `release-0.1`; `main` is v0.2 from now on (Q54). Tag `v0.1.0` from that branch at release time (M8-06).
+v0.1 fixes go to `release-0.1`; `main` is v0.2 from now on (Q54). (Later, Q97: v0.1 is deprecated and the branch frozen; there is no v0.1.0.)
 
 **Done when:** the branch exists on GitHub and README/CONTRIBUTING say where 0.1 fixes go.
 

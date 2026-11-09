@@ -105,16 +105,26 @@ Host and done on reconnect, `--forget`; an image from a private registry pulled 
 log, on no disk of the Agent and never in plaintext on the wire (checked by capturing it); the UI's live progress fed
 by an Agent.
 
-### M4-09 · Coverage: measured combined, a ratchet, 100% of changed lines
+### M4-09 · Coverage: measured combined, checked in CI
 **Status:** todo
 **Depends on:** M4-08
 
 Q96: `make cover` builds the binary with `go build -cover`, runs unit (`-coverprofile`), integration and e2e (the
-binary's `GOCOVERDIR`) and merges them (`go tool covdata`), generated protobuf code excluded, into one total and a
-per-package table. A script lists a branch's changed lines no test reaches (`git diff` against main × the merged
-profile); the PR names each with why it can't be reached. CI runs it on every push: fails when total coverage drops
-below the recorded floor (raised as it grows, never lowered by hand) or a changed line is uncovered without being
-listed. TESTING.md documents it.
+binary's `GOCOVERDIR`; the e2e scripts pass it to every process they start) and merges them (`go tool covdata`),
+generated protobuf code excluded, into one total, a per-package table and the list of uncovered lines.
+`test/coverage-exceptions.txt` lists lines no test can reach, each with its reason. CI runs it on every push and
+fails when a changed line is uncovered and not an exception, or the total drops (until M4-10 makes it 100%).
+TESTING.md documents it.
 
-**Done when:** `make cover` prints the combined total and the uncovered changed lines; CI fails a PR that lowers the
-total or leaves a changed line uncovered and unlisted (tested with a throwaway change); the floor is recorded.
+**Done when:** `make cover` prints the combined total and every uncovered line; CI fails a PR that leaves a changed
+line uncovered and unlisted, or lowers the total (tested with a throwaway change).
+
+### M4-10 · Existing code to 100% coverage
+**Status:** todo
+**Depends on:** M4-09, M4-05 (Q97: v0.1-only code is deleted, not tested)
+
+Q96: every package's reachable lines covered, unit + integration + e2e combined; what no test can reach goes into
+`test/coverage-exceptions.txt` with its reason. Code M4-05 deletes (push, SSH/TLS Hosts, the local engine path) is left
+out: it is deleted first, never tested (Q97). Then CI requires 100%: any uncovered line not in the exceptions fails.
+
+**Done when:** `make cover` shows 100% of the lines not listed as exceptions, and CI enforces it.
