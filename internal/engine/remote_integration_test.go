@@ -199,7 +199,7 @@ func remoteFolders(t *testing.T, e *Engine, d dind, h domain.Host) {
 		for _, l := range labels {
 			args = append(args, "--label", l)
 		}
-		out, err := inDind(append(args, "busybox:1.36", "sleep", "3600")...)
+		out, err := inDind(append(args, "busybox:1.38", "sleep", "3600")...)
 		if err != nil {
 			t.Fatal(out)
 		}
