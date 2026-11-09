@@ -235,6 +235,16 @@ func ParsePrefixes(fields []string) ([]netip.Prefix, error) {
 	return out, nil
 }
 
+// AgentReport is a Sync an Agent reports: the outcome of one the Control Plane sent (Op), or one it ran itself (Op 0:
+// a restore, a Self-Heal, a rollback on the Host, with Trigger saying which).
+type AgentReport struct {
+	App, Revision, Checksum string
+	Phase                   OpPhase
+	Message, Trigger        string
+	Op                      int64
+	At                      time.Time
+}
+
 // AgentConnection is where and since when an Agent was connected.
 type AgentConnection struct {
 	Address string    `json:"address"`
@@ -454,6 +464,11 @@ type Store interface {
 	ConfirmSigningKey(ctx context.Context, host string, key []byte) error
 	// SetAllowIPs replaces the Host's allowlist (CIDRs; none: any address).
 	SetAllowIPs(ctx context.Context, host string, cidrs []string) error
+	// ApplyAgentReport applies the Host's Agent's outbox entry seq once (M3-06): an entry at or below the last applied
+	// seq changes nothing (applied false). A report on a Sync the Control Plane sent finishes that Sync Operation if it
+	// is still unfinished; one the Agent ran itself becomes a finished Sync Operation, a rollback also marking the
+	// Application rolled back with Auto-Sync off (Q25). Only Applications on that Host are touched.
+	ApplyAgentReport(ctx context.Context, host string, seq uint64, r AgentReport) (applied bool, err error)
 	// RecordAgent keeps what the Host's Agent said about itself.
 	RecordAgent(ctx context.Context, host string, info AgentInfo) error
 	// LockHost locks the Host with the connections that shared its key; UnlockHost clears it.

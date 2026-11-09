@@ -1736,3 +1736,43 @@ func TestSyncWaitsForAgent(t *testing.T) {
 		t.Fatalf("ops %+v", ops)
 	}
 }
+
+// M3-06/Q81: a Sync that waited for its Host runs, as the same Sync Operation, once its Agent resyncs.
+func TestWaitingSyncRunsOnResync(t *testing.T) {
+	r, ag := agentRig(t)
+	ctx := t.Context()
+	ag.err = fmt.Errorf("host edge: %w", agents.ErrOffline)
+	a := app("web")
+	a.Host = "edge"
+	r.c.CreateApp(ctx, a)
+	id, _ := r.c.Sync(ctx, "web", domain.SyncRequest{})
+	r.waitIdle(t, "web")
+	if op, _ := r.st.GetOp(ctx, id); op.Phase != domain.OpWaiting {
+		t.Fatalf("op %+v", op)
+	}
+	r.c.Resynced(ctx, "other") // another Host's Agent: nothing
+	r.waitIdle(t, "web")
+	if op, _ := r.st.GetOp(ctx, id); op.Phase != domain.OpWaiting {
+		t.Fatalf("ran for another Host: %+v", op)
+	}
+
+	ag.mu.Lock()
+	ag.err = nil // back
+	ag.mu.Unlock()
+	r.c.Resynced(ctx, "edge")
+	for deadline := time.Now().Add(2 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		if op, _ := r.st.GetOp(ctx, id); op.Phase == domain.OpSucceeded {
+			break
+		}
+		if time.Now().After(deadline) {
+			op, _ := r.st.GetOp(ctx, id)
+			t.Fatalf("the waiting Sync didn't run: %+v", op)
+		}
+	}
+	if sent := ag.sent(); len(sent) != 2 || sent[1].Op != uint64(id) {
+		t.Fatalf("sent %v", sent)
+	}
+	if ops, _ := r.st.ListOps(ctx, "web"); len(ops) != 1 {
+		t.Fatalf("%d Sync Operations, want the one that waited", len(ops))
+	}
+}

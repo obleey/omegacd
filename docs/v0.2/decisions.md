@@ -215,7 +215,8 @@ is declared. Their details (syntax, UI, messages) are decided when each is built
   secrets still encrypted. Diff, Live State, logs and resources stay behind the seam until M4-02 moves them.
 - **Q81** A Sync to an offline Host is a Sync Operation "Waiting for Host", kept in the database (it survives a Control
   Plane restart). No separate queue: on reconnect the resync (M3-06) finds the difference and delivers it. A newer
-  Sync supersedes a waiting one (Q38).
+  Sync supersedes a waiting one (Q38). So does a rollback run on the Host (Q25), reported from its outbox (M3-06): the
+  later, deliberate act; the waiting Sync would undo it on reconnect.
 - **Q82** Self-Heal always runs on the Agent, online too; the Control Plane no longer self-heals and records the
   Agent's reports as Sync Operations with trigger `self-heal`. One implementation, faster, the same History.
 - **Q83** Deleting an Application goes through the Agent with a new `RemoveApp` message (delete volumes, keep

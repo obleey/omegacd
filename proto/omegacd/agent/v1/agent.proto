@@ -27,6 +27,7 @@ message Envelope {
     EnrollmentStatus enrollment_status = 24;
     RotateKey rotate_key = 25;
     KeyRotation key_rotation = 26;
+    OutboxAck outbox_ack = 27;
   }
 }
 
@@ -121,7 +122,8 @@ message BlobChunk {
 }
 
 message Resync {
-  map<string, bytes> checksums = 1; // app → sha256 of its deployed file list
+  // app → its deployed Revision's checksum (DesiredState.checksum): a Desired State in flight the Agent lacks goes again
+  map<string, bytes> checksums = 1;
 }
 
 // Statuses are strings with the domain package's values (Healthy, Running, …).
@@ -142,6 +144,7 @@ message SyncOperationReport {
   // Control Plane shows the Application rolled back on the Host and turns its Auto-Sync off)
   string trigger = 5;
   uint64 op = 6; // the DesiredState's op it answers; 0 for one the Agent started
+  string checksum = 7; // the deployed Revision's (DesiredState.checksum): what Sync Status compares with the target
 }
 
 message LogsRequest {
@@ -163,6 +166,12 @@ message OutboxEntry {
     StatusReport status_report = 3;
     SyncOperationReport sync_operation_report = 4;
   }
+}
+
+// OutboxAck tells the Agent the Control Plane has its entries up to seq: it deletes them. An entry sent again (no ack
+// arrived) is acknowledged again but applied once (M3-06).
+message OutboxAck {
+  uint64 seq = 1;
 }
 
 message Error {

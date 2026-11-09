@@ -147,6 +147,7 @@ func run(log *slog.Logger) error {
 		SelfID:       selfID,
 		Log:          log.With("component", "controller"),
 	})
+	hub.Reported, hub.Resynced = ctl.AgentReported, ctl.Resynced
 
 	if err := api.EnsureAdmin(ctx, st, os.Getenv("OMEGACD_ADMIN_PASSWORD"), log.With("component", "api")); err != nil {
 		return err

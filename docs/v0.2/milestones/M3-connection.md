@@ -61,7 +61,7 @@ Optional CIDR list per Host (Q28); the client address comes through `OMEGACD_TRU
 **Done when:** an Agent outside the list is refused even with a valid key, behind a proxy as well.
 
 ### M3-06 · Resync and fallback poll
-**Status:** todo
+**Status:** done (2026-11-09, PR #114)
 **Depends on:** M3-01, M2-02, M4-01 (Q79: done after it, to heal real Syncs)
 
 On connect and every 5 minutes (Q78) the Agent sends per-app checksums; the Control Plane answers with what differs (Q16):

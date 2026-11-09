@@ -59,6 +59,10 @@ type Hub struct {
 	version string           // this Control Plane's, which Agents' versions are checked against (Q41)
 	// Blob is a file's content by its sha256 (hex), as the Source Server rendered it: what Agents ask for
 	Blob func(ctx context.Context, hash string) ([]byte, error)
+	// Reported is told an Application's Sync Operations changed by an Agent's report (M3-06); may be nil
+	Reported func(ctx context.Context, app string)
+	// Resynced is told a Host's Agent sent its checksums: Syncs waiting for the Host can go (Q81); may be nil
+	Resynced func(ctx context.Context, host string)
 
 	mu    sync.Mutex
 	conns map[string]*session // by Host
@@ -76,6 +80,7 @@ type session struct {
 	// deploys waiting for their SyncOperationReport, by op; files, the blobs this Agent was sent Desired States with:
 	// all it may ask for, so no Host reads another's files by guessing hashes
 	deploys map[uint64]chan *agentv1.SyncOperationReport
+	sent    map[uint64]*agentv1.DesiredState // in flight, by op: a resync re-sends one the Agent doesn't have
 	files   map[string]bool
 }
 
@@ -126,7 +131,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s := &session{conn: c, at: domain.AgentConnection{Address: addr, Since: h.now()}, approved: make(chan struct{}), key: key,
-		deploys: map[uint64]chan *agentv1.SyncOperationReport{}, files: map[string]bool{}}
+		deploys: map[uint64]chan *agentv1.SyncOperationReport{}, sent: map[uint64]*agentv1.DesiredState{}, files: map[string]bool{}}
 	if host.Approved {
 		s.once.Do(func() { close(s.approved) })
 	}
@@ -179,6 +184,10 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if wait != nil {
 				wait <- r
 			}
+		case e.GetOutboxEntry() != nil:
+			h.outbox(ctx, host.Name, s, e.GetOutboxEntry())
+		case e.GetResync() != nil:
+			h.resync(ctx, host.Name, s, e.GetResync())
 		}
 	}
 }
@@ -478,6 +487,7 @@ func (h *Hub) Deploy(ctx context.Context, host string, ds *agentv1.DesiredState)
 	report := make(chan *agentv1.SyncOperationReport, 1)
 	s.mu.Lock()
 	s.deploys[ds.Op] = report
+	s.sent[ds.Op] = ds
 	for _, f := range ds.Files {
 		s.files[hex.EncodeToString(f.Sha256)] = true
 	}
@@ -485,6 +495,7 @@ func (h *Hub) Deploy(ctx context.Context, host string, ds *agentv1.DesiredState)
 	defer func() {
 		s.mu.Lock()
 		delete(s.deploys, ds.Op)
+		delete(s.sent, ds.Op)
 		s.mu.Unlock()
 	}()
 	if err := s.conn.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_DesiredState{DesiredState: ds}}); err != nil {
@@ -500,6 +511,48 @@ func (h *Hub) Deploy(ctx context.Context, host string, ds *agentv1.DesiredState)
 		return fmt.Errorf("host %s: %w", host, ErrDisconnected)
 	case <-ctx.Done():
 		return ctx.Err()
+	}
+}
+
+// outbox applies an entry the Agent recorded (offline, or when a report couldn't be sent) and acknowledges it; one
+// sent again is acknowledged again and applied once (M3-06).
+func (h *Hub) outbox(ctx context.Context, host string, s *session, e *agentv1.OutboxEntry) {
+	r := e.GetSyncOperationReport()
+	if r == nil { // a StatusReport: Health and drift come with M4-02
+		s.conn.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_OutboxAck{OutboxAck: &agentv1.OutboxAck{Seq: e.Seq}}})
+		return
+	}
+	applied, err := h.store.ApplyAgentReport(ctx, host, e.Seq, domain.AgentReport{App: r.App, Revision: r.Revision,
+		Checksum: r.Checksum, Phase: domain.OpPhase(r.Phase), Message: r.Message, Trigger: r.Trigger, Op: int64(r.Op),
+		At: time.Unix(e.TimeUnix, 0)})
+	if err != nil { // no ack: the Agent sends it again on its next connection
+		h.log.ErrorContext(ctx, "apply the agent's report", "seq", e.Seq, "err", err)
+		return
+	}
+	h.log.InfoContext(ctx, "agent report", "seq", e.Seq, "app", r.App, "op", r.Op, "trigger", r.Trigger, "phase", r.Phase, "applied", applied)
+	s.conn.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_OutboxAck{OutboxAck: &agentv1.OutboxAck{Seq: e.Seq}}})
+	if applied && h.Reported != nil {
+		h.Reported(ctx, r.App)
+	}
+}
+
+// resync takes the Agent's checksums (Q78): a Desired State in flight that the Agent doesn't have was lost on the way
+// and goes again; then Syncs waiting for the Host go (Resynced). It never deletes (Q91).
+func (h *Hub) resync(ctx context.Context, host string, s *session, r *agentv1.Resync) {
+	s.mu.Lock()
+	var again []*agentv1.DesiredState
+	for _, ds := range s.sent {
+		if hex.EncodeToString(r.Checksums[ds.App]) != ds.Checksum {
+			again = append(again, ds)
+		}
+	}
+	s.mu.Unlock()
+	for _, ds := range again {
+		h.log.InfoContext(ctx, "resync: a desired state the agent lacks, again", "app", ds.App, "op", ds.Op)
+		s.conn.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_DesiredState{DesiredState: ds}})
+	}
+	if h.Resynced != nil {
+		h.Resynced(ctx, host)
 	}
 }
 

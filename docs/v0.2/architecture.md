@@ -137,7 +137,9 @@ only the Control Plane, never Agents or users. A reverse proxy in between must p
 - **Only missing files travel**: the Agent asks for the hashes it lacks; a Rollback to a cached Revision sends
   nothing. Transfers resume by hash after a reconnect.
 - **Resync**: on connect and every few minutes the Agent sends its per-app checksums; the Control Plane sends what
-  differs (the fallback for missed signals).
+  differs (the fallback for missed signals). M3-06: first the Agent's unacknowledged outbox entries, in order, each
+  acknowledged and applied once (the Host's last applied seq, in the same transaction); then the checksums: a Desired
+  State in flight the Agent lacks goes again, and Syncs waiting for the Host run.
 - **Version handshake**: Agents one minor version behind are supported; older ones are refused with a message, and
   their apps keep running; the UI flags outdated Agents. M3-04: the Agent's Hello comes before its challenge response
   (none: refused); newer Agents than the Control Plane are refused too (upgrade the Control Plane first); development
