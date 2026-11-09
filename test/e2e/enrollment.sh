@@ -56,6 +56,13 @@ check "and the Agent still waits" '! grep -q "approved" "$T/web.log"'
 check "the Agent's own fingerprint approves it" '"$BIN" host approve web "$FP" | grep -q "Host web approved"'
 check "the connected Agent hears it at once" 'waitfor "$T/web.log" "connected to the Control Plane, approved"'
 check "and is listed approved" '"$BIN" host list | grep -qF "approved $FP"'
+# M3-04: the Agent's Hello is recorded: its version (checked against the Control Plane's; one minor behind and
+# refusals are in the hub's tests, which can make up versions) and its engine
+json=$("$BIN" host list -o json)
+check "the Agent's version and engine are recorded" 'echo "$json" | python3 -c "
+import json,sys; a=[h for h in json.load(sys.stdin) if h[\"name\"]==\"web\"][0][\"agent\"]
+assert a[\"version\"] and a[\"engine\"] in (\"docker\",\"podman\") and a[\"engineVersion\"] and a[\"os\"] and a[\"arch\"] and not a.get(\"refused\"), a"'
+check "host list shows the Agent's version" '"$BIN" host list | grep -q "^web .*agent [v(]"'
 
 kill $PID_web; wait $PID_web 2>/dev/null; : > "$T/web.log"
 agent web # its invite is used; it needs none any more

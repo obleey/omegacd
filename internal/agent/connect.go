@@ -85,6 +85,7 @@ type Connection struct {
 	Key          ed25519.PrivateKey // a rotation replaces it
 	KeyPath      string             // where Key is kept: a rotation writes the new one next to it, then replaces it
 	AgeRecipient string             // of the Host Key, registered at enrollment
+	Engine       EngineInfo         // reported in Hello; empty when none was reachable at start
 }
 
 // Connect holds the connection to the Control Plane until ctx ends, reconnecting with backoff (Q20, Q51).
@@ -110,7 +111,8 @@ func (ag *Agent) serve(ctx context.Context, conn *wire.Conn, c *Connection) erro
 		case e.GetChallenge() != nil:
 			host, _ := os.Hostname()
 			out := []*agentv1.Envelope{{Body: &agentv1.Envelope_Hello{Hello: &agentv1.Hello{AgentVersion: version.String(),
-				ProtocolVersion: ProtocolVersion, Os: runtime.GOOS, Arch: runtime.GOARCH, Hostname: host}}}}
+				ProtocolVersion: ProtocolVersion, Os: runtime.GOOS, Arch: runtime.GOARCH, Hostname: host,
+				Engine: c.Engine.Name, EngineVersion: c.Engine.Version, Rootless: c.Engine.Rootless}}}}
 			if c.Invite != "" {
 				out = append(out, &agentv1.Envelope{Body: &agentv1.Envelope_Enroll{Enroll: &agentv1.Enroll{
 					Invite: c.Invite, AgeRecipient: c.AgeRecipient}}})

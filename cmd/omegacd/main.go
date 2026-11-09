@@ -327,10 +327,12 @@ func runAgent(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	if eng, err := agent.DetectEngine(ctx); err != nil {
+	detected, err := agent.DetectEngine(ctx)
+	if err != nil {
 		log.Warn("no container engine reachable (DOCKER_HOST or the default socket)", "err", err)
 	} else {
-		log.Info("container engine", "engine", eng.Name, "version", eng.Version, "rootless", eng.Rootless, "os", eng.OS, "arch", eng.Arch)
+		log.Info("container engine", "engine", detected.Name, "version", detected.Version, "rootless", detected.Rootless,
+			"os", detected.OS, "arch", detected.Arch)
 	}
 	eng, err := engine.New(engine.Config{Log: log.With("component", "engine")})
 	if err != nil {
@@ -344,7 +346,7 @@ func runAgent(log *slog.Logger) error {
 	ag := agent.New(db, cache, work, secrets, eng, log.With("component", "agent"))
 	if cfg.ControlPlane != "" {
 		go ag.Connect(ctx, agent.Connection{URL: cfg.ControlPlane, Invite: cfg.Invite, Key: signingKey,
-			KeyPath:      filepath.Join(cfg.StateDir, "signing.key"),
+			KeyPath: filepath.Join(cfg.StateDir, "signing.key"), Engine: detected,
 			AgeRecipient: hostKey.Recipient().String()})
 	}
 	return ag.Run(ctx)

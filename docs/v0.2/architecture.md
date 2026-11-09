@@ -139,7 +139,10 @@ only the Control Plane, never Agents or users. A reverse proxy in between must p
 - **Resync**: on connect and every few minutes the Agent sends its per-app checksums; the Control Plane sends what
   differs (the fallback for missed signals).
 - **Version handshake**: Agents one minor version behind are supported; older ones are refused with a message, and
-  their apps keep running; the UI flags outdated Agents.
+  their apps keep running; the UI flags outdated Agents. M3-04: the Agent's Hello comes before its challenge response
+  (none: refused); newer Agents than the Control Plane are refused too (upgrade the Control Plane first); development
+  builds without a semver are let through. Each Hello (version, hostname, OS/arch, engine, rootless) is recorded on the
+  Host, a refused one with the reason.
 - **Logs** stream over the same connection. The web terminal is v0.3 and paid (Q42, Q44).
 
 ### Enrollment and authentication (Q22, Q28, Q43, Q53)

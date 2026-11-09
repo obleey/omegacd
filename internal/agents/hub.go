@@ -21,6 +21,7 @@ import (
 	"github.com/obleey/omegacd/internal/domain"
 	"github.com/obleey/omegacd/internal/logging"
 	agentv1 "github.com/obleey/omegacd/internal/proto/agent/v1"
+	"github.com/obleey/omegacd/internal/version"
 	"github.com/obleey/omegacd/internal/wire"
 )
 
@@ -46,9 +47,10 @@ var ErrNotApproved = errors.New("the Host's Agent is not approved yet")
 var ErrOffline = errors.New("the Host's Agent is not connected")
 
 type Hub struct {
-	store domain.Store
-	log   *slog.Logger
-	now   func() time.Time // tests move it
+	store   domain.Store
+	log     *slog.Logger
+	now     func() time.Time // tests move it
+	version string           // this Control Plane's, which Agents' versions are checked against (Q41)
 
 	mu    sync.Mutex
 	conns map[string]*session // by Host
@@ -71,7 +73,7 @@ type rotateReply struct {
 }
 
 func New(store domain.Store, log *slog.Logger) *Hub {
-	return &Hub{store: store, log: cmp.Or(log, logging.Discard), now: time.Now, conns: map[string]*session{}}
+	return &Hub{store: store, log: cmp.Or(log, logging.Discard), now: time.Now, version: version.String(), conns: map[string]*session{}}
 }
 
 // ServeHTTP is /api/agents/v1/connect.
@@ -84,9 +86,12 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer c.Close()
 	ctx := r.Context()
 	addr, _, _ := net.SplitHostPort(r.RemoteAddr)
-	host, key, err := h.authenticate(ctx, c)
+	host, key, hello, err := h.authenticate(ctx, c)
 	if err == nil {
 		ctx = logging.With(ctx, "host", host.Name)
+		err = h.checkVersion(ctx, host.Name, hello)
+	}
+	if err == nil {
 		err = h.admit(ctx, host, addr)
 	}
 	if err != nil {
@@ -150,6 +155,24 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// checkVersion records what the Agent said about itself and refuses a version this Control Plane doesn't serve (Q41).
+func (h *Hub) checkVersion(ctx context.Context, host string, hello *agentv1.Hello) error {
+	if hello == nil {
+		return errors.New("the Agent sent no Hello before its challenge response")
+	}
+	err := compatible(h.version, hello.AgentVersion)
+	info := domain.AgentInfo{Version: hello.AgentVersion, Protocol: hello.ProtocolVersion, Hostname: hello.Hostname,
+		OS: hello.Os, Arch: hello.Arch, Engine: hello.Engine, EngineVersion: hello.EngineVersion, Rootless: hello.Rootless,
+		SeenAt: h.now()}
+	if err != nil {
+		info.Refused = err.Error()
+	}
+	if rerr := h.store.RecordAgent(ctx, host, info); rerr != nil {
+		h.log.ErrorContext(ctx, "record the agent", "err", rerr)
+	}
+	return err
+}
+
 // admit refuses a locked Host, and locks one whose Agent is connected and still answers: two live connections with one
 // key mean a copied key (Q28, Q75). A connection that doesn't answer is a dead one the new connection replaces (a
 // network change, a restarted Agent).
@@ -208,42 +231,44 @@ func status(ctx context.Context, c *wire.Conn, replyTo uint64, host, fingerprint
 		Host: host, Approved: approved, Fingerprint: fingerprint}}})
 }
 
-// authenticate sends a fresh challenge and returns the Host whose key signed it, and the key, enrolling the key first
-// when the Agent brings an invite.
-func (h *Hub) authenticate(ctx context.Context, c *wire.Conn) (domain.Host, []byte, error) {
+// authenticate sends a fresh challenge and returns the Host whose key signed it, the key and the Agent's Hello,
+// enrolling the key first when the Agent brings an invite.
+func (h *Hub) authenticate(ctx context.Context, c *wire.Conn) (domain.Host, []byte, *agentv1.Hello, error) {
 	ctx, cancel := context.WithTimeout(ctx, authTimeout)
 	defer cancel()
 	nonce := make([]byte, 32)
 	rand.Read(nonce)
 	if err := c.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_Challenge{Challenge: &agentv1.Challenge{Nonce: nonce}}}); err != nil {
-		return domain.Host{}, nil, err
+		return domain.Host{}, nil, nil, err
 	}
 	var enroll *agentv1.Enroll
+	var hello *agentv1.Hello
 	for {
 		e, err := c.Recv(ctx)
 		if err != nil {
-			return domain.Host{}, nil, err
+			return domain.Host{}, nil, nil, err
 		}
 		switch {
+		case e.GetHello() != nil:
+			hello = e.GetHello()
 		case e.GetEnroll() != nil:
 			enroll = e.GetEnroll()
 		case e.GetChallengeResponse() != nil:
 			r := e.GetChallengeResponse()
 			if len(r.PublicKey) != ed25519.PublicKeySize ||
 				!ed25519.Verify(r.PublicKey, append([]byte(ChallengePrefix), nonce...), r.Signature) {
-				return domain.Host{}, nil, errors.New("the challenge's signature doesn't verify")
+				return domain.Host{}, nil, nil, errors.New("the challenge's signature doesn't verify")
 			}
 			host, err := h.store.HostBySigningKey(ctx, r.PublicKey)
 			if enroll == nil || !errors.Is(err, domain.ErrNotFound) { // an enrolled key needs no invite, even if it brings one
 				if errors.Is(err, domain.ErrNotFound) {
-					return host, nil, fmt.Errorf("no Host has the key %s: enroll with an invite (OMEGACD_AGENT_INVITE)", domain.Fingerprint(r.PublicKey))
+					return host, nil, nil, fmt.Errorf("no Host has the key %s: enroll with an invite (OMEGACD_AGENT_INVITE)", domain.Fingerprint(r.PublicKey))
 				}
-				return host, r.PublicKey, err
+				return host, r.PublicKey, hello, err
 			}
 			host, err = h.store.Enroll(ctx, enroll.Invite, r.PublicKey, enroll.AgeRecipient, h.now())
-			return host, r.PublicKey, err
+			return host, r.PublicKey, hello, err
 		}
-		// a Hello is read and, until M3-04, not checked
 	}
 }
 

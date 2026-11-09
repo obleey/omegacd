@@ -30,6 +30,8 @@ message Envelope {
   }
 }
 
+// Hello comes before the ChallengeResponse; the Control Plane records it and serves Agents of its minor version and
+// one behind (Q41).
 message Hello {
   string agent_version = 1;
   uint32 protocol_version = 2;
