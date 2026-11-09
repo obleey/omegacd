@@ -27,7 +27,7 @@ export OMEGACD_TOKEN=$(curl -sf -b "$T/j" -H 'Content-Type: application/json' -H
 agent() {
   local name=$1
   shift
-  env -i PATH="$PATH" HOME="$T/$name" XDG_RUNTIME_DIR="$T/$name/run" ${DOCKER_HOST:+DOCKER_HOST=$DOCKER_HOST} \
+  env -i PATH="$PATH" ${GOCOVERDIR:+GOCOVERDIR=$GOCOVERDIR} HOME="$T/$name" XDG_RUNTIME_DIR="$T/$name/run" ${DOCKER_HOST:+DOCKER_HOST=$DOCKER_HOST} \
     OMEGACD_LOG_LEVEL=debug OMEGACD_AGENT_CONTROL_PLANE=$OMEGACD_SERVER "$@" "$BIN" agent >> "$T/$name.log" 2>&1 &
   PIDS+=($!)
   eval "PID_$name=$!"

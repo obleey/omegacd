@@ -25,7 +25,7 @@
 	import SyncProgress from '#lib/app/SyncProgress.svelte';
 	import SyncPolicy from '#lib/app/SyncPolicy.svelte';
 	import { ms, shownSync } from '#lib/status.ts';
-	import { toastError } from '#lib/toast.svelte.ts';
+	import { toast, toastError } from '#lib/toast.svelte.ts';
 	import AppForm from '#lib/AppForm.svelte';
 	import { refreshApp } from '#lib/actions.ts';
 	import RefreshNote from '#lib/RefreshNote.svelte';
@@ -91,6 +91,7 @@
 	let delOpen = $state(false);
 	let cascade = $state(true);
 	let delVolumes = $state(false);
+	let forget = $state(false); // its Host is gone for good: remove it from omegacd only (Q92)
 	let delConfirm = $state('');
 	// the app's volumes, listed before deleting them
 	let delVolList = $state<string[] | null>(null);
@@ -160,7 +161,12 @@
 	function del() {
 		delOpen = false;
 		act('delete', async () => {
-			await api('DELETE', `${base}?cascade=${cascade}${cascade && delVolumes ? '&volumes=true' : ''}`);
+			const q = forget ? '?forget=true' : `?cascade=${cascade}${cascade && delVolumes ? '&volumes=true' : ''}`;
+			const r = await api<{ message?: string } | undefined>('DELETE', base + q);
+			if (r?.message) {
+				toast('yellow', `Deleting ${name}`, r.message); // its Host's Agent is offline: done when it's back (Q83)
+				return;
+			}
 			delete live.apps[name];
 			goto('/');
 		});
@@ -379,14 +385,26 @@
 	<Dialog bind:open={delOpen} title="Delete {app.name}?">
 		<p>The Application is removed from omegacd.</p>
 		<div class="check">
-			<input id="cascade" type="checkbox" bind:checked={cascade} />
+			<input id="cascade" type="checkbox" bind:checked={cascade} disabled={forget} />
 			<label for="cascade">Also remove containers and networks</label>
 		</div>
 		<div class="check">
-			<input id="del-vol" type="checkbox" bind:checked={delVolumes} disabled={!cascade} onchange={loadDelVolumes} />
+			<input id="del-vol" type="checkbox" bind:checked={delVolumes} disabled={!cascade || forget} onchange={loadDelVolumes} />
 			<label for="del-vol">Also delete its volumes{#if isApps}<span class="hint">The volumes of every Child Application.</span>{/if}</label>
 		</div>
-		{#if cascade && delVolumes}
+		{#if !isApps}
+			<div class="check">
+				<input id="forget" type="checkbox" bind:checked={forget} />
+				<label for="forget"
+					>Forget it: its Host is gone for good<span class="hint"
+						>Removes it from omegacd only, asking no Agent; any containers are left as they are.</span
+					></label
+				>
+			</div>
+		{/if}
+		{#if forget}
+			<p class="muted small">Nothing on its Host is touched.</p>
+		{:else if cascade && delVolumes}
 			<div class="delvol" transition:slide={{ duration: ms(180) }}>
 				<p class="error" role="alert"><Icon name="alert" size={16} />These volumes and all their data will be permanently deleted.</p>
 				{#if !isApps}
@@ -404,7 +422,9 @@
 		{/if}
 		{#snippet actions()}
 			<button onclick={() => (delOpen = false)}>Cancel</button>
-			<button class="danger solid" onclick={del} disabled={cascade && delVolumes && delConfirm !== app?.name}>Delete</button>
+			<button class="danger solid" onclick={del} disabled={!forget && cascade && delVolumes && delConfirm !== app?.name}
+				>{forget ? 'Forget' : 'Delete'}</button
+			>
 		{/snippet}
 	</Dialog>
 

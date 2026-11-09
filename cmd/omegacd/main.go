@@ -147,7 +147,7 @@ func run(log *slog.Logger) error {
 		SelfID:       selfID,
 		Log:          log.With("component", "controller"),
 	})
-	hub.Reported, hub.Resynced = ctl.AgentReported, ctl.Resynced
+	hub.Reported, hub.Resynced, hub.Removed, hub.Progress = ctl.AgentReported, ctl.Resynced, ctl.AgentRemoved, ctl.AgentProgress
 
 	if err := api.EnsureAdmin(ctx, st, os.Getenv("OMEGACD_ADMIN_PASSWORD"), log.With("component", "api")); err != nil {
 		return err
@@ -357,7 +357,7 @@ func runAgent(log *slog.Logger) error {
 		}
 		go ag.Connect(ctx, agent.Connection{HTTPClient: client, URL: cfg.ControlPlane, Invite: cfg.Invite, Key: signingKey,
 			KeyPath: filepath.Join(cfg.StateDir, "signing.key"), Engine: detected,
-			AgeRecipient: hostKey.Recipient().String()})
+			AgeRecipient: hostKey.Recipient().String(), HostKey: hostKey})
 	}
 	return ag.Run(ctx)
 }

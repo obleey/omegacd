@@ -213,8 +213,9 @@ func (c *CLI) appCreate(ctx context.Context, args []string) error {
 
 func (c *CLI) appDelete(ctx context.Context, args []string) error {
 	var o opts
-	cascade, volumes, yes := true, false, false
+	cascade, volumes, yes, forget := true, false, false, false
 	fs := c.flags("app delete", &o)
+	fs.BoolVar(&forget, "forget", false, "remove it from OmegaCD only, asking no Agent: for an Application whose Host is gone for good; any containers are left as they are")
 	fs.BoolVar(&cascade, "cascade", true, "also remove the Application's containers and networks (volumes are kept)")
 	fs.BoolVar(&volumes, "volumes", false, "with --cascade, also delete the Application's volumes and all their data")
 	fs.BoolVar(&yes, "yes", false, "do not ask for confirmation")
@@ -231,6 +232,9 @@ func (c *CLI) appDelete(ctx context.Context, args []string) error {
 	if volumes && !cascade {
 		return errors.New("--volumes requires --cascade")
 	}
+	if forget && (volumes || !cascade) {
+		return errors.New("--forget asks no Agent: it can't take --volumes or --cascade=false")
+	}
 	// a script must say --yes explicitly: deleting by accident in CI would tear down running services
 	if !yes && !c.StdinTTY {
 		return &exitError{1, "refusing to delete without confirmation: pass --yes when not running in a terminal"}
@@ -238,6 +242,8 @@ func (c *CLI) appDelete(ctx context.Context, args []string) error {
 	if !yes {
 		what := "Application " + name
 		switch {
+		case forget:
+			what += " from OmegaCD only (its Host is not asked: any containers keep running there)"
 		case volumes:
 			what += " and its containers, networks and volumes (all volume data is permanently lost)"
 		case cascade:
@@ -253,8 +259,18 @@ func (c *CLI) appDelete(ctx context.Context, args []string) error {
 	if volumes {
 		q += "&volumes=true"
 	}
-	if err := cl.do(ctx, "DELETE", appPath(name)+q, nil, nil); err != nil {
+	if forget {
+		q = "?forget=true"
+	}
+	var waiting struct {
+		Message string `json:"message"`
+	}
+	if err := cl.do(ctx, "DELETE", appPath(name)+q, nil, &waiting); err != nil {
 		return err
+	}
+	if waiting.Message != "" { // 202: its Host's Agent is offline (Q83)
+		fmt.Fprintf(c.Stdout, "application %s: deleting, %s\n", name, waiting.Message)
+		return nil
 	}
 	fmt.Fprintf(c.Stdout, "application %s deleted\n", name)
 	return nil

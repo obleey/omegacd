@@ -47,7 +47,7 @@ func (ag *Agent) Rollback(ctx context.Context, name, revision string) error {
 	}
 	ctx = logging.With(ctx, "app", name, "revision", r.Revision)
 	ag.log.InfoContext(ctx, "rollback", "from", a.Revision)
-	return ag.report(ctx, a, r, triggerRollback, func() error { return ag.apply(ctx, a, r, false, nil) })
+	return ag.report(ctx, a, r, triggerRollback, func() error { return ag.apply(ctx, a, r, false, domain.SyncOptions{}) })
 }
 
 // app is the Application name on this Host; ErrNotFound says so, and how to see those there are.

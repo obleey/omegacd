@@ -194,3 +194,17 @@ func TestInitServices(t *testing.T) {
 		t.Fatalf("got %v", got)
 	}
 }
+
+func TestRegistries(t *testing.T) {
+	p := &types.Project{Services: types.Services{
+		"a": {Name: "a", ContainerSpec: types.ContainerSpec{Image: "nginx:1.27"}},
+		"b": {Name: "b", ContainerSpec: types.ContainerSpec{Image: "ghcr.io/obleey/omegacd:0.2.0"}},
+		"c": {Name: "c", ContainerSpec: types.ContainerSpec{Image: "localhost:5000/private/app:1"}},
+		"d": {Name: "d", ContainerSpec: types.ContainerSpec{Image: "docker.io/library/busybox:1.36"}},
+		"e": {Name: "e", ContainerSpec: types.ContainerSpec{Image: "ghcr.io/obleey/other:1"}},
+		"f": {Name: "f", ContainerSpec: types.ContainerSpec{Image: "Not A Valid Reference"}}, // skipped: the engine says why
+	}}
+	if got := registries(p); !slices.Equal(got, []string{"docker.io", "ghcr.io", "localhost:5000"}) {
+		t.Fatalf("registries = %v", got)
+	}
+}

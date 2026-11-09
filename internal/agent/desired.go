@@ -9,6 +9,9 @@ import (
 	"sync"
 	"time"
 
+	"filippo.io/age"
+
+	"github.com/obleey/omegacd/internal/agents"
 	"github.com/obleey/omegacd/internal/domain"
 	"github.com/obleey/omegacd/internal/logging"
 	agentv1 "github.com/obleey/omegacd/internal/proto/agent/v1"
@@ -117,9 +120,82 @@ func (ag *Agent) adoptable(ctx context.Context, ds *agentv1.DesiredState) error 
 	return nil
 }
 
+// requests are the Agent's requests waiting for the Control Plane's answer (reply_to), on one connection.
+type requests struct {
+	conn *wire.Conn
+	mu   sync.Mutex
+	wait map[uint64]chan *agentv1.Envelope
+}
+
+func newRequests(conn *wire.Conn) *requests {
+	return &requests{conn: conn, wait: map[uint64]chan *agentv1.Envelope{}}
+}
+
+// ask sends e and returns the answer to it.
+func (q *requests) ask(ctx context.Context, e *agentv1.Envelope) (*agentv1.Envelope, error) {
+	got := make(chan *agentv1.Envelope, 1)
+	q.mu.Lock() // registered before the answer can be read: answer takes the lock too
+	err := q.conn.Send(ctx, e)
+	q.wait[e.Id] = got
+	q.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	select {
+	case a := <-got:
+		if a.GetError() != nil {
+			return nil, errors.New(a.GetError().Message)
+		}
+		return a, nil
+	case <-q.conn.Done():
+		return nil, errors.New("the connection to the Control Plane dropped")
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// answer takes e if it answers one of q's requests.
+func (q *requests) answer(e *agentv1.Envelope) bool {
+	q.mu.Lock()
+	got, ok := q.wait[e.ReplyTo]
+	delete(q.wait, e.ReplyTo)
+	q.mu.Unlock()
+	if ok {
+		got <- e
+	}
+	return ok
+}
+
+// registryAuth asks the Control Plane for the registries' credentials and decrypts them with the Host Key, in
+// memory, for this Sync only (Q85, Q86): they are never written or logged.
+func registryAuth(q *requests, hostKey *age.X25519Identity) func(context.Context, []string) ([]domain.RegistryCredential, error) {
+	return func(ctx context.Context, registries []string) ([]domain.RegistryCredential, error) {
+		if len(registries) == 0 {
+			return nil, nil
+		}
+		if hostKey == nil {
+			return nil, errors.New("no Host Key to open registry credentials with")
+		}
+		a, err := q.ask(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_RegistryAuthRequest{RegistryAuthRequest: &agentv1.RegistryAuthRequest{
+			Registries: registries}}})
+		if err != nil {
+			return nil, err
+		}
+		var out []domain.RegistryCredential
+		for _, c := range a.GetRegistryAuth().GetCredentials() {
+			cred, err := agents.OpenCredential(hostKey, c.Registry, c.Sealed)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, cred)
+		}
+		return out, nil
+	}
+}
+
 // desired deploys a Desired State the Control Plane sent and reports the result, in the Sync Operation's log context
-// (Q62). A report that can't be sent goes to the outbox (Q93).
-func (ag *Agent) desired(ctx context.Context, conn *wire.Conn, b *blobs, ds *agentv1.DesiredState) {
+// (Q62), streaming its progress (Q87). A report that can't be sent goes to the outbox (Q93).
+func (ag *Agent) desired(ctx context.Context, conn *wire.Conn, b *blobs, q *requests, hostKey *age.X25519Identity, ds *agentv1.DesiredState) {
 	ctx = logging.With(ctx, "op", ds.Op)
 	if _, busy := ag.deploying.LoadOrStore(ds.Op, true); busy && ds.Op != 0 {
 		ag.log.DebugContext(ctx, "desired state again while deploying it: ignored", "app", ds.App)
@@ -134,7 +210,12 @@ func (ag *Agent) desired(ctx context.Context, conn *wire.Conn, b *blobs, ds *age
 	}
 	err := ag.adoptable(ctx, ds)
 	if err == nil {
-		err = ag.Deploy(ctx, a, r, func(hash string) ([]byte, error) { return b.fetch(ctx, hash) }, nil)
+		progress := func(p domain.ProgressEvent) {
+			conn.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_SyncProgress{SyncProgress: &agentv1.SyncProgress{
+				App: ds.App, Op: ds.Op, Resource: p.Resource, Status: p.Status, Text: p.Text}}})
+		}
+		err = ag.deploy(ctx, a, r, func(hash string) ([]byte, error) { return b.fetch(ctx, hash) },
+			domain.SyncOptions{Progress: progress, Auth: registryAuth(q, hostKey)})
 	}
 	rep := &agentv1.SyncOperationReport{App: ds.App, Revision: ds.Revision, Op: ds.Op, Checksum: ds.Checksum,
 		Phase: string(domain.OpSucceeded), Message: "synced to " + ds.Revision}
@@ -146,6 +227,33 @@ func (ag *Agent) desired(ctx context.Context, conn *wire.Conn, b *blobs, ds *age
 		ag.log.WarnContext(ctx, "the Control Plane is gone: the Sync's result waits in the outbox", "app", ds.App, "err", err)
 		if err := ag.record(context.WithoutCancel(ctx), rep); err != nil {
 			ag.log.ErrorContext(ctx, "record the Sync's result", "err", err)
+		}
+	}
+}
+
+// removeApp removes an Application the Control Plane deleted (Q83), or with keep only forgets it: no Self-Heal or
+// restore, its containers and folder left alone. It answers; an answer that can't be sent goes to the outbox.
+func (ag *Agent) removeApp(ctx context.Context, conn *wire.Conn, id uint64, r *agentv1.RemoveApp) {
+	ctx = logging.With(ctx, "app", r.App)
+	var err error
+	if r.KeepContainers {
+		err = ag.Forget(ctx, r.App)
+	} else {
+		err = ag.Remove(ctx, r.App, r.Volumes)
+	}
+	if errors.Is(err, domain.ErrNotFound) {
+		err = nil // not on this Host (any more): removed
+	}
+	done := &agentv1.AppRemoved{App: r.App}
+	if err != nil {
+		done.Error = err.Error()
+		ag.log.ErrorContext(ctx, "remove application", "err", err)
+	} else {
+		ag.log.InfoContext(ctx, "application removed", "volumes", r.Volumes, "keepContainers", r.KeepContainers)
+	}
+	if err := conn.Send(ctx, &agentv1.Envelope{ReplyTo: id, Body: &agentv1.Envelope_AppRemoved{AppRemoved: done}}); err != nil && done.Error == "" {
+		if err := ag.recordEntry(context.WithoutCancel(ctx), &agentv1.OutboxEntry{Event: &agentv1.OutboxEntry_AppRemoved{AppRemoved: done}}); err != nil {
+			ag.log.ErrorContext(ctx, "record the removal", "err", err)
 		}
 	}
 }

@@ -132,6 +132,8 @@ ALTER TABLE hosts ADD COLUMN agent TEXT NOT NULL DEFAULT '';
 ALTER TABLE hosts ADD COLUMN allow_ips TEXT NOT NULL DEFAULT '[]';
 `, `
 ALTER TABLE hosts ADD COLUMN outbox_seq INTEGER NOT NULL DEFAULT 0;
+`, `
+ALTER TABLE apps ADD COLUMN deleting TEXT NOT NULL DEFAULT '';
 `}
 
 type Store struct {
@@ -230,15 +232,15 @@ type scanner interface{ Scan(...any) error }
 
 const appCols = `name, repo_url, path, target_revision, compose_files, profiles, host, auto_sync, self_heal, prune, adopt, rolled_back, kind, parent, not_in_git, prune_volumes, work_dir, created_at`
 
-// appRead is appCols plus what only SetAppDirs writes.
-const appRead = appCols + `, dirs`
+// appRead is appCols plus what only SetAppDirs and SetAppDeleting write.
+const appRead = appCols + `, dirs, deleting`
 
 func scanApp(r scanner) (domain.Application, error) {
 	var a domain.Application
 	var files, profiles, dirs string
 	var created int64
 	if err := r.Scan(&a.Name, &a.RepoURL, &a.Path, &a.TargetRevision, &files, &profiles, &a.Host,
-		&a.AutoSync, &a.SelfHeal, &a.Prune, &a.Adopt, &a.RolledBack, &a.Kind, &a.Parent, &a.NotInGit, &a.PruneVolumes, &a.WorkDir, &created, &dirs); err != nil {
+		&a.AutoSync, &a.SelfHeal, &a.Prune, &a.Adopt, &a.RolledBack, &a.Kind, &a.Parent, &a.NotInGit, &a.PruneVolumes, &a.WorkDir, &created, &dirs, &a.Deleting); err != nil {
 		return a, mapErr(err)
 	}
 	a.CreatedAt = fromUnix(created)
@@ -639,6 +641,32 @@ func (s *Store) ApplyAgentReport(ctx context.Context, host string, seq uint64, r
 		return false, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE hosts SET outbox_seq=? WHERE name=?`, seq, host); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
+}
+
+func (s *Store) SetAppDeleting(ctx context.Context, name, how string) error {
+	return affected(s.db.ExecContext(ctx, `UPDATE apps SET deleting = ? WHERE name = ?`, how, name))
+}
+
+func (s *Store) ApplyAgentRemoval(ctx context.Context, host string, seq uint64, app string) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var last uint64
+	if err := tx.QueryRowContext(ctx, `SELECT outbox_seq FROM hosts WHERE name = ?`, host).Scan(&last); err != nil {
+		return false, mapErr(err)
+	}
+	if seq <= last {
+		return false, nil
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM apps WHERE name = ? AND host = ? AND deleting <> ''`, app, host); err != nil {
+		return false, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE hosts SET outbox_seq = ? WHERE name = ?`, seq, host); err != nil {
 		return false, err
 	}
 	return true, tx.Commit()

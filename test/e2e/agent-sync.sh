@@ -30,7 +30,7 @@ export OMEGACD_TOKEN=$(curl -sf -b "$T/j" -H 'Content-Type: application/json' -H
   -d '{"name":"e2e"}' $API/settings/tokens | python3 -c 'import json,sys; print(json.load(sys.stdin)["plaintext"])')
 waitfor() { for _ in $(seq $((${3:-10} * 10))); do grep -qF -- "$2" "$1" 2>/dev/null && return 0; sleep 0.1; done; return 1; }
 agent() {
-  env -i PATH="$PATH" HOME="$T/edge" XDG_RUNTIME_DIR="$T/edge/run" ${DOCKER_HOST:+DOCKER_HOST=$DOCKER_HOST} \
+  env -i PATH="$PATH" ${GOCOVERDIR:+GOCOVERDIR=$GOCOVERDIR} HOME="$T/edge" XDG_RUNTIME_DIR="$T/edge/run" ${DOCKER_HOST:+DOCKER_HOST=$DOCKER_HOST} \
     OMEGACD_LOG_LEVEL=debug OMEGACD_AGENT_CONTROL_PLANE=$OMEGACD_SERVER "$@" "$BIN" agent >> "$T/agent.log" 2>&1 &
   AGENT=$!
   PIDS+=($AGENT)
@@ -101,7 +101,7 @@ REV1=$(hist "print([o for o in ops if o['id']==$OP][0]['revision'])")
 rollbacks() { hist 'print(sum(1 for o in ops if o["trigger"]=="rollback"))'; }
 BEFORE=$(rollbacks) # the rollback through the Control Plane above
 kill $AGENT; wait $AGENT 2>/dev/null
-out=$(env -i PATH="$PATH" HOME="$T/edge" XDG_RUNTIME_DIR="$T/edge/run" ${DOCKER_HOST:+DOCKER_HOST=$DOCKER_HOST} "$BIN" agent rollback $APP "$REV1" 2>&1); rc=$?
+out=$(env -i PATH="$PATH" ${GOCOVERDIR:+GOCOVERDIR=$GOCOVERDIR} HOME="$T/edge" XDG_RUNTIME_DIR="$T/edge/run" ${DOCKER_HOST:+DOCKER_HOST=$DOCKER_HOST} "$BIN" agent rollback $APP "$REV1" 2>&1); rc=$?
 check "offline, a rollback on the Host itself (Q25)" '[ $rc -eq 0 ] && sleep 2 && docker logs $(ctr) 2>&1 | tail -3 | grep -q "conf v1"'
 agent
 for _ in $(seq 60); do [ "$(rollbacks)" = $((BEFORE + 1)) ] && break; sleep 1; done
@@ -112,7 +112,7 @@ kill $AGENT; wait $AGENT 2>/dev/null; : > "$T/agent.log"; agent
 waitfor "$T/agent.log" "connected to the Control Plane, approved"; sleep 3
 check "exactly once: another connection doesn't report it again" '[ "$(rollbacks)" = $((BEFORE + 1)) ]'
 
-out=$(env -i PATH="$PATH" HOME="$T/other" OMEGACD_AGENT_CONTROL_PLANE=http://cp.example.com "$BIN" agent 2>&1); rc=$?
+out=$(env -i PATH="$PATH" ${GOCOVERDIR:+GOCOVERDIR=$GOCOVERDIR} HOME="$T/other" OMEGACD_AGENT_CONTROL_PLANE=http://cp.example.com "$BIN" agent 2>&1); rc=$?
 check "an Agent refuses plain http to another machine (Q95)" '[ $rc -ne 0 ] && echo "$out" | grep -q "https only"'
 
 [ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- server log"; tail -20 "$T/server.log"; echo "--- agent log"; tail -20 "$T/agent.log"; }

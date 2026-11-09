@@ -586,3 +586,31 @@ func TestHostEnrollment(t *testing.T) {
 		}
 	}
 }
+
+func TestDeleteForgetAndWaiting(t *testing.T) {
+	f, srv := newAPI(t, map[string]any{
+		"DELETE /api/apps/gone": nil,
+		"DELETE /api/apps/web":  map[string]string{"message": "waiting for the Host edge: its Agent removes web when it connects"},
+	})
+	if r := run(t, srv, nil, "", "app", "delete", "gone", "--forget", "--yes"); r.code != 0 || !f.called("DELETE /api/apps/gone?forget=true") {
+		t.Fatalf("forget: %+v", r)
+	}
+	if r := run(t, srv, nil, "", "app", "delete", "gone", "--forget", "--volumes", "--yes"); r.code == 0 || !strings.Contains(r.stderr, "--forget asks no Agent") {
+		t.Fatalf("--forget with --volumes: %+v", r)
+	}
+	if r := run(t, srv, nil, "", "app", "delete", "web", "--yes"); r.code != 0 ||
+		!strings.Contains(r.stdout, "application web: deleting, waiting for the Host edge") {
+		t.Fatalf("waiting: %+v", r)
+	}
+}
+
+func TestDeleteForgetConfirmation(t *testing.T) {
+	f, srv := newAPI(t, map[string]any{"DELETE /api/apps/gone": nil})
+	r := run(t, srv, map[string]string{"STDIN_TTY": "1"}, "y\n", "app", "delete", "gone", "--forget")
+	if r.code != 0 || !strings.Contains(r.stderr, "from OmegaCD only (its Host is not asked") || !f.called("DELETE /api/apps/gone?forget=true") {
+		t.Fatalf("%+v", r)
+	}
+	if r := run(t, srv, nil, "", "app", "delete", "nope", "--forget", "--yes"); r.code == 0 || !strings.Contains(r.stderr, "not found") {
+		t.Fatalf("an app the server doesn't have: %+v", r)
+	}
+}

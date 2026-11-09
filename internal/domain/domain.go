@@ -46,27 +46,31 @@ var (
 	ErrInvalid       = errors.New("invalid")
 	ErrUnmanaged     = errors.New("compose project exists and is not managed by omegacd")
 	ErrBusy          = errors.New("a sync operation is already running")
+	// ErrWaitingForHost: the delete is recorded and done when the Application's Host's Agent is back (Q83)
+	ErrWaitingForHost = errors.New("waiting for the Host")
 )
 
 type Application struct {
-	Name           string    `json:"name"`
-	RepoURL        string    `json:"repoURL"`
-	Path           string    `json:"path"`           // directory inside the repo, "" or "." for root
-	TargetRevision string    `json:"targetRevision"` // branch, tag or commit SHA; default "main"
-	ComposeFiles   []string  `json:"composeFiles"`   // relative to Path; empty: the first of DefaultComposeFiles found
-	Profiles       []string  `json:"profiles"`
-	Host           string    `json:"host"` // a Host name; default LocalHost
-	AutoSync       bool      `json:"autoSync"`
-	SelfHeal       bool      `json:"selfHeal"`
-	Prune          bool      `json:"prune"`
-	PruneVolumes   bool      `json:"pruneVolumes"`      // with Prune, also delete undeclared project volumes; false whenever Prune is
-	Adopt          bool      `json:"adopt"`             // only honoured on create
-	RolledBack     bool      `json:"rolledBack"`        // Auto-Sync was turned off by a Rollback; cleared when Auto-Sync is re-enabled
-	Kind           string    `json:"kind"`              // KindCompose (default) or KindApps (an App of Apps)
-	Parent         string    `json:"parent,omitempty"`  // the App of Apps that owns this Child Application
-	NotInGit       bool      `json:"notInGit"`          // a Child Application its parent no longer declares (kept because Prune is off)
-	WorkDir        string    `json:"workDir,omitempty"` // absolute root for its folder on the Host (Q57); "": the Host's work dir
-	CreatedAt      time.Time `json:"createdAt"`
+	Name           string   `json:"name"`
+	RepoURL        string   `json:"repoURL"`
+	Path           string   `json:"path"`           // directory inside the repo, "" or "." for root
+	TargetRevision string   `json:"targetRevision"` // branch, tag or commit SHA; default "main"
+	ComposeFiles   []string `json:"composeFiles"`   // relative to Path; empty: the first of DefaultComposeFiles found
+	Profiles       []string `json:"profiles"`
+	Host           string   `json:"host"` // a Host name; default LocalHost
+	AutoSync       bool     `json:"autoSync"`
+	SelfHeal       bool     `json:"selfHeal"`
+	Prune          bool     `json:"prune"`
+	PruneVolumes   bool     `json:"pruneVolumes"` // with Prune, also delete undeclared project volumes; false whenever Prune is
+	Adopt          bool     `json:"adopt"`        // only honoured on create
+	// Deleting says how it's being deleted while its Agent hasn't confirmed (Q83): "containers", "volumes" or "keep"
+	Deleting   string    `json:"deleting,omitempty"`
+	RolledBack bool      `json:"rolledBack"`        // Auto-Sync was turned off by a Rollback; cleared when Auto-Sync is re-enabled
+	Kind       string    `json:"kind"`              // KindCompose (default) or KindApps (an App of Apps)
+	Parent     string    `json:"parent,omitempty"`  // the App of Apps that owns this Child Application
+	NotInGit   bool      `json:"notInGit"`          // a Child Application its parent no longer declares (kept because Prune is off)
+	WorkDir    string    `json:"workDir,omitempty"` // absolute root for its folder on the Host (Q57); "": the Host's work dir
+	CreatedAt  time.Time `json:"createdAt"`
 	// Dirs is the folders (HostDir) Syncs wrote the Application's files to and that may still hold them: a Sync may
 	// write into them again, and deletes the ones it moved away from. Only Store.SetAppDirs changes it.
 	Dirs []string `json:"-"`
@@ -469,6 +473,12 @@ type Store interface {
 	// is still unfinished; one the Agent ran itself becomes a finished Sync Operation, a rollback also marking the
 	// Application rolled back with Auto-Sync off (Q25). Only Applications on that Host are touched.
 	ApplyAgentReport(ctx context.Context, host string, seq uint64, r AgentReport) (applied bool, err error)
+	// ApplyAgentRemoval applies an outbox entry seq saying app was removed: the Application, if on that Host and being
+	// deleted, leaves the Control Plane (Q83). Once, like ApplyAgentReport.
+	ApplyAgentRemoval(ctx context.Context, host string, seq uint64, app string) (applied bool, err error)
+	// SetAppDeleting records that the Application is being deleted (Q83), how ("containers", "volumes" or "keep"),
+	// until its Agent confirms; "" clears it.
+	SetAppDeleting(ctx context.Context, name, how string) error
 	// RecordAgent keeps what the Host's Agent said about itself.
 	RecordAgent(ctx context.Context, host string, info AgentInfo) error
 	// LockHost locks the Host with the connections that shared its key; UnlockHost clears it.
@@ -566,7 +576,10 @@ type SyncOptions struct {
 	// PruneVolumes (only with Prune) also deletes project volumes the project no longer declares and no container uses.
 	PruneVolumes bool
 	Registries   []RegistryCredential
-	Progress     func(ProgressEvent) // may be nil
+	// Auth, when set, is asked for the credentials of the registries the project's images come from, before pulling
+	// (an Agent asks its Control Plane, Q85); they are used with Registries
+	Auth     func(ctx context.Context, registries []string) ([]RegistryCredential, error)
+	Progress func(ProgressEvent) // may be nil
 	// ForceRecreate recreates every container even if its config is unchanged
 	// (after a restore, bind mounts must be re-attached to the restored files).
 	ForceRecreate bool
@@ -623,6 +636,9 @@ type Controller interface {
 	UpdateApp(ctx context.Context, a Application) (AppView, error)
 	// DeleteApp deletes an Application; cascade also removes what it runs, volumes (with cascade) its volumes too.
 	DeleteApp(ctx context.Context, name string, cascade, volumes bool) error
+	// ForgetApp removes an Application from the Control Plane only, its containers left as they are, for one whose
+	// Host is gone for good (Q92).
+	ForgetApp(ctx context.Context, name string) error
 
 	// Sync starts a Sync Operation to the app's target revision in the background and returns its ID.
 	Sync(ctx context.Context, name string, req SyncRequest) (int64, error)

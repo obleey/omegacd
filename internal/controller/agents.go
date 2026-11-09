@@ -59,6 +59,10 @@ func (c *Controller) Resynced(ctx context.Context, host string) {
 		if a.Host != host || a.Kind != domain.KindCompose {
 			continue
 		}
+		if a.Deleting != "" {
+			go c.finishDeleting(context.WithoutCancel(ctx), a.Name)
+			continue
+		}
 		ops, err := c.cfg.Store.ListOps(ctx, a.Name)
 		if err != nil || len(ops) == 0 || ops[0].Phase != domain.OpWaiting {
 			continue
@@ -83,4 +87,56 @@ func (c *Controller) Resynced(ctx context.Context, host string) {
 		c.emit(domain.Event{Type: "op", App: a.Name, Data: op})
 		go c.runSync(a, op)
 	}
+}
+
+// AgentRemoved finishes a delete an Agent reported from its outbox (Q83): the store already dropped the Application.
+func (c *Controller) AgentRemoved(ctx context.Context, host, app string) {
+	c.mu.Lock()
+	s := c.apps[app]
+	delete(c.apps, app)
+	c.mu.Unlock()
+	c.emit(domain.Event{Type: "app-deleted", App: app, Data: app})
+	if s != nil && s.view.Parent != "" {
+		c.finishDeleting(ctx, s.view.Parent)
+	}
+}
+
+// AgentProgress shows a Sync's progress on an Agent live (Q87).
+func (c *Controller) AgentProgress(_ context.Context, app string, p domain.ProgressEvent) {
+	c.emit(domain.Event{Type: "progress", App: app, Data: p})
+}
+
+// ForgetApp removes an Application from the Control Plane only (Q92): its Host is gone for good, or its containers
+// should stay as they are; nothing is asked of any Agent or engine.
+func (c *Controller) ForgetApp(ctx context.Context, name string) error {
+	a, err := c.cfg.Store.GetApp(ctx, name)
+	if err != nil {
+		return err
+	}
+	if a.Kind == domain.KindApps {
+		return fmt.Errorf("%w: an App of Apps is deleted, not forgotten: forget its children", domain.ErrInvalid)
+	}
+	c.mu.Lock()
+	s := c.state(name)
+	if s.syncing {
+		c.mu.Unlock()
+		return domain.ErrBusy
+	}
+	s.deleting = true
+	c.mu.Unlock()
+	if err := c.cfg.Store.DeleteApp(ctx, name); err != nil {
+		c.mu.Lock()
+		s.deleting = false
+		c.mu.Unlock()
+		return err
+	}
+	c.mu.Lock()
+	delete(c.apps, name)
+	c.mu.Unlock()
+	c.cfg.Log.InfoContext(ctx, "application forgotten: left as it is on its Host", "app", name, "host", a.Host)
+	c.emit(domain.Event{Type: "app-deleted", App: name, Data: name})
+	if a.Parent != "" {
+		c.finishDeleting(ctx, a.Parent)
+	}
+	return nil
 }

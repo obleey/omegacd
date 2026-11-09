@@ -54,8 +54,19 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request) {
 	respond(w, http.StatusOK, v, err)
 }
 
+// deleteApp deletes an Application; ?forget=true only from the Control Plane (Q92). A delete its offline Host's Agent
+// must do waits for it: 202 (Q83).
 func (s *server) deleteApp(w http.ResponseWriter, r *http.Request) {
-	err := s.Controller.DeleteApp(r.Context(), r.PathValue("name"), r.URL.Query().Get("cascade") == "true", r.URL.Query().Get("volumes") == "true")
+	q := r.URL.Query()
+	if q.Get("forget") == "true" {
+		respond(w, http.StatusNoContent, nil, s.Controller.ForgetApp(r.Context(), r.PathValue("name")))
+		return
+	}
+	err := s.Controller.DeleteApp(r.Context(), r.PathValue("name"), q.Get("cascade") == "true", q.Get("volumes") == "true")
+	if errors.Is(err, domain.ErrWaitingForHost) {
+		writeJSON(w, http.StatusAccepted, map[string]string{"message": err.Error()})
+		return
+	}
 	respond(w, http.StatusNoContent, nil, err)
 }
 

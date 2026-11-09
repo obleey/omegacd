@@ -60,6 +60,8 @@ type Config struct {
 // agents.ErrOffline / ErrNotApproved when there's no Agent to send to, ErrDisconnected when the connection dropped.
 type Agents interface {
 	Deploy(ctx context.Context, host string, ds *agentv1.DesiredState) error
+	// Remove has the Agent remove app, or with keepContainers forget it (Q83); errors like Deploy's
+	Remove(ctx context.Context, host, app string, volumes, keepContainers bool) error
 }
 
 type appState struct {
@@ -458,6 +460,8 @@ func (c *Controller) autoTrigger(a domain.Application, s *appState, v domain.App
 		return "", "rolled back"
 	case s.syncing || s.deleting:
 		return "", "busy"
+	case a.Deleting != "":
+		return "", "deleting, waiting for its Host"
 	case v.LastOperation != nil && v.LastOperation.TreeHash == s.targetTree &&
 		(v.LastOperation.Phase == domain.OpWaiting || v.LastOperation.Phase == domain.OpRunning):
 		return "", "a Sync to this tree waits for its Host" // or for its disconnected Agent's report (Q81, Q93)
@@ -920,9 +924,13 @@ func (c *Controller) deleteAppLocked(ctx context.Context, a domain.Application, 
 		if err != nil {
 			return err
 		}
+		var waiting []string
 		for _, ch := range children {
 			if cascade {
 				err = c.deleteApp(ctx, ch, true, volumes)
+				if errors.Is(err, domain.ErrWaitingForHost) { // the App of Apps goes once its last child is gone
+					waiting, err = append(waiting, ch.Name), nil
+				}
 			} else {
 				old := c.appDir(ch)
 				ch.Parent, ch.NotInGit = "", false
@@ -942,6 +950,29 @@ func (c *Controller) deleteAppLocked(ctx context.Context, a domain.Application, 
 				return fmt.Errorf("application %q: %w", ch.Name, err)
 			}
 		}
+		if len(waiting) > 0 {
+			if err := c.cfg.Store.SetAppDeleting(ctx, a.Name, deleteHow(cascade, volumes)); err != nil {
+				return err
+			}
+			return fmt.Errorf("%w of %s", domain.ErrWaitingForHost, strings.Join(waiting, ", "))
+		}
+	}
+	if a.Kind == domain.KindCompose && c.agentHost(ctx, a.Host) {
+		err := c.cfg.Agents.Remove(ctx, a.Host, a.Name, cascade && volumes, !cascade)
+		if errors.Is(err, agents.ErrOffline) || errors.Is(err, agents.ErrNotApproved) || errors.Is(err, agents.ErrDisconnected) {
+			if serr := c.cfg.Store.SetAppDeleting(ctx, a.Name, deleteHow(cascade, volumes)); serr != nil {
+				return serr
+			}
+			c.cfg.Log.WarnContext(ctx, "delete waits for the host", "app", a.Name, "host", a.Host, "why", err)
+			if fresh, gerr := c.cfg.Store.GetApp(ctx, a.Name); gerr == nil {
+				c.emit(domain.Event{Type: "app", App: a.Name, Data: c.cachedView(ctx, fresh)})
+			}
+			return fmt.Errorf("%w %s: its Agent removes %s when it connects", domain.ErrWaitingForHost, a.Host, a.Name)
+		}
+		if err != nil {
+			return err
+		}
+		cascade = false // done by the Agent; nothing of it is on the Control Plane's side
 	}
 	if cascade {
 		if a.Kind == domain.KindCompose {
@@ -963,7 +994,34 @@ func (c *Controller) deleteAppLocked(ctx context.Context, a domain.Application, 
 	delete(c.apps, a.Name)
 	c.mu.Unlock()
 	c.emit(domain.Event{Type: "app-deleted", App: a.Name, Data: a.Name})
+	if a.Parent != "" {
+		c.finishDeleting(ctx, a.Parent)
+	}
 	return nil
+}
+
+// deleteHow is how a delete is recorded while it waits for a Host (Q83).
+func deleteHow(cascade, volumes bool) string {
+	switch {
+	case !cascade:
+		return "keep"
+	case volumes:
+		return "volumes"
+	}
+	return "containers"
+}
+
+// finishDeleting deletes an Application recorded as being deleted, again: once its Host is back, or for an App of
+// Apps once its children are gone.
+func (c *Controller) finishDeleting(ctx context.Context, name string) {
+	a, err := c.cfg.Store.GetApp(ctx, name)
+	if err != nil || a.Deleting == "" {
+		return
+	}
+	err = c.deleteApp(ctx, a, a.Deleting != "keep", a.Deleting == "volumes")
+	if err != nil && !errors.Is(err, domain.ErrWaitingForHost) {
+		c.cfg.Log.ErrorContext(ctx, "finish deleting", "app", name, "err", err)
+	}
 }
 
 func (c *Controller) Sync(ctx context.Context, name string, req domain.SyncRequest) (int64, error) {

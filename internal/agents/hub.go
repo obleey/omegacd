@@ -16,9 +16,12 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"time"
+
+	"filippo.io/age"
 
 	"github.com/obleey/omegacd/internal/domain"
 	"github.com/obleey/omegacd/internal/logging"
@@ -63,6 +66,10 @@ type Hub struct {
 	Reported func(ctx context.Context, app string)
 	// Resynced is told a Host's Agent sent its checksums: Syncs waiting for the Host can go (Q81); may be nil
 	Resynced func(ctx context.Context, host string)
+	// Removed is told an Agent reported, from its outbox, an Application removed (Q83); may be nil
+	Removed func(ctx context.Context, host, app string)
+	// Progress is told of a Sync's progress on an Agent (Q87); may be nil
+	Progress func(ctx context.Context, app string, p domain.ProgressEvent)
 
 	mu    sync.Mutex
 	conns map[string]*session // by Host
@@ -80,7 +87,8 @@ type session struct {
 	// deploys waiting for their SyncOperationReport, by op; files, the blobs this Agent was sent Desired States with:
 	// all it may ask for, so no Host reads another's files by guessing hashes
 	deploys map[uint64]chan *agentv1.SyncOperationReport
-	sent    map[uint64]*agentv1.DesiredState // in flight, by op: a resync re-sends one the Agent doesn't have
+	removes map[uint64]chan *agentv1.AppRemoved // RemoveApps waiting for their answer, by envelope id
+	sent    map[uint64]*agentv1.DesiredState    // in flight, by op: a resync re-sends one the Agent doesn't have
 	files   map[string]bool
 }
 
@@ -131,7 +139,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s := &session{conn: c, at: domain.AgentConnection{Address: addr, Since: h.now()}, approved: make(chan struct{}), key: key,
-		deploys: map[uint64]chan *agentv1.SyncOperationReport{}, sent: map[uint64]*agentv1.DesiredState{}, files: map[string]bool{}}
+		deploys: map[uint64]chan *agentv1.SyncOperationReport{}, removes: map[uint64]chan *agentv1.AppRemoved{}, sent: map[uint64]*agentv1.DesiredState{}, files: map[string]bool{}}
 	if host.Approved {
 		s.once.Do(func() { close(s.approved) })
 	}
@@ -183,6 +191,20 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			s.mu.Unlock()
 			if wait != nil {
 				wait <- r
+			}
+		case e.GetAppRemoved() != nil:
+			s.mu.Lock()
+			wait := s.removes[e.ReplyTo]
+			delete(s.removes, e.ReplyTo)
+			s.mu.Unlock()
+			if wait != nil {
+				wait <- e.GetAppRemoved()
+			}
+		case e.GetRegistryAuthRequest() != nil:
+			go h.registryAuth(ctx, host.Name, s, e.Id, e.GetRegistryAuthRequest())
+		case e.GetSyncProgress() != nil:
+			if p := e.GetSyncProgress(); h.Progress != nil {
+				h.Progress(ctx, p.App, domain.ProgressEvent{OpID: int64(p.Op), Resource: p.Resource, Status: p.Status, Text: p.Text})
 			}
 		case e.GetOutboxEntry() != nil:
 			h.outbox(ctx, host.Name, s, e.GetOutboxEntry())
@@ -357,6 +379,10 @@ func (h *Hub) authenticate(ctx context.Context, c *wire.Conn) (domain.Host, []by
 				}
 				return host, r.PublicKey, hello, err
 			}
+			// its Host Key is what secrets and registry credentials get encrypted to: a wrong one would fail them all later
+			if _, err := age.ParseX25519Recipient(enroll.AgeRecipient); err != nil {
+				return domain.Host{}, nil, nil, fmt.Errorf("the Host Key %q isn't an age recipient: %w", enroll.AgeRecipient, err)
+			}
 			host, err = h.store.Enroll(ctx, enroll.Invite, r.PublicKey, enroll.AgeRecipient, h.now())
 			return host, r.PublicKey, hello, err
 		}
@@ -517,6 +543,19 @@ func (h *Hub) Deploy(ctx context.Context, host string, ds *agentv1.DesiredState)
 // outbox applies an entry the Agent recorded (offline, or when a report couldn't be sent) and acknowledges it; one
 // sent again is acknowledged again and applied once (M3-06).
 func (h *Hub) outbox(ctx context.Context, host string, s *session, e *agentv1.OutboxEntry) {
+	if rm := e.GetAppRemoved(); rm != nil {
+		applied, err := h.store.ApplyAgentRemoval(ctx, host, e.Seq, rm.App)
+		if err != nil {
+			h.log.ErrorContext(ctx, "apply the agent's removal", "seq", e.Seq, "err", err)
+			return
+		}
+		h.log.InfoContext(ctx, "agent report: application removed", "seq", e.Seq, "app", rm.App, "applied", applied)
+		s.conn.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_OutboxAck{OutboxAck: &agentv1.OutboxAck{Seq: e.Seq}}})
+		if applied && h.Removed != nil {
+			h.Removed(ctx, host, rm.App)
+		}
+		return
+	}
 	r := e.GetSyncOperationReport()
 	if r == nil { // a StatusReport: Health and drift come with M4-02
 		s.conn.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_OutboxAck{OutboxAck: &agentv1.OutboxAck{Seq: e.Seq}}})
@@ -554,6 +593,90 @@ func (h *Hub) resync(ctx context.Context, host string, s *session, r *agentv1.Re
 	if h.Resynced != nil {
 		h.Resynced(ctx, host)
 	}
+}
+
+// Remove has the Host's Agent remove app (with its volumes when asked), or with keepContainers only forget it, and
+// waits for its answer (Q83). ErrOffline and ErrNotApproved when there's no Agent to tell; ErrDisconnected when the
+// connection dropped meanwhile (the Agent finishes and reports through its outbox).
+func (h *Hub) Remove(ctx context.Context, host, app string, volumes, keepContainers bool) error {
+	s, err := h.approved(host)
+	if err != nil {
+		return err
+	}
+	e := &agentv1.Envelope{Body: &agentv1.Envelope_RemoveApp{RemoveApp: &agentv1.RemoveApp{App: app, Volumes: volumes, KeepContainers: keepContainers}}}
+	answer := make(chan *agentv1.AppRemoved, 1)
+	s.mu.Lock() // registered before the answer can be read
+	err = s.conn.Send(ctx, e)
+	s.removes[e.Id] = answer
+	s.mu.Unlock()
+	if err != nil {
+		return fmt.Errorf("host %s: %w", host, ErrDisconnected)
+	}
+	select {
+	case r := <-answer:
+		if r.Error != "" {
+			return errors.New(r.Error)
+		}
+		return nil
+	case <-s.conn.Done():
+		return fmt.Errorf("host %s: %w", host, ErrDisconnected)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// registryAuth answers an Agent's request for registry credentials (Q85, Q86): only a Host the Control Plane serves an
+// Application to gets any, only for the registries it asked for, each sealed to its Host Key.
+func (h *Hub) registryAuth(ctx context.Context, host string, s *session, id uint64, req *agentv1.RegistryAuthRequest) {
+	answer, err := h.sealedCredentials(ctx, host, req.Registries)
+	if err != nil {
+		h.log.WarnContext(ctx, "registry credentials for an agent", "err", err)
+		s.conn.Send(ctx, &agentv1.Envelope{ReplyTo: id, Body: &agentv1.Envelope_Error{Error: &agentv1.Error{Message: err.Error()}}})
+		return
+	}
+	s.conn.Send(ctx, &agentv1.Envelope{ReplyTo: id, Body: &agentv1.Envelope_RegistryAuth{RegistryAuth: answer}})
+}
+
+func (h *Hub) sealedCredentials(ctx context.Context, host string, registries []string) (*agentv1.RegistryAuth, error) {
+	out := &agentv1.RegistryAuth{}
+	apps, err := h.store.ListApps(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !slices.ContainsFunc(apps, func(a domain.Application) bool { return a.Host == host }) {
+		return out, nil // nothing to pull for
+	}
+	h0, err := h.store.GetHost(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	creds, err := h.store.ListRegistryCredentials(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range creds {
+		if !slices.Contains(registries, registryHost(c.Registry)) {
+			continue
+		}
+		b, err := SealCredential(h0.AgeRecipient, c)
+		if err != nil {
+			return nil, err
+		}
+		out.Credentials = append(out.Credentials, &agentv1.SealedCredential{Registry: c.Registry, Sealed: b})
+		h.log.InfoContext(ctx, "registry credentials to an agent, sealed to its host key", "registry", c.Registry)
+	}
+	return out, nil
+}
+
+// registryHost names a registry as image references do (docker.io for Docker Hub), whatever way it was entered.
+func registryHost(r string) string {
+	r = strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(r, "https://"), "http://"), "/")
+	r, _, _ = strings.Cut(r, "/")
+	switch r {
+	case "index.docker.io", "registry-1.docker.io", "registry.hub.docker.com":
+		return "docker.io"
+	}
+	return r
 }
 
 // serveBlobs sends the blobs the Agent asks for, each from the offset it already has: only files of Desired States

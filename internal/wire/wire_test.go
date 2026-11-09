@@ -244,3 +244,18 @@ func TestPingEndsDeadConnection(t *testing.T) {
 		t.Fatal("a dead peer kept the connection open")
 	}
 }
+
+// Send on a closed connection says so, every time: never queued for a writer that is gone.
+func TestSendOnClosed(t *testing.T) {
+	url := serve(t, func(c *Conn) { c.Recv(t.Context()) })
+	c, err := Dial(t.Context(), url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+	for range 1000 {
+		if err := c.Send(t.Context(), hello("late")); err == nil {
+			t.Fatal("Send on a closed connection reported success")
+		}
+	}
+}

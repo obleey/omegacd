@@ -6,7 +6,7 @@ https://github.com/obleey/omegacd.
 ## Where things stand
 
 - **`main` is v0.2 in development**: a breaking redesign to pull-based Agents and a separate Source Server. Read
-  [docs/v0.2/README.md](docs/v0.2/README.md) first: architecture, every design decision (Q1–Q95), and the work as
+  [docs/v0.2/README.md](docs/v0.2/README.md) first: architecture, every design decision (Q1–Q96), and the work as
   tickets in [docs/v0.2/milestones/](docs/v0.2/milestones/). Work milestones in order (M1 → M8).
 - **`release-0.1`** is v0.1 (push over SSH/TLS, last tag `v0.1.0-rc.10`): fixes only, no features.
 - Vocabulary: [GLOSSARY.md](GLOSSARY.md) (Host, Agent, Control Plane, Source Server, Application, Sync, …). Use its
@@ -49,6 +49,8 @@ https://github.com/obleey/omegacd.
   the last change, the **whole** suite green on Linux (`make test-linux`; macOS hides permission bugs):
   `go test -race ./...`, `make test-integration`, `make test-engines` for Agent changes, and `make e2e` (start Forgejo first:
   `docker compose -f test/e2e/forgejo.yaml up -d`, so the webhook test runs instead of skipping). The PR says what ran.
+  **Coverage (Q96):** 100% of a PR's reachable changed lines, unit + integration + e2e combined; a changed line no
+  test reaches is named in the PR with why; CI fails if total coverage drops (`make cover`, M4-09).
   **Two loops:** a target that fails is stopped at its first failure (the others go on); fix it by rerunning only the
   failing part on that target (`test/linux.sh --only "CMD" TARGET`); then, before the push, the whole suite on all
   targets again.

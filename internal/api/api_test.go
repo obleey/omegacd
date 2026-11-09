@@ -250,9 +250,22 @@ func (c *fakeController) CreateApp(_ context.Context, a domain.Application) (dom
 	return v, nil
 }
 
+func (c *fakeController) ForgetApp(ctx context.Context, name string) error {
+	if _, err := c.GetApp(ctx, name); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.apps, name)
+	return nil
+}
+
 func (c *fakeController) DeleteApp(ctx context.Context, name string, cascade, volumes bool) error {
 	if _, err := c.GetApp(ctx, name); err != nil {
 		return err
+	}
+	if name == "offline" {
+		return fmt.Errorf("%w edge: its Agent removes offline when it connects", domain.ErrWaitingForHost)
 	}
 	c.mu.Lock()
 	c.lastDelete = [2]bool{cascade, volumes}
@@ -756,6 +769,21 @@ func TestAgentsConnectIsPublic(t *testing.T) {
 	defer c.Close()
 	if m, err := c.Recv(t.Context()); err != nil || m.GetChallenge() == nil {
 		t.Fatalf("want a challenge, got %v, %v", m, err)
+	}
+}
+
+// Q83, Q92: a delete its Host's Agent must do waits (202, saying so); forget removes from the Control Plane only.
+func TestDeleteWaitingAndForget(t *testing.T) {
+	e := newEnv(t, false)
+	e.login()
+	e.ctrl.apps["offline"] = domain.AppView{Application: domain.Application{Name: "offline"}}
+	e.ctrl.apps["gone"] = domain.AppView{Application: domain.Application{Name: "gone"}}
+	if b := e.expect("DELETE", "/api/apps/offline?cascade=true", "", 202); !strings.Contains(b, "waiting for the Host edge") {
+		t.Fatal(b)
+	}
+	e.expect("DELETE", "/api/apps/gone?forget=true", "", 204)
+	if _, ok := e.ctrl.apps["gone"]; ok {
+		t.Fatal("not forgotten")
 	}
 }
 

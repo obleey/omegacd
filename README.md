@@ -556,7 +556,7 @@ omegacd keygen --out age.key               # a new age key, e.g. the Master Key 
 | `app wait NAME [--sync] [--health] [--timeout 10m]` | |
 | `app logs NAME [CONTAINER_OR_SERVICE] [-f] [--tail N]` | |
 | `app export NAME` | Application definition YAML |
-| `app delete NAME [--cascade=false \| --volumes] [--yes]` | asks first on a terminal; `--cascade=false` keeps the containers; `--volumes` also deletes the volumes and their data |
+| `app delete NAME [--cascade=false \| --volumes \| --forget] [--yes]` | asks first on a terminal; `--cascade=false` keeps the containers; `--volumes` also deletes the volumes and their data; on a Host with an Agent (v0.2, in development) the Agent deletes, and to an offline Host the delete waits for it; `--forget` removes it from OmegaCD only, for an Application whose Host is gone for good |
 | `import [STACK]... [--ssh user@host --host NAME] [--recipient age1…] [--apps-dir apps] [--definitions platform/apps.yaml] [--repo-url URL] [--dry-run] [--force]` | run in your repository's checkout — see [Moving an existing server](#moving-an-existing-server-to-omegacd) |
 | `host list`, `host test NAME` | |
 | `host add NAME`, `host approve NAME FINGERPRINT` | v0.2, in development: enrolls a Host's Agent with a single-use invite (valid an hour), approved by its key's fingerprint; Applications on it then deploy through the Agent, which decrypts their secrets (a Sync to it while it's offline waits for it). The Agent connects over https only, except to its own machine; `OMEGACD_AGENT_CA_FILE` trusts a private CA |

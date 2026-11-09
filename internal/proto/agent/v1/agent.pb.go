@@ -48,6 +48,11 @@ type Envelope struct {
 	//	*Envelope_RotateKey
 	//	*Envelope_KeyRotation
 	//	*Envelope_OutboxAck
+	//	*Envelope_RemoveApp
+	//	*Envelope_AppRemoved
+	//	*Envelope_RegistryAuthRequest
+	//	*Envelope_RegistryAuth
+	//	*Envelope_SyncProgress
 	Body          isEnvelope_Body `protobuf_oneof:"body"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -266,6 +271,51 @@ func (x *Envelope) GetOutboxAck() *OutboxAck {
 	return nil
 }
 
+func (x *Envelope) GetRemoveApp() *RemoveApp {
+	if x != nil {
+		if x, ok := x.Body.(*Envelope_RemoveApp); ok {
+			return x.RemoveApp
+		}
+	}
+	return nil
+}
+
+func (x *Envelope) GetAppRemoved() *AppRemoved {
+	if x != nil {
+		if x, ok := x.Body.(*Envelope_AppRemoved); ok {
+			return x.AppRemoved
+		}
+	}
+	return nil
+}
+
+func (x *Envelope) GetRegistryAuthRequest() *RegistryAuthRequest {
+	if x != nil {
+		if x, ok := x.Body.(*Envelope_RegistryAuthRequest); ok {
+			return x.RegistryAuthRequest
+		}
+	}
+	return nil
+}
+
+func (x *Envelope) GetRegistryAuth() *RegistryAuth {
+	if x != nil {
+		if x, ok := x.Body.(*Envelope_RegistryAuth); ok {
+			return x.RegistryAuth
+		}
+	}
+	return nil
+}
+
+func (x *Envelope) GetSyncProgress() *SyncProgress {
+	if x != nil {
+		if x, ok := x.Body.(*Envelope_SyncProgress); ok {
+			return x.SyncProgress
+		}
+	}
+	return nil
+}
+
 type isEnvelope_Body interface {
 	isEnvelope_Body()
 }
@@ -342,6 +392,26 @@ type Envelope_OutboxAck struct {
 	OutboxAck *OutboxAck `protobuf:"bytes,27,opt,name=outbox_ack,json=outboxAck,proto3,oneof"`
 }
 
+type Envelope_RemoveApp struct {
+	RemoveApp *RemoveApp `protobuf:"bytes,28,opt,name=remove_app,json=removeApp,proto3,oneof"`
+}
+
+type Envelope_AppRemoved struct {
+	AppRemoved *AppRemoved `protobuf:"bytes,29,opt,name=app_removed,json=appRemoved,proto3,oneof"`
+}
+
+type Envelope_RegistryAuthRequest struct {
+	RegistryAuthRequest *RegistryAuthRequest `protobuf:"bytes,30,opt,name=registry_auth_request,json=registryAuthRequest,proto3,oneof"`
+}
+
+type Envelope_RegistryAuth struct {
+	RegistryAuth *RegistryAuth `protobuf:"bytes,31,opt,name=registry_auth,json=registryAuth,proto3,oneof"`
+}
+
+type Envelope_SyncProgress struct {
+	SyncProgress *SyncProgress `protobuf:"bytes,32,opt,name=sync_progress,json=syncProgress,proto3,oneof"`
+}
+
 func (*Envelope_Hello) isEnvelope_Body() {}
 
 func (*Envelope_Challenge) isEnvelope_Body() {}
@@ -377,6 +447,16 @@ func (*Envelope_RotateKey) isEnvelope_Body() {}
 func (*Envelope_KeyRotation) isEnvelope_Body() {}
 
 func (*Envelope_OutboxAck) isEnvelope_Body() {}
+
+func (*Envelope_RemoveApp) isEnvelope_Body() {}
+
+func (*Envelope_AppRemoved) isEnvelope_Body() {}
+
+func (*Envelope_RegistryAuthRequest) isEnvelope_Body() {}
+
+func (*Envelope_RegistryAuth) isEnvelope_Body() {}
+
+func (*Envelope_SyncProgress) isEnvelope_Body() {}
 
 // Hello comes before the ChallengeResponse; the Control Plane records it and serves Agents of its minor version and
 // one behind (Q41).
@@ -1442,6 +1522,7 @@ type OutboxEntry struct {
 	//
 	//	*OutboxEntry_StatusReport
 	//	*OutboxEntry_SyncOperationReport
+	//	*OutboxEntry_AppRemoved
 	Event         isOutboxEntry_Event `protobuf_oneof:"event"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1516,6 +1597,15 @@ func (x *OutboxEntry) GetSyncOperationReport() *SyncOperationReport {
 	return nil
 }
 
+func (x *OutboxEntry) GetAppRemoved() *AppRemoved {
+	if x != nil {
+		if x, ok := x.Event.(*OutboxEntry_AppRemoved); ok {
+			return x.AppRemoved
+		}
+	}
+	return nil
+}
+
 type isOutboxEntry_Event interface {
 	isOutboxEntry_Event()
 }
@@ -1528,9 +1618,351 @@ type OutboxEntry_SyncOperationReport struct {
 	SyncOperationReport *SyncOperationReport `protobuf:"bytes,4,opt,name=sync_operation_report,json=syncOperationReport,proto3,oneof"`
 }
 
+type OutboxEntry_AppRemoved struct {
+	AppRemoved *AppRemoved `protobuf:"bytes,5,opt,name=app_removed,json=appRemoved,proto3,oneof"`
+}
+
 func (*OutboxEntry_StatusReport) isOutboxEntry_Event() {}
 
 func (*OutboxEntry_SyncOperationReport) isOutboxEntry_Event() {}
+
+func (*OutboxEntry_AppRemoved) isOutboxEntry_Event() {}
+
+// RemoveApp has the Agent remove an Application (Q83): its containers and networks, with volumes only when asked; with
+// keep_containers it only forgets the Application (no Self-Heal, no restore) and leaves its containers and folder.
+// Answered by AppRemoved (reply_to).
+type RemoveApp struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	App            string                 `protobuf:"bytes,1,opt,name=app,proto3" json:"app,omitempty"`
+	Volumes        bool                   `protobuf:"varint,2,opt,name=volumes,proto3" json:"volumes,omitempty"`
+	KeepContainers bool                   `protobuf:"varint,3,opt,name=keep_containers,json=keepContainers,proto3" json:"keep_containers,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *RemoveApp) Reset() {
+	*x = RemoveApp{}
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RemoveApp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RemoveApp) ProtoMessage() {}
+
+func (x *RemoveApp) ProtoReflect() protoreflect.Message {
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RemoveApp.ProtoReflect.Descriptor instead.
+func (*RemoveApp) Descriptor() ([]byte, []int) {
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *RemoveApp) GetApp() string {
+	if x != nil {
+		return x.App
+	}
+	return ""
+}
+
+func (x *RemoveApp) GetVolumes() bool {
+	if x != nil {
+		return x.Volumes
+	}
+	return false
+}
+
+func (x *RemoveApp) GetKeepContainers() bool {
+	if x != nil {
+		return x.KeepContainers
+	}
+	return false
+}
+
+// AppRemoved answers a RemoveApp; error empty when it was removed. One whose answer couldn't be sent goes to the outbox.
+type AppRemoved struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	App           string                 `protobuf:"bytes,1,opt,name=app,proto3" json:"app,omitempty"`
+	Error         string                 `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AppRemoved) Reset() {
+	*x = AppRemoved{}
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AppRemoved) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AppRemoved) ProtoMessage() {}
+
+func (x *AppRemoved) ProtoReflect() protoreflect.Message {
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AppRemoved.ProtoReflect.Descriptor instead.
+func (*AppRemoved) Descriptor() ([]byte, []int) {
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *AppRemoved) GetApp() string {
+	if x != nil {
+		return x.App
+	}
+	return ""
+}
+
+func (x *AppRemoved) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+// RegistryAuthRequest asks for the credentials of the registries a Sync's images come from (Q85), before pulling.
+type RegistryAuthRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Registries    []string               `protobuf:"bytes,1,rep,name=registries,proto3" json:"registries,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RegistryAuthRequest) Reset() {
+	*x = RegistryAuthRequest{}
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegistryAuthRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegistryAuthRequest) ProtoMessage() {}
+
+func (x *RegistryAuthRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegistryAuthRequest.ProtoReflect.Descriptor instead.
+func (*RegistryAuthRequest) Descriptor() ([]byte, []int) {
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *RegistryAuthRequest) GetRegistries() []string {
+	if x != nil {
+		return x.Registries
+	}
+	return nil
+}
+
+// RegistryAuth answers it (reply_to) with the credentials the Control Plane has for those registries, each
+// age-encrypted to the Host's Host Key: only that Agent decrypts them, in memory, for that Sync (Q86).
+type RegistryAuth struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Credentials   []*SealedCredential    `protobuf:"bytes,1,rep,name=credentials,proto3" json:"credentials,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RegistryAuth) Reset() {
+	*x = RegistryAuth{}
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegistryAuth) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegistryAuth) ProtoMessage() {}
+
+func (x *RegistryAuth) ProtoReflect() protoreflect.Message {
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegistryAuth.ProtoReflect.Descriptor instead.
+func (*RegistryAuth) Descriptor() ([]byte, []int) {
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *RegistryAuth) GetCredentials() []*SealedCredential {
+	if x != nil {
+		return x.Credentials
+	}
+	return nil
+}
+
+type SealedCredential struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Registry      string                 `protobuf:"bytes,1,opt,name=registry,proto3" json:"registry,omitempty"`
+	Sealed        []byte                 `protobuf:"bytes,2,opt,name=sealed,proto3" json:"sealed,omitempty"` // age ciphertext of {"username": ..., "password": ...}
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SealedCredential) Reset() {
+	*x = SealedCredential{}
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SealedCredential) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SealedCredential) ProtoMessage() {}
+
+func (x *SealedCredential) ProtoReflect() protoreflect.Message {
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SealedCredential.ProtoReflect.Descriptor instead.
+func (*SealedCredential) Descriptor() ([]byte, []int) {
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *SealedCredential) GetRegistry() string {
+	if x != nil {
+		return x.Registry
+	}
+	return ""
+}
+
+func (x *SealedCredential) GetSealed() []byte {
+	if x != nil {
+		return x.Sealed
+	}
+	return nil
+}
+
+// SyncProgress is a Sync's progress as the Agent runs it (Q87): pulling, creating, started, …
+type SyncProgress struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	App           string                 `protobuf:"bytes,1,opt,name=app,proto3" json:"app,omitempty"`
+	Op            uint64                 `protobuf:"varint,2,opt,name=op,proto3" json:"op,omitempty"`
+	Resource      string                 `protobuf:"bytes,3,opt,name=resource,proto3" json:"resource,omitempty"`
+	Status        string                 `protobuf:"bytes,4,opt,name=status,proto3" json:"status,omitempty"`
+	Text          string                 `protobuf:"bytes,5,opt,name=text,proto3" json:"text,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SyncProgress) Reset() {
+	*x = SyncProgress{}
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SyncProgress) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SyncProgress) ProtoMessage() {}
+
+func (x *SyncProgress) ProtoReflect() protoreflect.Message {
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SyncProgress.ProtoReflect.Descriptor instead.
+func (*SyncProgress) Descriptor() ([]byte, []int) {
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *SyncProgress) GetApp() string {
+	if x != nil {
+		return x.App
+	}
+	return ""
+}
+
+func (x *SyncProgress) GetOp() uint64 {
+	if x != nil {
+		return x.Op
+	}
+	return 0
+}
+
+func (x *SyncProgress) GetResource() string {
+	if x != nil {
+		return x.Resource
+	}
+	return ""
+}
+
+func (x *SyncProgress) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *SyncProgress) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
 
 // OutboxAck tells the Agent the Control Plane has its entries up to seq: it deletes them. An entry sent again (no ack
 // arrived) is acknowledged again but applied once (M3-06).
@@ -1543,7 +1975,7 @@ type OutboxAck struct {
 
 func (x *OutboxAck) Reset() {
 	*x = OutboxAck{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[18]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1555,7 +1987,7 @@ func (x *OutboxAck) String() string {
 func (*OutboxAck) ProtoMessage() {}
 
 func (x *OutboxAck) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[18]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1568,7 +2000,7 @@ func (x *OutboxAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OutboxAck.ProtoReflect.Descriptor instead.
 func (*OutboxAck) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{18}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *OutboxAck) GetSeq() uint64 {
@@ -1587,7 +2019,7 @@ type Error struct {
 
 func (x *Error) Reset() {
 	*x = Error{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[19]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1599,7 +2031,7 @@ func (x *Error) String() string {
 func (*Error) ProtoMessage() {}
 
 func (x *Error) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[19]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1612,7 +2044,7 @@ func (x *Error) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Error.ProtoReflect.Descriptor instead.
 func (*Error) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{19}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *Error) GetMessage() string {
@@ -1626,7 +2058,7 @@ var File_omegacd_agent_v1_agent_proto protoreflect.FileDescriptor
 
 const file_omegacd_agent_v1_agent_proto_rawDesc = "" +
 	"\n" +
-	"\x1comegacd/agent/v1/agent.proto\x12\x10omegacd.agent.v1\"\xdd\t\n" +
+	"\x1comegacd/agent/v1/agent.proto\x12\x10omegacd.agent.v1\"\xc7\f\n" +
 	"\bEnvelope\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x04R\x02id\x12\x19\n" +
 	"\breply_to\x18\x02 \x01(\x04R\areplyTo\x12/\n" +
@@ -1651,7 +2083,14 @@ const file_omegacd_agent_v1_agent_proto_rawDesc = "" +
 	"rotate_key\x18\x19 \x01(\v2\x1b.omegacd.agent.v1.RotateKeyH\x00R\trotateKey\x12B\n" +
 	"\fkey_rotation\x18\x1a \x01(\v2\x1d.omegacd.agent.v1.KeyRotationH\x00R\vkeyRotation\x12<\n" +
 	"\n" +
-	"outbox_ack\x18\x1b \x01(\v2\x1b.omegacd.agent.v1.OutboxAckH\x00R\toutboxAckB\x06\n" +
+	"outbox_ack\x18\x1b \x01(\v2\x1b.omegacd.agent.v1.OutboxAckH\x00R\toutboxAck\x12<\n" +
+	"\n" +
+	"remove_app\x18\x1c \x01(\v2\x1b.omegacd.agent.v1.RemoveAppH\x00R\tremoveApp\x12?\n" +
+	"\vapp_removed\x18\x1d \x01(\v2\x1c.omegacd.agent.v1.AppRemovedH\x00R\n" +
+	"appRemoved\x12[\n" +
+	"\x15registry_auth_request\x18\x1e \x01(\v2%.omegacd.agent.v1.RegistryAuthRequestH\x00R\x13registryAuthRequest\x12E\n" +
+	"\rregistry_auth\x18\x1f \x01(\v2\x1e.omegacd.agent.v1.RegistryAuthH\x00R\fregistryAuth\x12E\n" +
+	"\rsync_progress\x18  \x01(\v2\x1e.omegacd.agent.v1.SyncProgressH\x00R\fsyncProgressB\x06\n" +
 	"\x04body\"\xf2\x01\n" +
 	"\x05Hello\x12#\n" +
 	"\ragent_version\x18\x01 \x01(\tR\fagentVersion\x12)\n" +
@@ -1731,13 +2170,38 @@ const file_omegacd_agent_v1_agent_proto_rawDesc = "" +
 	"\x04tail\x18\x03 \x01(\rR\x04tail\x12\x16\n" +
 	"\x06follow\x18\x04 \x01(\bR\x06follow\"\x1e\n" +
 	"\bLogChunk\x12\x12\n" +
-	"\x04data\x18\x01 \x01(\fR\x04data\"\xe9\x01\n" +
+	"\x04data\x18\x01 \x01(\fR\x04data\"\xaa\x02\n" +
 	"\vOutboxEntry\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x04R\x03seq\x12\x1b\n" +
 	"\ttime_unix\x18\x02 \x01(\x03R\btimeUnix\x12E\n" +
 	"\rstatus_report\x18\x03 \x01(\v2\x1e.omegacd.agent.v1.StatusReportH\x00R\fstatusReport\x12[\n" +
-	"\x15sync_operation_report\x18\x04 \x01(\v2%.omegacd.agent.v1.SyncOperationReportH\x00R\x13syncOperationReportB\a\n" +
-	"\x05event\"\x1d\n" +
+	"\x15sync_operation_report\x18\x04 \x01(\v2%.omegacd.agent.v1.SyncOperationReportH\x00R\x13syncOperationReport\x12?\n" +
+	"\vapp_removed\x18\x05 \x01(\v2\x1c.omegacd.agent.v1.AppRemovedH\x00R\n" +
+	"appRemovedB\a\n" +
+	"\x05event\"`\n" +
+	"\tRemoveApp\x12\x10\n" +
+	"\x03app\x18\x01 \x01(\tR\x03app\x12\x18\n" +
+	"\avolumes\x18\x02 \x01(\bR\avolumes\x12'\n" +
+	"\x0fkeep_containers\x18\x03 \x01(\bR\x0ekeepContainers\"4\n" +
+	"\n" +
+	"AppRemoved\x12\x10\n" +
+	"\x03app\x18\x01 \x01(\tR\x03app\x12\x14\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\"5\n" +
+	"\x13RegistryAuthRequest\x12\x1e\n" +
+	"\n" +
+	"registries\x18\x01 \x03(\tR\n" +
+	"registries\"T\n" +
+	"\fRegistryAuth\x12D\n" +
+	"\vcredentials\x18\x01 \x03(\v2\".omegacd.agent.v1.SealedCredentialR\vcredentials\"F\n" +
+	"\x10SealedCredential\x12\x1a\n" +
+	"\bregistry\x18\x01 \x01(\tR\bregistry\x12\x16\n" +
+	"\x06sealed\x18\x02 \x01(\fR\x06sealed\"x\n" +
+	"\fSyncProgress\x12\x10\n" +
+	"\x03app\x18\x01 \x01(\tR\x03app\x12\x0e\n" +
+	"\x02op\x18\x02 \x01(\x04R\x02op\x12\x1a\n" +
+	"\bresource\x18\x03 \x01(\tR\bresource\x12\x16\n" +
+	"\x06status\x18\x04 \x01(\tR\x06status\x12\x12\n" +
+	"\x04text\x18\x05 \x01(\tR\x04text\"\x1d\n" +
 	"\tOutboxAck\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x04R\x03seq\"!\n" +
 	"\x05Error\x12\x18\n" +
@@ -1755,7 +2219,7 @@ func file_omegacd_agent_v1_agent_proto_rawDescGZIP() []byte {
 	return file_omegacd_agent_v1_agent_proto_rawDescData
 }
 
-var file_omegacd_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
+var file_omegacd_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
 var file_omegacd_agent_v1_agent_proto_goTypes = []any{
 	(*Envelope)(nil),            // 0: omegacd.agent.v1.Envelope
 	(*Hello)(nil),               // 1: omegacd.agent.v1.Hello
@@ -1775,9 +2239,15 @@ var file_omegacd_agent_v1_agent_proto_goTypes = []any{
 	(*LogsRequest)(nil),         // 15: omegacd.agent.v1.LogsRequest
 	(*LogChunk)(nil),            // 16: omegacd.agent.v1.LogChunk
 	(*OutboxEntry)(nil),         // 17: omegacd.agent.v1.OutboxEntry
-	(*OutboxAck)(nil),           // 18: omegacd.agent.v1.OutboxAck
-	(*Error)(nil),               // 19: omegacd.agent.v1.Error
-	nil,                         // 20: omegacd.agent.v1.Resync.ChecksumsEntry
+	(*RemoveApp)(nil),           // 18: omegacd.agent.v1.RemoveApp
+	(*AppRemoved)(nil),          // 19: omegacd.agent.v1.AppRemoved
+	(*RegistryAuthRequest)(nil), // 20: omegacd.agent.v1.RegistryAuthRequest
+	(*RegistryAuth)(nil),        // 21: omegacd.agent.v1.RegistryAuth
+	(*SealedCredential)(nil),    // 22: omegacd.agent.v1.SealedCredential
+	(*SyncProgress)(nil),        // 23: omegacd.agent.v1.SyncProgress
+	(*OutboxAck)(nil),           // 24: omegacd.agent.v1.OutboxAck
+	(*Error)(nil),               // 25: omegacd.agent.v1.Error
+	nil,                         // 26: omegacd.agent.v1.Resync.ChecksumsEntry
 }
 var file_omegacd_agent_v1_agent_proto_depIdxs = []int32{
 	1,  // 0: omegacd.agent.v1.Envelope.hello:type_name -> omegacd.agent.v1.Hello
@@ -1792,21 +2262,28 @@ var file_omegacd_agent_v1_agent_proto_depIdxs = []int32{
 	15, // 9: omegacd.agent.v1.Envelope.logs_request:type_name -> omegacd.agent.v1.LogsRequest
 	16, // 10: omegacd.agent.v1.Envelope.log_chunk:type_name -> omegacd.agent.v1.LogChunk
 	17, // 11: omegacd.agent.v1.Envelope.outbox_entry:type_name -> omegacd.agent.v1.OutboxEntry
-	19, // 12: omegacd.agent.v1.Envelope.error:type_name -> omegacd.agent.v1.Error
+	25, // 12: omegacd.agent.v1.Envelope.error:type_name -> omegacd.agent.v1.Error
 	4,  // 13: omegacd.agent.v1.Envelope.enroll:type_name -> omegacd.agent.v1.Enroll
 	5,  // 14: omegacd.agent.v1.Envelope.enrollment_status:type_name -> omegacd.agent.v1.EnrollmentStatus
 	6,  // 15: omegacd.agent.v1.Envelope.rotate_key:type_name -> omegacd.agent.v1.RotateKey
 	7,  // 16: omegacd.agent.v1.Envelope.key_rotation:type_name -> omegacd.agent.v1.KeyRotation
-	18, // 17: omegacd.agent.v1.Envelope.outbox_ack:type_name -> omegacd.agent.v1.OutboxAck
-	9,  // 18: omegacd.agent.v1.DesiredState.files:type_name -> omegacd.agent.v1.File
-	20, // 19: omegacd.agent.v1.Resync.checksums:type_name -> omegacd.agent.v1.Resync.ChecksumsEntry
-	13, // 20: omegacd.agent.v1.OutboxEntry.status_report:type_name -> omegacd.agent.v1.StatusReport
-	14, // 21: omegacd.agent.v1.OutboxEntry.sync_operation_report:type_name -> omegacd.agent.v1.SyncOperationReport
-	22, // [22:22] is the sub-list for method output_type
-	22, // [22:22] is the sub-list for method input_type
-	22, // [22:22] is the sub-list for extension type_name
-	22, // [22:22] is the sub-list for extension extendee
-	0,  // [0:22] is the sub-list for field type_name
+	24, // 17: omegacd.agent.v1.Envelope.outbox_ack:type_name -> omegacd.agent.v1.OutboxAck
+	18, // 18: omegacd.agent.v1.Envelope.remove_app:type_name -> omegacd.agent.v1.RemoveApp
+	19, // 19: omegacd.agent.v1.Envelope.app_removed:type_name -> omegacd.agent.v1.AppRemoved
+	20, // 20: omegacd.agent.v1.Envelope.registry_auth_request:type_name -> omegacd.agent.v1.RegistryAuthRequest
+	21, // 21: omegacd.agent.v1.Envelope.registry_auth:type_name -> omegacd.agent.v1.RegistryAuth
+	23, // 22: omegacd.agent.v1.Envelope.sync_progress:type_name -> omegacd.agent.v1.SyncProgress
+	9,  // 23: omegacd.agent.v1.DesiredState.files:type_name -> omegacd.agent.v1.File
+	26, // 24: omegacd.agent.v1.Resync.checksums:type_name -> omegacd.agent.v1.Resync.ChecksumsEntry
+	13, // 25: omegacd.agent.v1.OutboxEntry.status_report:type_name -> omegacd.agent.v1.StatusReport
+	14, // 26: omegacd.agent.v1.OutboxEntry.sync_operation_report:type_name -> omegacd.agent.v1.SyncOperationReport
+	19, // 27: omegacd.agent.v1.OutboxEntry.app_removed:type_name -> omegacd.agent.v1.AppRemoved
+	22, // 28: omegacd.agent.v1.RegistryAuth.credentials:type_name -> omegacd.agent.v1.SealedCredential
+	29, // [29:29] is the sub-list for method output_type
+	29, // [29:29] is the sub-list for method input_type
+	29, // [29:29] is the sub-list for extension type_name
+	29, // [29:29] is the sub-list for extension extendee
+	0,  // [0:29] is the sub-list for field type_name
 }
 
 func init() { file_omegacd_agent_v1_agent_proto_init() }
@@ -1833,10 +2310,16 @@ func file_omegacd_agent_v1_agent_proto_init() {
 		(*Envelope_RotateKey)(nil),
 		(*Envelope_KeyRotation)(nil),
 		(*Envelope_OutboxAck)(nil),
+		(*Envelope_RemoveApp)(nil),
+		(*Envelope_AppRemoved)(nil),
+		(*Envelope_RegistryAuthRequest)(nil),
+		(*Envelope_RegistryAuth)(nil),
+		(*Envelope_SyncProgress)(nil),
 	}
 	file_omegacd_agent_v1_agent_proto_msgTypes[17].OneofWrappers = []any{
 		(*OutboxEntry_StatusReport)(nil),
 		(*OutboxEntry_SyncOperationReport)(nil),
+		(*OutboxEntry_AppRemoved)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -1844,7 +2327,7 @@ func file_omegacd_agent_v1_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_omegacd_agent_v1_agent_proto_rawDesc), len(file_omegacd_agent_v1_agent_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   21,
+			NumMessages:   27,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

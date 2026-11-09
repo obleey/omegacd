@@ -45,6 +45,7 @@ export interface AppView extends Application {
 	deployedSHA?: string;
 	lastOperation?: SyncOperation;
 	rolledBack: boolean;
+	deleting?: 'containers' | 'volumes' | 'keep'; // being deleted, waiting for its Host's Agent (Q83)
 	reconciledAt?: string;
 	/** services no longer declared whose containers were stopped because Prune is off,
 	 * and undeclared networks/volumes as "network <name>" / "volume <name>" (Docker names) */
