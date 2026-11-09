@@ -536,14 +536,17 @@ func TestHostEnrollment(t *testing.T) {
 			{Host: domain.Host{Name: "local"}},
 			{Host: domain.Host{Name: "web", Fingerprint: "SHA256:abc", AgeRecipient: "age1web"}},
 			{Host: domain.Host{Name: "db"}},
-			{Host: domain.Host{Name: "cache", Fingerprint: "SHA256:def", Approved: true, Agent: &domain.AgentInfo{Version: "v0.2.1"}}},
+			{Host: domain.Host{Name: "cache", Fingerprint: "SHA256:def", Approved: true, Agent: &domain.AgentInfo{Version: "v0.2.1"},
+				AllowIPs: []string{"10.0.0.0/8"}}},
 			{Host: domain.Host{Name: "old", Fingerprint: "SHA256:jkl", Approved: true, Agent: &domain.AgentInfo{Version: "v0.0.9", Refused: "too old"}}},
 			{Host: domain.Host{Name: "copied", Fingerprint: "SHA256:ghi", Approved: true,
 				Locked: []domain.AgentConnection{{Address: "10.0.0.1"}, {Address: "10.0.0.2"}}}},
 		},
-		"POST /api/settings/hosts/web/rotate": map[string]string{"fingerprint": "SHA256:new"},
-		"POST /api/settings/hosts/web/unlock": nil,
-		"DELETE /api/settings/hosts/web":      nil,
+		"POST /api/settings/hosts/web/rotate":   map[string]string{"fingerprint": "SHA256:new"},
+		"POST /api/settings/hosts/web/unlock":   nil,
+		"PUT /api/settings/hosts/web/allow-ips": func() any { return map[string][]string{"allowIPs": {"10.0.0.0/8", "203.0.113.7/32"}} },
+		"PUT /api/settings/hosts/db/allow-ips":  map[string][]string{"allowIPs": {}},
+		"DELETE /api/settings/hosts/web":        nil,
 	})
 	r := run(t, srv, nil, "", "host", "add", "web")
 	if r.code != 0 || !strings.Contains(r.stdout, "OMEGACD_AGENT_CONTROL_PLANE="+srv.URL+" OMEGACD_AGENT_INVITE=omegacd-invite-abc omegacd agent") ||
@@ -552,7 +555,7 @@ func TestHostEnrollment(t *testing.T) {
 	}
 	r = run(t, srv, nil, "", "host", "list")
 	for _, want := range []string{"to approve SHA256:abc", "age1web", "approved SHA256:def", "invited", "(docker socket)",
-		"LOCKED: two connections (10.0.0.1, 10.0.0.2)", "agent v0.2.1", "REFUSED: Agent v0.0.9"} {
+		"LOCKED: two connections (10.0.0.1, 10.0.0.2)", "agent v0.2.1", "REFUSED: Agent v0.0.9", "approved SHA256:def, only from 10.0.0.0/8"} {
 		if !strings.Contains(r.stdout, want) {
 			t.Fatalf("list lacks %q:\n%s", want, r.stdout)
 		}
@@ -563,6 +566,15 @@ func TestHostEnrollment(t *testing.T) {
 	}
 	if r := run(t, srv, nil, "", "host", "approve", "web"); r.code != 2 {
 		t.Fatalf("approve without the fingerprint: %+v", r)
+	}
+	if r := run(t, srv, nil, "", "host", "allow", "web", "10.0.0.0/8", "203.0.113.7"); r.code != 0 ||
+		strings.TrimSpace(r.stdout) != "Host web: its Agent may connect only from 10.0.0.0/8, 203.0.113.7/32" ||
+		!slices.Contains(f.bodies, `{"allowIPs":["10.0.0.0/8","203.0.113.7"]}`) {
+		t.Fatalf("allow: %+v %v", r, f.bodies)
+	}
+	if r := run(t, srv, nil, "", "host", "allow", "db"); r.code != 0 || !strings.Contains(r.stdout, "from anywhere") ||
+		!slices.Contains(f.bodies, `{"allowIPs":[]}`) {
+		t.Fatalf("allow none: %+v %v", r, f.bodies)
 	}
 	for args, want := range map[string]string{
 		"rotate": "Host web: its Agent's new key is SHA256:new",

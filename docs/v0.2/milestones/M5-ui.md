@@ -20,8 +20,12 @@ Add Host → **name** (required; Git references Hosts by name) → install comma
 Name and hostname, online or last seen, Agent version (outdated flag), engine badge (Docker/Podman + version),
 rootless, OS/arch, number of apps, key fingerprint, **Rotate key**, **Revoke**, **Locked** with the reason and an
 unlock action, IP allowlist editor; rename only while no Application uses the Host (Q37, Q53).
+The Host's **public Host Key** (`age1…`, the Agent's, registered at enrollment) with **one-click copy**, and its
+`.sops.yaml` rule ready to copy, plus **Copy .sops.yaml for all Hosts**, as v0.1's Keys dialog has: so developers
+encrypt secrets for a Host without asking anyone (the CLI has it in `omegacd host list`; M6-08 writes the file).
 
-**Done when:** every field is live over SSE, and each action works with a confirmation where it's destructive.
+**Done when:** every field is live over SSE, each action works with a confirmation where it's destructive, and a
+secret encrypted with the copied key (or the copied `.sops.yaml` rule) deploys to that Host.
 
 ### M5-03 · Badges everywhere
 **Status:** todo

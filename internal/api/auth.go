@@ -60,26 +60,7 @@ type loginState struct {
 
 // ParseTrustedProxies parses a comma-separated list of CIDRs or bare IPs.
 func ParseTrustedProxies(v string) ([]netip.Prefix, error) {
-	var out []netip.Prefix
-	for f := range strings.SplitSeq(v, ",") {
-		if f = strings.TrimSpace(f); f == "" {
-			continue
-		}
-		if strings.Contains(f, "/") {
-			p, err := netip.ParsePrefix(f)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, p.Masked())
-			continue
-		}
-		a, err := netip.ParseAddr(f)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, netip.PrefixFrom(a.Unmap(), a.Unmap().BitLen()))
-	}
-	return out, nil
+	return domain.ParsePrefixes(strings.Split(v, ","))
 }
 
 func (s *server) trusted(a netip.Addr) bool {

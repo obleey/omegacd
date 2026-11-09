@@ -695,6 +695,9 @@ func (c *CLI) hostList(ctx context.Context, args []string) error {
 				agent = "REFUSED: Agent " + a.Version
 			}
 		}
+		if len(h.AllowIPs) > 0 {
+			agent += ", only from " + strings.Join(h.AllowIPs, " ")
+		}
 		rows = append(rows, []string{h.Name, u, strconv.FormatBool(h.Status.Connected), version,
 			strconv.Itoa(h.Status.Containers), cmp.Or(h.KeyRecipient, h.AgeRecipient, "(none)"), cmp.Or(agent, "-"), strings.Join(h.Apps, ", ")})
 	}
@@ -749,6 +752,31 @@ func (c *CLI) hostAction(ctx context.Context, cmd, method, action string, args [
 		return err
 	}
 	fmt.Fprintln(c.Stdout, done(pos[0], res["fingerprint"]))
+	return nil
+}
+
+func (c *CLI) hostAllow(ctx context.Context, args []string) error {
+	var o opts
+	pos, err := parse(c.flags("host allow", &o), args, 1, 1<<20)
+	if err != nil {
+		return err
+	}
+	cl, err := c.client(o)
+	if err != nil {
+		return err
+	}
+	var res struct {
+		AllowIPs []string `json:"allowIPs"`
+	}
+	if err := cl.do(ctx, "PUT", "/api/settings/hosts/"+url.PathEscape(pos[0])+"/allow-ips",
+		map[string][]string{"allowIPs": pos[1:]}, &res); err != nil {
+		return err
+	}
+	if len(res.AllowIPs) == 0 {
+		fmt.Fprintf(c.Stdout, "Host %s: its Agent may connect from anywhere\n", pos[0])
+	} else {
+		fmt.Fprintf(c.Stdout, "Host %s: its Agent may connect only from %s\n", pos[0], strings.Join(res.AllowIPs, ", "))
+	}
 	return nil
 }
 

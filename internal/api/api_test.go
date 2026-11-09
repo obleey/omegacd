@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -22,11 +24,15 @@ import (
 	"testing/fstest"
 	"time"
 
+	"filippo.io/age"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/obleey/omegacd/internal/agents"
+	"github.com/obleey/omegacd/internal/crypto"
 	"github.com/obleey/omegacd/internal/domain"
 	"github.com/obleey/omegacd/internal/logging"
+	agentv1 "github.com/obleey/omegacd/internal/proto/agent/v1"
+	"github.com/obleey/omegacd/internal/store"
 	"github.com/obleey/omegacd/internal/wire"
 )
 
@@ -839,5 +845,59 @@ func TestInternalErrorIsLoggedWithItsRequest(t *testing.T) {
 	if !strings.Contains(e.log.String(), `level=ERROR msg=http method=GET path=/api/settings/repo-credentials status=500`) ||
 		!strings.Contains(e.log.String(), `err="disk full"`) {
 		t.Errorf("log:\n%s", e.log.String())
+	}
+}
+
+// Q28 behind a reverse proxy: the Agent's address is the one the API works out (X-Forwarded-For from a trusted proxy),
+// so the allowlist holds behind one; from anyone else, the header is ignored and can't sneak an Agent in.
+func TestAgentAllowlistBehindProxy(t *testing.T) {
+	id, _ := age.GenerateX25519Identity()
+	st, err := store.Open(filepath.Join(t.TempDir(), "omegacd.db"), crypto.NewSealer(id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := t.Context()
+	hub := agents.New(st, nil)
+	invite, _ := st.CreateInvite(ctx, "web", time.Now().Add(time.Hour))
+	_, key, _ := ed25519.GenerateKey(nil)
+	if _, err := st.Enroll(ctx, invite, key.Public().(ed25519.PublicKey), "age1web", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	st.ApproveHost(ctx, "web", domain.Fingerprint(key.Public().(ed25519.PublicKey)))
+	if _, err := hub.SetAllowlist(ctx, "web", []string{"203.0.113.0/24"}); err != nil {
+		t.Fatal(err)
+	}
+	// connect answers the challenge as the Agent behind a proxy that says it came from xff, and returns the answer
+	connect := func(url, xff string) *agentv1.Envelope {
+		c, err := wire.Dial(ctx, url, http.Header{"X-Forwarded-For": {xff}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+		e, _ := c.Recv(ctx)
+		c.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_Hello{Hello: &agentv1.Hello{AgentVersion: "(devel)"}}})
+		c.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_ChallengeResponse{ChallengeResponse: &agentv1.ChallengeResponse{
+			PublicKey: key.Public().(ed25519.PublicKey),
+			Signature: ed25519.Sign(key, append([]byte(agents.ChallengePrefix), e.GetChallenge().Nonce...))}}})
+		e, _ = c.Recv(ctx)
+		return e
+	}
+	serve := func(trusted string) string {
+		proxies, _ := ParseTrustedProxies(trusted)
+		srv := httptest.NewServer(New(Config{Store: st, Agents: hub, TrustedProxies: proxies}))
+		t.Cleanup(srv.Close)
+		return "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/agents/v1/connect"
+	}
+
+	behind := serve("127.0.0.1")
+	if e := connect(behind, "203.0.113.7"); !e.GetEnrollmentStatus().GetApproved() {
+		t.Fatalf("from an allowed address through the proxy: %v", e)
+	}
+	if e := connect(behind, "198.51.100.1"); !strings.Contains(e.GetError().GetMessage(), "not from 198.51.100.1") {
+		t.Fatalf("from another address through the proxy: %v", e)
+	}
+	if e := connect(serve(""), "203.0.113.7"); !strings.Contains(e.GetError().GetMessage(), "not from 127.0.0.1") {
+		t.Fatalf("a forged X-Forwarded-For from an untrusted peer was believed: %v", e)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/netip"
 	"os"
 	"path"
 	"path/filepath"
@@ -186,6 +187,8 @@ type Host struct {
 	// Locked holds the two live connections that used the Host's key at once (Q28, Q75): until an admin unlocks the
 	// Host or revokes it (deletes it), its Agent is refused. Its Applications keep running.
 	Locked []AgentConnection `json:"locked,omitempty"`
+	// AllowIPs, when set, are the only addresses the Host's Agent may connect from (Q28), as CIDRs.
+	AllowIPs []string `json:"allowIPs,omitempty"`
 	// Agent is what the Host's Agent said about itself when it last connected (Q41); nil before.
 	Agent *AgentInfo `json:"agent,omitempty"`
 }
@@ -203,6 +206,30 @@ type AgentInfo struct {
 	SeenAt        time.Time `json:"seenAt"`
 	// Refused says why the Control Plane refused it, such as an outdated version; empty when it was served
 	Refused string `json:"refused,omitempty"`
+}
+
+// ParsePrefixes parses CIDRs or bare IPs (a bare IP is the prefix of that one address).
+func ParsePrefixes(fields []string) ([]netip.Prefix, error) {
+	var out []netip.Prefix
+	for _, f := range fields {
+		if f = strings.TrimSpace(f); f == "" {
+			continue
+		}
+		if strings.Contains(f, "/") {
+			p, err := netip.ParsePrefix(f)
+			if err != nil {
+				return nil, fmt.Errorf("%w: %v", ErrInvalid, err)
+			}
+			out = append(out, p.Masked())
+			continue
+		}
+		a, err := netip.ParseAddr(f)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrInvalid, err)
+		}
+		out = append(out, netip.PrefixFrom(a.Unmap(), a.Unmap().BitLen()))
+	}
+	return out, nil
 }
 
 // AgentConnection is where and since when an Agent was connected.
@@ -418,6 +445,8 @@ type Store interface {
 	// ConfirmSigningKey records that the Agent authenticated with key: the current key ends a rotation, the previous
 	// one undoes it (the Agent never switched).
 	ConfirmSigningKey(ctx context.Context, host string, key []byte) error
+	// SetAllowIPs replaces the Host's allowlist (CIDRs; none: any address).
+	SetAllowIPs(ctx context.Context, host string, cidrs []string) error
 	// RecordAgent keeps what the Host's Agent said about itself.
 	RecordAgent(ctx context.Context, host string, info AgentInfo) error
 	// LockHost locks the Host with the connections that shared its key; UnlockHost clears it.
