@@ -30,10 +30,10 @@ ENGINES_ROOT ?= $(abspath $(or $(TMPDIR),/tmp))/omegacd-engines
 ENGINES ?= rootful rootless podman
 test-engines:
 	test/engines.sh up $(ENGINES_ROOT)
-	$(if $(filter rootful,$(ENGINES)),go test -tags integration -count=1 $(call cov,engines-rootful) -run TestAgent ./internal/agent)
-	$(if $(filter rootless,$(ENGINES)),DOCKER_HOST=tcp://127.0.0.1:23750 OMEGACD_IT_ROOT=$(ENGINES_ROOT) go test -tags integration -count=1 $(call cov,engines-rootless) -run TestAgent ./internal/agent)
-	$(if $(filter podman,$(ENGINES)),DOCKER_HOST=tcp://127.0.0.1:23751 OMEGACD_IT_ROOT=$(ENGINES_ROOT) go test -tags integration -count=1 $(call cov,engines-podman) -run TestAgent ./internal/agent)
-	$(if $(filter host-podman,$(ENGINES)),DOCKER_HOST=unix://$$XDG_RUNTIME_DIR/podman/podman.sock go test -tags integration -count=1 $(call cov,engines-host-podman) -run TestAgent ./internal/agent)
+	$(if $(filter rootful,$(ENGINES)),go test -tags integration -count=1 $(call cov,engines-rootful,./internal/...) -run TestAgent ./internal/agent)
+	$(if $(filter rootless,$(ENGINES)),DOCKER_HOST=tcp://127.0.0.1:23750 OMEGACD_IT_ROOT=$(ENGINES_ROOT) go test -tags integration -count=1 $(call cov,engines-rootless,./internal/...) -run TestAgent ./internal/agent)
+	$(if $(filter podman,$(ENGINES)),DOCKER_HOST=tcp://127.0.0.1:23751 OMEGACD_IT_ROOT=$(ENGINES_ROOT) go test -tags integration -count=1 $(call cov,engines-podman,./internal/...) -run TestAgent ./internal/agent)
+	$(if $(filter host-podman,$(ENGINES)),DOCKER_HOST=unix://$$XDG_RUNTIME_DIR/podman/podman.sock go test -tags integration -count=1 $(call cov,engines-host-podman,./internal/...) -run TestAgent ./internal/agent)
 	@echo "engines tested: $(ENGINES)"
 
 # the whole suite, as before every PR (web/build must exist: make web): vet, unit with -race, integration, the Agent on
@@ -54,7 +54,8 @@ test-all:
 # blocks no test reaches fail where a line of them changed since COVER_BASE (unless marked "coverage: unreachable,
 # <reason>" in the code), and the total may not drop below test/coverage-floor.
 COVERPKG = ./cmd/...,./internal/... # patterns, so the commands stay short; test/coverage leaves the generated code out
-cov = $(if $(COVER_DIR),-coverpkg=$(COVERPKG) -coverprofile=$(COVER_DIR)/$(1).out)
+# cov NAME[,PATTERNS]: the Agent alone depends on nothing in cmd/ (Go warns about a pattern matching nothing)
+cov = $(if $(COVER_DIR),-coverpkg=$(or $(2),$(COVERPKG)) -coverprofile=$(COVER_DIR)/$(1).out)
 COVER_BASE ?= origin/main
 cover: cover-profiles
 	go run ./test/coverage -base $(COVER_BASE) -floor test/coverage-floor cover/*.out

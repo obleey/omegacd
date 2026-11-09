@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -32,6 +33,7 @@ type fakeStore struct {
 	domain.Store                               // unimplemented methods panic
 	statuses     map[string]domain.AgentStatus // reports of Agents (M4-02)
 	diffs        map[string]domain.AgentDiff   // Diffs Agents computed (M4-11)
+	diffErr      error                         // SaveAgentDiff fails with it
 	mu           sync.Mutex
 	apps         map[string]domain.Application
 	ops          []domain.SyncOperation
@@ -202,6 +204,7 @@ type fakeSource struct {
 	renderErr     error             // Render fails with it
 	renderErrRev  string            // and only Renders of this Revision fail with it, when set
 	blobErr       error             // Blob fails with it
+	badHash       bool              // Render names files by a hash that isn't hex
 }
 
 func (g *fakeSource) Invalidate(string) {}
@@ -230,6 +233,9 @@ func (g *fakeSource) Render(_ context.Context, spec domain.RenderSpec) (domain.R
 	for _, name := range slices.Sorted(maps.Keys(files)) {
 		h := blob.Hash([]byte(files[name]))
 		g.blobs[h] = []byte(files[name])
+		if g.badHash {
+			h = "not-hex"
+		}
 		r.Files = append(r.Files, domain.File{Path: name, Mode: 0o644, SHA256: h})
 	}
 	if spec.Apps {
@@ -2263,6 +2269,9 @@ func TestAgentDetailEdges(t *testing.T) {
 func (s *fakeStore) SaveAgentDiff(_ context.Context, app string, d domain.AgentDiff) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.diffErr != nil {
+		return s.diffErr
+	}
 	if s.diffs == nil {
 		s.diffs = map[string]domain.AgentDiff{}
 	}
@@ -2339,5 +2348,48 @@ func TestAgentDiff(t *testing.T) {
 	r.g.mu.Unlock()
 	if dv, err := r.c.Diff(ctx, "web"); err != nil || dv.Live != "" || len(dv.Services) != 1 {
 		t.Fatalf("the deployed Revision unrendered: %+v %v", dv, err)
+	}
+}
+
+// M4-11: what goes wrong around the Agent's Diff: a Rendered file not named by its hash fails Syncs and Diffs alike, a
+// Diff not kept is still shown (and logged), and compose files the Source Server won't serve fail the Diff.
+func TestAgentDiffFails(t *testing.T) {
+	r, ag := agentRig(t)
+	ctx := t.Context()
+	var logs bytes.Buffer
+	r.c.cfg.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	a := app("web")
+	a.Host = "edge"
+	r.c.CreateApp(ctx, a)
+	r.waitIdle(t, "web")
+
+	r.g.mu.Lock()
+	r.g.badHash = true
+	r.g.mu.Unlock()
+	r.c.Sync(ctx, "web", domain.SyncRequest{})
+	r.waitIdle(t, "web")
+	if ops, _ := r.st.ListOps(ctx, "web"); ops[0].Phase != domain.OpFailed || !strings.Contains(ops[0].Message, "file compose.yaml") {
+		t.Fatalf("a file not named by its hash deployed: %+v", ops[0])
+	}
+	if _, err := r.c.Diff(ctx, "web"); err == nil || !strings.Contains(err.Error(), "file compose.yaml") {
+		t.Fatalf("a file not named by its hash diffed: %v", err)
+	}
+	r.g.mu.Lock()
+	r.g.badHash = false
+	r.g.mu.Unlock()
+
+	ag.diff = []domain.ServiceDiff{{Service: "web", Change: "added"}}
+	r.st.mu.Lock()
+	r.st.diffErr = errors.New("disk full")
+	r.st.mu.Unlock()
+	if dv, err := r.c.Diff(ctx, "web"); err != nil || len(dv.Services) != 1 || !strings.Contains(logs.String(), "keep the agent's diff") {
+		t.Fatalf("a Diff not kept: %+v %v\n%s", dv, err, logs.String())
+	}
+
+	r.g.mu.Lock()
+	r.g.blobErr = errors.New("source server unreachable")
+	r.g.mu.Unlock()
+	if _, err := r.c.Diff(ctx, "web"); err == nil || !strings.Contains(err.Error(), "source server unreachable") {
+		t.Fatalf("compose files not served: %v", err)
 	}
 }

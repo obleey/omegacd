@@ -404,3 +404,29 @@ func TestAgentDiffThroughHub(t *testing.T) {
 		t.Fatalf("no compose file: %v", err)
 	}
 }
+
+// M4-11: a Revision the Agent can't stage fails its Diff, saying why, and leaves nothing staged: files the Control
+// Plane can't send, a secret encrypted for another Host, a staging folder it can't make.
+func TestDiffCannotStage(t *testing.T) {
+	ag, src, _ := testAgent(t)
+	ctx := t.Context()
+	a := App{Name: appName(t)}
+	compose := map[string]string{"compose.yaml": "services: {}\n"}
+	lost := func(string) ([]byte, error) { return nil, errors.New("connection lost") }
+	if _, err := ag.diff(ctx, desiredState(a, src.revision(a.Name, "r1", compose), 0), lost); err == nil || !strings.Contains(err.Error(), "connection lost") {
+		t.Fatalf("files not sent: %v", err)
+	}
+	other, _ := age.GenerateX25519Identity()
+	foreign := map[string]string{"compose.yaml": "services: {}\n", ".sops.env": encrypted(t, "SECRET=x\n", ".sops.env", other.Recipient().String())}
+	if _, err := ag.diff(ctx, desiredState(a, src.revision(a.Name, "r2", foreign), 0), src.fetch); err == nil {
+		t.Fatal("a secret for another Host decrypted")
+	}
+	if entries, _ := os.ReadDir(filepath.Join(ag.work.Root, stagingDir)); len(entries) != 0 {
+		t.Fatalf("staged files left: %v", entries)
+	}
+	os.RemoveAll(filepath.Join(ag.work.Root, stagingDir))
+	os.WriteFile(filepath.Join(ag.work.Root, stagingDir), nil, 0o600)
+	if _, err := ag.diff(ctx, desiredState(a, src.revision(a.Name, "r3", compose), 0), src.fetch); err == nil {
+		t.Fatal("staged without a staging folder")
+	}
+}

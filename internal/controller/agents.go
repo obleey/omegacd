@@ -42,7 +42,7 @@ func desiredState(a domain.Application, revision string, op int64, r domain.Rend
 		SelfHeal: a.SelfHeal, Parent: a.Parent, Checksum: r.Checksum, Adopt: a.Adopt}
 	for _, f := range r.Files {
 		sum, err := hex.DecodeString(f.SHA256)
-		if err != nil { // coverage: unreachable, the Source Server names every file by its sha256 in hex
+		if err != nil {
 			return nil, fmt.Errorf("file %s: %w", f.Path, err)
 		}
 		ds.Files = append(ds.Files, &agentv1.File{Path: f.Path, Mode: uint32(f.Mode), Sha256: sum})
