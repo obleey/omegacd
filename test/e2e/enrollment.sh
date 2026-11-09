@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # End-to-end: an Agent enrolls with the Control Plane through the real binary (M3-02): Host added by name, single-use
 # invite, the Agent's key registered, approved only with the fingerprint both sides show (Q22, Q28, Q73, Q74); then
-# its key rotated, a copy of it locking the Host, unlocked, and revoked by deleting the Host (M3-03, Q75, Q76).
+# its key rotated, a copy of it locking the Host, unlocked, and revoked by deleting the Host (M3-03, Q75, Q76); its
+# version recorded (M3-04); an allowlist (M3-05).
 set -u # no pipefail: grep -q closing the pipe early must not fail a check
 BIN=${OMEGACD_BIN:-$(cd "$(dirname "$0")/../.." && pwd)/bin/omegacd}
 T=$(mktemp -d "${TMPDIR:-/tmp}/omegacd-e2en.XXXX")
@@ -98,6 +99,18 @@ check "the first connection is cut with the reason too" 'waitfor "$T/web.log" "H
 check "host list shows it locked, with both addresses" '"$BIN" host list | grep -q "^web .*LOCKED: two connections (127.0.0.1, 127.0.0.1)"'
 kill $PID_clone; wait $PID_clone 2>/dev/null; : > "$T/web.log"
 check "host unlock: the Agent connects again" '"$BIN" host unlock web | grep -q "unlocked" && waitfor "$T/web.log" "connected to the Control Plane, approved" 70'
+
+# M3-05: an allowlist per Host (the proxy case, X-Forwarded-For from OMEGACD_TRUSTED_PROXIES, is in the API's tests)
+: > "$T/web.log"
+out=$("$BIN" host allow web 10.9.0.0/16 2>&1)
+check "host allow: an allowlist without the Agent's address cuts its live connection" \
+  'echo "$out" | grep -q "only from 10.9.0.0/16" && waitfor "$T/web.log" "may connect only from 10.9.0.0/16, not from 127.0.0.1"'
+check "host list shows the allowlist" '"$BIN" host list | grep -q "^web .*only from 10.9.0.0/16"'
+: > "$T/web.log"
+check "with its address in the list, the Agent connects again" \
+  '"$BIN" host allow web 10.9.0.0/16 127.0.0.1 >/dev/null && waitfor "$T/web.log" "connected to the Control Plane, approved" 70'
+check "an invalid entry is refused" '! "$BIN" host allow web 10.9.0.0/99 >/dev/null 2>&1'
+check "no list: anywhere" '"$BIN" host allow web | grep -q "from anywhere" && ! "$BIN" host list | grep -q "^web .*only from"'
 
 check "host delete revokes the key: the live connection closes" '"$BIN" host delete web | grep -q "key is revoked" && waitfor "$T/web.log" "no Host has the key" 70'
 

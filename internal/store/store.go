@@ -128,6 +128,8 @@ ALTER TABLE hosts ADD COLUMN previous_signing_key BLOB;
 ALTER TABLE hosts ADD COLUMN locked TEXT NOT NULL DEFAULT '';
 `, `
 ALTER TABLE hosts ADD COLUMN agent TEXT NOT NULL DEFAULT '';
+`, `
+ALTER TABLE hosts ADD COLUMN allow_ips TEXT NOT NULL DEFAULT '[]';
 `}
 
 type Store struct {
@@ -479,16 +481,19 @@ const defaultWorkDir = "/var/lib/omegacd"
 const hostCols = `name, url, work_dir, ssh_private_key, tls_ca, tls_cert, tls_key, created_at`
 
 // hostSelect reads a Host with its Agent's enrollment, which SaveHost never changes
-const hostSelect = `SELECT ` + hostCols + `, signing_key, age_recipient, approved, locked, agent FROM hosts`
+const hostSelect = `SELECT ` + hostCols + `, signing_key, age_recipient, approved, locked, agent, allow_ips FROM hosts`
 
 func (s *Store) scanHost(r scanner) (domain.Host, error) {
 	var h domain.Host
 	var sealed [4]string
 	var created int64
-	var locked, agent string
+	var locked, agent, allow string
 	if err := r.Scan(&h.Name, &h.URL, &h.WorkDir, &sealed[0], &sealed[1], &sealed[2], &sealed[3], &created,
-		&h.SigningKey, &h.AgeRecipient, &h.Approved, &locked, &agent); err != nil {
+		&h.SigningKey, &h.AgeRecipient, &h.Approved, &locked, &agent, &allow); err != nil {
 		return h, mapErr(err)
+	}
+	if err := json.Unmarshal([]byte(allow), &h.AllowIPs); err != nil {
+		return h, fmt.Errorf("host %s: allow_ips: %w", h.Name, err)
 	}
 	if agent != "" {
 		h.Agent = &domain.AgentInfo{}
@@ -569,6 +574,17 @@ func (s *Store) LockHost(ctx context.Context, host string, conns []domain.AgentC
 		return err
 	}
 	return affected(s.db.ExecContext(ctx, `UPDATE hosts SET locked = ? WHERE name = ?`, string(b), host))
+}
+
+func (s *Store) SetAllowIPs(ctx context.Context, host string, cidrs []string) error {
+	b, err := json.Marshal(cidrs)
+	if err != nil {
+		return err
+	}
+	if len(cidrs) == 0 {
+		b = []byte("[]")
+	}
+	return affected(s.db.ExecContext(ctx, `UPDATE hosts SET allow_ips = ? WHERE name = ?`, string(b), host))
 }
 
 func (s *Store) RecordAgent(ctx context.Context, host string, info domain.AgentInfo) error {

@@ -90,6 +90,7 @@ func New(cfg Config) http.Handler {
 	mux.HandleFunc("POST /api/settings/hosts/{name}/approve", s.approveHost)
 	mux.HandleFunc("POST /api/settings/hosts/{name}/rotate", s.rotateHost)
 	mux.HandleFunc("POST /api/settings/hosts/{name}/unlock", s.unlockHost)
+	mux.HandleFunc("PUT /api/settings/hosts/{name}/allow-ips", s.setHostAllowIPs)
 	mux.HandleFunc("GET /api/settings/hosts/{name}/keys", s.hostKeys)
 	mux.HandleFunc("POST /api/settings/hosts/{name}/keys/generate", s.generateHostKey)
 	mux.HandleFunc("POST /api/settings/hosts/{name}/keys/import", s.importHostKey)
@@ -100,7 +101,10 @@ func New(cfg Config) http.Handler {
 
 	mux.HandleFunc("POST /api/webhooks/{provider}", s.webhook)
 	if cfg.Agents != nil {
-		mux.Handle("GET "+agentsPath, cfg.Agents) // authenticated by the Agent's signed challenge, not a session
+		// authenticated by the Agent's signed challenge, not a session; its address as the API sees it (Q28)
+		mux.HandleFunc("GET "+agentsPath, func(w http.ResponseWriter, r *http.Request) {
+			cfg.Agents.ServeHTTP(w, r.WithContext(agents.WithClientIP(r.Context(), s.clientIP(r))))
+		})
 	}
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("%s %s: %w", r.Method, r.URL.Path, domain.ErrNotFound))

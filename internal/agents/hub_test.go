@@ -446,3 +446,44 @@ func TestVersionHandshake(t *testing.T) {
 	_, e := agentV(t, url, key, "", nil, nil)
 	refused(t, e, "no Hello")
 }
+
+// Q28: an Agent outside its Host's allowlist is refused even with a valid key; a narrowed list cuts a live connection.
+func TestAllowlist(t *testing.T) {
+	h, st, url := newHub(t)
+	ctx := t.Context()
+	key := approvedAgent(t, h, st, url, "web")
+
+	if _, err := h.SetAllowlist(ctx, "web", []string{"10.9.0.0/16", "not an address"}); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("a bad entry: %v", err)
+	}
+	list, err := h.SetAllowlist(ctx, "web", []string{" 10.9.3.4/16 ", "2001:db8::1"})
+	if err != nil || strings.Join(list, ",") != "10.9.0.0/16,2001:db8::1/128" {
+		t.Fatalf("normalised: %v %v", list, err)
+	}
+	_, e := agent(t, url, key, "", nil)
+	refused(t, e, "Host web's Agent may connect only from 10.9.0.0/16, 2001:db8::1/128, not from 127.0.0.1")
+
+	if _, err := h.SetAllowlist(ctx, "web", []string{"127.0.0.1"}); err != nil {
+		t.Fatal(err)
+	}
+	c, e := agent(t, url, key, "", nil)
+	if !e.GetEnrollmentStatus().GetApproved() {
+		t.Fatalf("inside the list: %v", e)
+	}
+	got := reading(c)
+	if _, err := h.SetAllowlist(ctx, "web", []string{"10.9.0.0/16"}); err != nil {
+		t.Fatal(err)
+	}
+	if e := next(t, got); !strings.Contains(e.GetError().GetMessage(), "may connect only from 10.9.0.0/16") {
+		t.Fatalf("the live connection outside the new list got %v", e)
+	}
+	if list, err := h.SetAllowlist(ctx, "web", nil); err != nil || len(list) != 0 {
+		t.Fatalf("cleared: %v %v", list, err)
+	}
+	if _, e := agent(t, url, key, "", nil); !e.GetEnrollmentStatus().GetApproved() {
+		t.Fatalf("anywhere again: %v", e)
+	}
+	if host, _ := st.GetHost(ctx, "web"); len(host.AllowIPs) != 0 {
+		t.Fatalf("stored %v", host.AllowIPs)
+	}
+}

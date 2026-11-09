@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"sync"
 	"time"
@@ -85,10 +86,13 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer c.Close()
 	ctx := r.Context()
-	addr, _, _ := net.SplitHostPort(r.RemoteAddr)
+	addr := clientIP(r)
 	host, key, hello, err := h.authenticate(ctx, c)
 	if err == nil {
 		ctx = logging.With(ctx, "host", host.Name)
+		err = allowed(host, addr)
+	}
+	if err == nil {
 		err = h.checkVersion(ctx, host.Name, hello)
 	}
 	if err == nil {
@@ -155,6 +159,65 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+type clientIPKey struct{}
+
+// WithClientIP gives the hub the client's address as the API worked it out: behind trusted proxies, from
+// X-Forwarded-For (OMEGACD_TRUSTED_PROXIES).
+func WithClientIP(ctx context.Context, ip string) context.Context {
+	return context.WithValue(ctx, clientIPKey{}, ip)
+}
+
+func clientIP(r *http.Request) string {
+	if ip, ok := r.Context().Value(clientIPKey{}).(string); ok {
+		return ip
+	}
+	addr, _, _ := net.SplitHostPort(r.RemoteAddr)
+	return addr
+}
+
+// allowed refuses an address outside the Host's allowlist (Q28), whatever key it holds.
+func allowed(host domain.Host, addr string) error {
+	if len(host.AllowIPs) == 0 {
+		return nil
+	}
+	prefixes, err := domain.ParsePrefixes(host.AllowIPs)
+	if err != nil {
+		return err
+	}
+	if a, err := netip.ParseAddr(addr); err == nil {
+		for _, p := range prefixes {
+			if p.Contains(a.Unmap()) {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("Host %s's Agent may connect only from %s, not from %s", host.Name, strings.Join(host.AllowIPs, ", "), addr)
+}
+
+// SetAllowlist limits where the Host's Agent may connect from (CIDRs or IPs; none: anywhere). A live connection from
+// outside the new list is closed.
+func (h *Hub) SetAllowlist(ctx context.Context, host string, cidrs []string) ([]string, error) {
+	prefixes, err := domain.ParsePrefixes(cidrs)
+	if err != nil {
+		return nil, err
+	}
+	list := []string{}
+	for _, p := range prefixes {
+		list = append(list, p.String())
+	}
+	if err := h.store.SetAllowIPs(ctx, host, list); err != nil {
+		return nil, err
+	}
+	h.log.InfoContext(ctx, "host allowlist", "host", host, "allow", list)
+	if s := h.session(host); s != nil {
+		if err := allowed(domain.Host{Name: host, AllowIPs: list}, s.at.Address); err != nil {
+			h.log.WarnContext(ctx, "agent outside the new allowlist: disconnected", "host", host, "remote", s.at.Address)
+			h.drop(ctx, host, s, err)
+		}
+	}
+	return list, nil
+}
+
 // checkVersion records what the Agent said about itself and refuses a version this Control Plane doesn't serve (Q41).
 func (h *Hub) checkVersion(ctx context.Context, host string, hello *agentv1.Hello) error {
 	if hello == nil {
@@ -206,12 +269,7 @@ func (h *Hub) admit(ctx context.Context, host domain.Host, addr string) error {
 	h.log.ErrorContext(ctx, "two live connections with one Host's key: the Host is locked until an admin unlocks or "+
 		"revokes it", "first", old.at.Address, "second", addr)
 	err := locked(conns)
-	h.mu.Lock()
-	if h.conns[host.Name] == old { // gone now, not when it hangs up: an unlock right after must not find it
-		delete(h.conns, host.Name)
-	}
-	h.mu.Unlock()
-	go refuse(ctx, old.conn, 0, err)
+	h.drop(ctx, host.Name, old, err)
 	return err
 }
 
@@ -354,6 +412,17 @@ func (h *Hub) rotated(ctx context.Context, host string, s *session, id uint64, r
 	if reply != nil {
 		reply <- rotateReply{fingerprint, err}
 	}
+}
+
+// drop refuses a live session with err and forgets it now, not when its Agent hangs up: a connection right after must
+// not find it (and, still answering, take it for a second live one).
+func (h *Hub) drop(ctx context.Context, host string, s *session, err error) {
+	h.mu.Lock()
+	if h.conns[host] == s {
+		delete(h.conns, host)
+	}
+	h.mu.Unlock()
+	go refuse(ctx, s.conn, 0, err)
 }
 
 func (h *Hub) session(host string) *session {

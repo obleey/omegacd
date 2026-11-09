@@ -162,7 +162,9 @@ only the Control Plane, never Agents or users. A reverse proxy in between must p
 5. A second live connection with the same key **locks** the Host until an admin acts (M3-03: only if the first
    still answers a ping; a dead one is replaced, so a network change or restart doesn't lock). Rotation: the Agent
    signs its new key with the old one and switches once the Control Plane has it; the old key stays valid until the
-   Agent authenticates with either, and using the old one undoes the rotation, so a crash between locks nobody out. Optional IP allowlist per
+   Agent authenticates with either, and using the old one undoes the rotation, so a crash between locks nobody out.
+   The allowlist (M3-05) is checked right after the signature, against the address the API works out (X-Forwarded-For
+   only from `OMEGACD_TRUSTED_PROXIES`); narrowing it cuts a live connection from outside. Optional IP allowlist per
    Host (real client address via `OMEGACD_TRUSTED_PROXIES`). One-click key rotation and revocation.
 6. A Host can be renamed only while no Application uses it.
 

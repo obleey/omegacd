@@ -407,6 +407,22 @@ func (s *server) unlockHost(w http.ResponseWriter, r *http.Request) {
 	respond(w, http.StatusNoContent, nil, s.Agents.Unlock(r.Context(), r.PathValue("name")))
 }
 
+// setHostAllowIPs replaces the addresses the Host's Agent may connect from (Q28); an empty list allows any.
+func (s *server) setHostAllowIPs(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		AllowIPs []string `json:"allowIPs"`
+	}
+	if err := decode(w, r, &req); err != nil {
+		writeError(w, err)
+		return
+	}
+	if s.noAgents(w) {
+		return
+	}
+	list, err := s.Agents.SetAllowlist(r.Context(), r.PathValue("name"), req.AllowIPs)
+	respond(w, http.StatusOK, map[string][]string{"allowIPs": list}, err)
+}
+
 func (s *server) noAgents(w http.ResponseWriter) bool {
 	if s.Agents == nil {
 		writeError(w, fmt.Errorf("%w: this server accepts no Agents", domain.ErrInvalid))

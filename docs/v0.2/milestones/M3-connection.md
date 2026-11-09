@@ -53,7 +53,7 @@ message saying what to upgrade, and keep running their apps. The Control Plane r
 **Done when:** tested for same, minus one and minus two minor versions.
 
 ### M3-05 · IP allowlist per Host
-**Status:** todo
+**Status:** done (2026-11-09, PR #110)
 **Depends on:** M3-03
 
 Optional CIDR list per Host (Q28); the client address comes through `OMEGACD_TRUSTED_PROXIES` like today's API.
