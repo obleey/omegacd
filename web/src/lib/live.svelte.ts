@@ -90,7 +90,7 @@ export function connectEvents() {
 		const prev = live.ops[op.app];
 		if (prev?.id !== op.id || prev.phase !== op.phase) {
 			opToast(op);
-			if (op.phase !== 'Running') {
+			if (op.phase === 'Succeeded' || op.phase === 'Failed') {
 				live.finished[op.app] = op.phase === 'Failed' ? 'Sync failed' : 'Done';
 				setTimeout(() => delete live.finished[op.app], 1600);
 			}
@@ -117,7 +117,8 @@ function opToast(op: SyncOperation) {
 	// the finished toast replaces the started one
 	for (const t of toasts.filter((t) => t.tone === 'blue' && t.href === href)) dismiss(t.id);
 	if (op.phase === 'Succeeded') toast('green', `Sync succeeded: ${op.app}`, rev, href);
-	else toast('red', `Sync failed: ${op.app}`, op.message || rev, href);
+	else if (op.phase === 'Waiting') toast('yellow', `Sync waiting for its Host: ${op.app}`, op.message || rev, href);
+	else if (op.phase === 'Failed') toast('red', `Sync failed: ${op.app}`, op.message || rev, href);
 }
 
 export function disconnectEvents() {

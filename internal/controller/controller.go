@@ -21,8 +21,10 @@ import (
 
 	"filippo.io/age"
 
+	"github.com/obleey/omegacd/internal/agents"
 	"github.com/obleey/omegacd/internal/domain"
 	"github.com/obleey/omegacd/internal/logging"
+	agentv1 "github.com/obleey/omegacd/internal/proto/agent/v1"
 )
 
 const (
@@ -49,7 +51,15 @@ type Config struct {
 	NormalizeURL func(string) string
 	ObserveSync  func(app string, phase domain.OpPhase, d time.Duration) // may be nil
 	SelfID       string                                                  // omegacd's own container ID or hostname, to refuse managing itself
-	Log          *slog.Logger
+	// Agents deploys to Hosts with an enrolled Agent (Q80); nil: there are none
+	Agents Agents
+	Log    *slog.Logger
+}
+
+// Agents sends Desired States to Hosts' Agents: Deploy returns once the Agent deployed (nil) or failed (why), or with
+// agents.ErrOffline / ErrNotApproved when there's no Agent to send to, ErrDisconnected when the connection dropped.
+type Agents interface {
+	Deploy(ctx context.Context, host string, ds *agentv1.DesiredState) error
 }
 
 type appState struct {
@@ -143,6 +153,9 @@ func (c *Controller) restoreWorkDirs(ctx context.Context) {
 		if c.cfg.NoLocalHost && cmp.Or(a.Host, domain.LocalHost) == domain.LocalHost {
 			continue // nothing to restore into: such an app shows its Host as disabled
 		}
+		if c.agentHost(ctx, a.Host) {
+			continue // its Agent restores it, from its own cache (Q24)
+		}
 		// the compose files are the signal: after a reboot Docker may already have re-created
 		// missing bind-mount sources as empty directories, so the dir itself can be non-empty.
 		if dir := c.appDir(a); composeFilesPresent(dir, a.ComposeFilesIn(dir)) {
@@ -213,6 +226,7 @@ func (c *Controller) reconcile(ctx context.Context, a domain.Application) domain
 func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fetch bool) domain.AppView {
 	ctx = logging.With(ctx, "app", a.Name)
 	v := domain.AppView{Application: a, SyncStatus: domain.Unknown, Health: domain.Missing, ReconciledAt: time.Now()}
+	viaAgent := a.Kind == domain.KindCompose && c.agentHost(ctx, a.Host)
 	var targetTree string
 	var drift bool
 
@@ -267,6 +281,9 @@ func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fe
 			drift = true
 			v.SyncStatus, v.SyncMessage = domain.OutOfSync, "not in Git: "+strings.Join(gone, ", ")
 		}
+	case viaAgent:
+		// the deployed tree is the target's; its Agent self-heals drift (Q82), and reports it from M4-02 on
+		v.SyncStatus = domain.Synced
 	default:
 		diffs, derr := c.cfg.Engine.Diff(ctx, a, c.liveDir(a), "")
 		switch {
@@ -300,14 +317,16 @@ func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fe
 
 	// a Sync would fail on a remote Host without a Host Key: say why, and don't auto-sync into that failure
 	var noKey bool
-	if v.SyncStatus == domain.OutOfSync && a.Kind != domain.KindApps {
+	if v.SyncStatus == domain.OutOfSync && a.Kind != domain.KindApps && !viaAgent { // an Agent has its own Host Key
 		if _, err := c.syncKeys(ctx, a); err != nil {
 			v.SyncMessage, noKey = err.Error(), true
 		}
 	}
 
 	// after Diff: loading the project tells the engine which services are declared
-	if a.Kind != domain.KindApps {
+	if viaAgent {
+		v.Health = domain.HealthUnknown // reported by the Agent from M4-02 on
+	} else if a.Kind != domain.KindApps {
 		if live, err := c.cfg.Engine.Status(ctx, a); err == nil {
 			v.Health = live.Health
 		} else {
@@ -439,6 +458,9 @@ func (c *Controller) autoTrigger(a domain.Application, s *appState, v domain.App
 		return "", "rolled back"
 	case s.syncing || s.deleting:
 		return "", "busy"
+	case v.LastOperation != nil && v.LastOperation.TreeHash == s.targetTree &&
+		(v.LastOperation.Phase == domain.OpWaiting || v.LastOperation.Phase == domain.OpRunning):
+		return "", "a Sync to this tree waits for its Host" // or for its disconnected Agent's report (Q81, Q93)
 	case s.targetTree == s.failedTree:
 		return "", "this tree used up its retries"
 	case s.retries > 0 && time.Now().Before(s.nextRetry):
@@ -482,6 +504,9 @@ func (c *Controller) startSync(a domain.Application, sha, trigger string) (int64
 		return 0, err
 	}
 	op.ID = id
+	if err := c.cfg.Store.SupersedeWaitingOps(ctx, a.Name, id); err != nil {
+		c.cfg.Log.Error("supersede waiting syncs", "app", a.Name, "err", err)
+	}
 	c.mu.Lock()
 	s.view.LastOperation = &op
 	c.mu.Unlock()
@@ -503,6 +528,10 @@ func (c *Controller) runSync(a domain.Application, op domain.SyncOperation) {
 	ctx = logging.With(ctx, "app", a.Name, "op", op.ID, "revision", short(op.Revision), "host", cmp.Or(a.Host, domain.LocalHost))
 	c.cfg.Log.InfoContext(ctx, "sync started", "trigger", op.Trigger)
 	err := c.apply(ctx, a, op)
+	if waiting := errors.Is(err, agents.ErrOffline) || errors.Is(err, agents.ErrNotApproved); waiting || errors.Is(err, agents.ErrDisconnected) {
+		c.unfinished(ctx, a, op, waiting, err)
+		return
+	}
 
 	phase, msg := domain.OpSucceeded, "synced to "+short(op.Revision)
 	if err != nil {
@@ -553,6 +582,26 @@ func (c *Controller) runSync(a domain.Application, op domain.SyncOperation) {
 	}
 }
 
+// unfinished keeps a Sync its Agent didn't answer: Waiting for an offline Host (Q81), or Running while a disconnected
+// Agent finishes it (Q93). Its outcome arrives when the Agent connects again (M3-06).
+func (c *Controller) unfinished(ctx context.Context, a domain.Application, op domain.SyncOperation, waiting bool, why error) {
+	phase, msg := domain.OpRunning, "Host "+a.Host+" disconnected; its Agent reports the result when it is back"
+	if waiting {
+		phase, msg = domain.OpWaiting, "waiting for Host "+a.Host+": "+why.Error()
+	}
+	if err := c.cfg.Store.SetOpPhase(ctx, op.ID, phase, msg); err != nil {
+		c.cfg.Log.ErrorContext(ctx, "record sync operation", "err", err)
+	}
+	c.cfg.Log.WarnContext(ctx, "sync not finished", "phase", phase, "why", why)
+	c.setSyncing(a.Name, false)
+	if cur, err := c.cfg.Store.GetOp(ctx, op.ID); err == nil {
+		c.emit(domain.Event{Type: "op", App: a.Name, Data: cur})
+	}
+	if fresh, err := c.cfg.Store.GetApp(ctx, a.Name); err == nil {
+		c.reconcile(ctx, fresh)
+	}
+}
+
 const triggerParent = "app-of-apps"
 
 // syncPendingChildren is what a manual Sync of an App of Apps means to a person: deploy what isn't
@@ -585,7 +634,7 @@ func (c *Controller) syncPendingChildren(ctx context.Context, parent string) {
 
 // apply materialises the Revision into the Application's working dir and brings the project up.
 func (c *Controller) apply(ctx context.Context, a domain.Application, op domain.SyncOperation) error {
-	if a.Kind == domain.KindCompose {
+	if a.Kind == domain.KindCompose && !c.agentHost(ctx, a.Host) { // an Agent's Host isn't OmegaCD's own
 		if err := c.refuseSelf(ctx, a); err != nil {
 			return err
 		}
@@ -600,6 +649,9 @@ func (c *Controller) apply(ctx context.Context, a domain.Application, op domain.
 	}
 	if a.Kind == domain.KindApps {
 		return c.syncChildren(ctx, a, r.Apps) // an App of Apps has no files: its definitions are only read
+	}
+	if c.agentHost(ctx, a.Host) {
+		return c.deploy(ctx, a, op, r)
 	}
 	keys, err := c.syncKeys(ctx, a)
 	if err != nil {
@@ -764,12 +816,14 @@ func (c *Controller) checkNew(ctx context.Context, a *domain.Application) error 
 		if err := c.checkHost(ctx, a.Host); err != nil {
 			return err
 		}
-		exists, managed, err := c.cfg.Engine.ProjectExists(ctx, a.Host, a.Name)
-		if err != nil {
-			return err
-		}
-		if exists && !managed && !a.Adopt {
-			return domain.ErrUnmanaged
+		if !c.agentHost(ctx, a.Host) { // an Agent checks its own Host, at the first Sync (Adopt in the Desired State)
+			exists, managed, err := c.cfg.Engine.ProjectExists(ctx, a.Host, a.Name)
+			if err != nil {
+				return err
+			}
+			if exists && !managed && !a.Adopt {
+				return domain.ErrUnmanaged
+			}
 		}
 	}
 	a.CreatedAt = time.Now()

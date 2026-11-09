@@ -3,10 +3,13 @@ package agent
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -78,6 +81,24 @@ func rotate(path string) (ed25519.PrivateKey, error) {
 	return newSigningKey(path)
 }
 
+// TrustCA is an HTTP client trusting the PEM certificates in file besides the system's (OMEGACD_AGENT_CA_FILE).
+func TrustCA(file string) (*http.Client, error) {
+	pem, err := os.ReadFile(file)
+	if err != nil {
+		return nil, fmt.Errorf("OMEGACD_AGENT_CA_FILE: %w", err)
+	}
+	pool, err := x509.SystemCertPool()
+	if err != nil {
+		pool = x509.NewCertPool()
+	}
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("OMEGACD_AGENT_CA_FILE: no PEM certificate in %s", file)
+	}
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+	return &http.Client{Transport: t}, nil
+}
+
 // Connection is how the Agent reaches its Control Plane.
 type Connection struct {
 	URL          string             // the Control Plane's, e.g. https://omegacd.example.com
@@ -86,12 +107,13 @@ type Connection struct {
 	KeyPath      string             // where Key is kept: a rotation writes the new one next to it, then replaces it
 	AgeRecipient string             // of the Host Key, registered at enrollment
 	Engine       EngineInfo         // reported in Hello; empty when none was reachable at start
+	HTTPClient   *http.Client       // trusts OMEGACD_AGENT_CA_FILE's CAs; nil: the system's (Q95)
 }
 
 // Connect holds the connection to the Control Plane until ctx ends, reconnecting with backoff (Q20, Q51).
 func (ag *Agent) Connect(ctx context.Context, c Connection) {
 	url := strings.TrimSuffix(c.URL, "/") + "/api/agents/v1/connect"
-	wire.Keep(ctx, func(ctx context.Context) (*wire.Conn, error) { return wire.Dial(ctx, url, nil) },
+	wire.Keep(ctx, func(ctx context.Context) (*wire.Conn, error) { return wire.DialWith(ctx, url, nil, c.HTTPClient) },
 		func(ctx context.Context, conn *wire.Conn) error { return ag.serve(ctx, conn, &c) },
 		func(err error) {
 			ag.log.Warn("no connection to the Control Plane; trying again", "url", c.URL, "err", err)
@@ -102,6 +124,7 @@ func (ag *Agent) Connect(ctx context.Context, c Connection) {
 func (ag *Agent) serve(ctx context.Context, conn *wire.Conn, c *Connection) error {
 	var rotation uint64 // the KeyRotation waiting for its answer
 	var next ed25519.PrivateKey
+	b := newBlobs(conn)
 	for {
 		e, err := conn.Recv(ctx)
 		if err != nil {
@@ -164,6 +187,11 @@ func (ag *Agent) serve(ctx context.Context, conn *wire.Conn, c *Connection) erro
 				ag.log.Warn("enrolled, waiting for an admin to approve this Agent: the fingerprint the Control Plane shows "+
 					"must be this one", "host", s.Host, "fingerprint", s.Fingerprint)
 			}
+		case e.GetDesiredState() != nil:
+			go ag.desired(ctx, conn, b, e.GetDesiredState())
+		case e.GetBlobChunk() != nil:
+			b.chunk(e.GetBlobChunk())
+		case e.GetError() != nil && e.ReplyTo != 0 && b.refused(e.ReplyTo, e.GetError().Message):
 		case e.GetError() != nil:
 			return fmt.Errorf("the Control Plane refused this Agent: %s", e.GetError().Message)
 		}

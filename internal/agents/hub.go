@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -47,11 +48,17 @@ var ErrNotApproved = errors.New("the Host's Agent is not approved yet")
 // ErrOffline: no Agent of the Host is connected.
 var ErrOffline = errors.New("the Host's Agent is not connected")
 
+// ErrDisconnected: the Agent's connection dropped during a Sync; the Agent finishes it and reports through its outbox
+// on reconnect (Q93).
+var ErrDisconnected = errors.New("the Host's Agent disconnected during the Sync")
+
 type Hub struct {
 	store   domain.Store
 	log     *slog.Logger
 	now     func() time.Time // tests move it
 	version string           // this Control Plane's, which Agents' versions are checked against (Q41)
+	// Blob is a file's content by its sha256 (hex), as the Source Server rendered it: what Agents ask for
+	Blob func(ctx context.Context, hash string) ([]byte, error)
 
 	mu    sync.Mutex
 	conns map[string]*session // by Host
@@ -66,6 +73,10 @@ type session struct {
 	mu      sync.Mutex
 	key     []byte           // the key it authenticated with; a rotation's signature must be by it
 	rotated chan rotateReply // an admin's rotation waiting for the Agent's KeyRotation
+	// deploys waiting for their SyncOperationReport, by op; files, the blobs this Agent was sent Desired States with:
+	// all it may ask for, so no Host reads another's files by guessing hashes
+	deploys map[uint64]chan *agentv1.SyncOperationReport
+	files   map[string]bool
 }
 
 type rotateReply struct {
@@ -114,7 +125,8 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.log.ErrorContext(ctx, "confirm the agent's key", "err", err)
 		return
 	}
-	s := &session{conn: c, at: domain.AgentConnection{Address: addr, Since: h.now()}, approved: make(chan struct{}), key: key}
+	s := &session{conn: c, at: domain.AgentConnection{Address: addr, Since: h.now()}, approved: make(chan struct{}), key: key,
+		deploys: map[uint64]chan *agentv1.SyncOperationReport{}, files: map[string]bool{}}
 	if host.Approved {
 		s.once.Do(func() { close(s.approved) })
 	}
@@ -153,8 +165,20 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.log.InfoContext(ctx, "agent disconnected", "err", err)
 			return
 		}
-		if r := e.GetKeyRotation(); r != nil {
-			h.rotated(ctx, host.Name, s, e.Id, r)
+		switch {
+		case e.GetKeyRotation() != nil:
+			h.rotated(ctx, host.Name, s, e.Id, e.GetKeyRotation())
+		case e.GetBlobRequest() != nil:
+			go h.serveBlobs(ctx, s, e.Id, e.GetBlobRequest())
+		case e.GetSyncOperationReport() != nil:
+			r := e.GetSyncOperationReport()
+			s.mu.Lock()
+			wait := s.deploys[r.Op]
+			delete(s.deploys, r.Op)
+			s.mu.Unlock()
+			if wait != nil {
+				wait <- r
+			}
 		}
 	}
 }
@@ -441,6 +465,69 @@ func (h *Hub) approved(host string) (*session, error) {
 		return s, nil
 	default:
 		return nil, fmt.Errorf("host %s: %w", host, ErrNotApproved)
+	}
+}
+
+// Deploy sends ds to the Host's Agent and waits for its report: nil once it deployed, or why it failed. ErrOffline
+// and ErrNotApproved when there's no Agent to send it to; ErrDisconnected when the connection dropped meanwhile.
+func (h *Hub) Deploy(ctx context.Context, host string, ds *agentv1.DesiredState) error {
+	s, err := h.approved(host)
+	if err != nil {
+		return err
+	}
+	report := make(chan *agentv1.SyncOperationReport, 1)
+	s.mu.Lock()
+	s.deploys[ds.Op] = report
+	for _, f := range ds.Files {
+		s.files[hex.EncodeToString(f.Sha256)] = true
+	}
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.deploys, ds.Op)
+		s.mu.Unlock()
+	}()
+	if err := s.conn.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_DesiredState{DesiredState: ds}}); err != nil {
+		return fmt.Errorf("host %s: %w", host, ErrDisconnected)
+	}
+	select {
+	case r := <-report:
+		if r.Phase != string(domain.OpSucceeded) {
+			return errors.New(r.Message)
+		}
+		return nil
+	case <-s.conn.Done():
+		return fmt.Errorf("host %s: %w", host, ErrDisconnected)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// serveBlobs sends the blobs the Agent asks for, each from the offset it already has: only files of Desired States
+// it was sent. A blob it can't have is answered with an Error to the request.
+func (h *Hub) serveBlobs(ctx context.Context, s *session, id uint64, req *agentv1.BlobRequest) {
+	for i, sum := range req.Sha256 {
+		hash := hex.EncodeToString(sum)
+		s.mu.Lock()
+		ok := s.files[hash]
+		s.mu.Unlock()
+		err := fmt.Errorf("blob %s: not a file of a Desired State sent to this Agent", hash)
+		var b []byte
+		if ok && h.Blob != nil {
+			b, err = h.Blob(ctx, hash)
+		}
+		var offset uint64
+		if i < len(req.Offset) {
+			offset = req.Offset[i]
+		}
+		if err == nil {
+			err = s.conn.SendBlob(ctx, sum, b, offset)
+		}
+		if err != nil {
+			h.log.WarnContext(ctx, "blob for an agent", "blob", hash, "err", err)
+			s.conn.Send(ctx, &agentv1.Envelope{ReplyTo: id, Body: &agentv1.Envelope_Error{Error: &agentv1.Error{Message: err.Error()}}})
+			return
+		}
 	}
 }
 

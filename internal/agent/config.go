@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"fmt"
 	"io"
+	"net/netip"
 	"net/url"
 	"os/user"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 
 type Config struct {
 	ControlPlane   string   // URL; empty while the Agent works on its own
+	CAFile         string   // PEM certificates the Agent trusts for the Control Plane besides the system's (Q95)
 	Invite         string   // single-use, for the first connection
 	StateDir       string   // signing key, Host Key, database, cache
 	WorkDir        string   // the Applications' folders
@@ -27,6 +29,8 @@ type Config struct {
 // settings is every environment variable LoadConfig reads, for --help.
 var settings = []struct{ name, def, help string }{
 	{"OMEGACD_AGENT_CONTROL_PLANE", "", "URL of the Control Plane, e.g. https://omegacd.example.com"},
+	{"OMEGACD_AGENT_CA_FILE", "the system's certificates", "a PEM file of CA certificates to trust for the Control Plane, " +
+		"for one with a private or self-signed certificate"},
 	{"OMEGACD_AGENT_INVITE", "", "single-use invite from Add Host, for the first connection"},
 	{"OMEGACD_AGENT_STATE_DIR", "$STATE_DIRECTORY (systemd), else $XDG_DATA_HOME/omegacd-agent, else ~/.local/share/omegacd-agent",
 		"keys, database and cache; keep it, losing it loses the Host Key"},
@@ -61,10 +65,19 @@ func Usage(w io.Writer) {
 	fmt.Fprintln(w, "\nSecrets: SOPS with age, decrypted with the Host Key the Agent creates in its state dir (host.key).")
 }
 
+func loopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	a, err := netip.ParseAddr(host)
+	return err == nil && a.IsLoopback()
+}
+
 // LoadConfig reads the settings from getenv for a process running as euid.
 func LoadConfig(getenv func(string) string, euid int) (Config, error) {
 	c := Config{
 		ControlPlane: strings.TrimSpace(getenv("OMEGACD_AGENT_CONTROL_PLANE")),
+		CAFile:       strings.TrimSpace(getenv("OMEGACD_AGENT_CA_FILE")),
 		Invite:       strings.TrimSpace(getenv("OMEGACD_AGENT_INVITE")),
 		DockerHost:   getenv("DOCKER_HOST"),
 		AllowRoot:    getenv("OMEGACD_AGENT_ALLOW_ROOT") == "true",
@@ -74,8 +87,14 @@ func LoadConfig(getenv func(string) string, euid int) (Config, error) {
 			"(set OMEGACD_AGENT_ALLOW_ROOT=true to run as root anyway)")
 	}
 	if c.ControlPlane != "" {
-		if u, err := url.Parse(c.ControlPlane); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		u, err := url.Parse(c.ControlPlane)
+		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
 			return c, fmt.Errorf("OMEGACD_AGENT_CONTROL_PLANE=%q: want https://host[:port]", c.ControlPlane)
+		}
+		// only TLS proves the Control Plane to the Agent: over plain HTTP anyone in between could deploy to this Host
+		if u.Scheme == "http" && !loopback(u.Hostname()) {
+			return c, fmt.Errorf("OMEGACD_AGENT_CONTROL_PLANE=%q: an Agent connects over https only, except to its own "+
+				"machine (localhost); for a private certificate set OMEGACD_AGENT_CA_FILE", c.ControlPlane)
 		}
 	}
 

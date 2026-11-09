@@ -531,6 +531,7 @@ omegacd host list                          # Hosts with status, Docker version a
 omegacd host test vps                      # can OmegaCD reach its Docker engine?
 omegacd host add web                       # v0.2, in development: a Host with an Agent; prints the command with its invite
 omegacd host approve web SHA256:…          # after comparing the fingerprint the Agent printed with host list's
+                                           # then Applications with host: web deploy through its Agent
 omegacd host rotate web                    # the Agent makes a new signing key
 omegacd host allow web 203.0.113.7         # its Agent may connect only from there (CIDRs too; none: anywhere)
 omegacd host unlock web                    # locked by two connections with one key, for a harmless cause
@@ -558,7 +559,7 @@ omegacd keygen --out age.key               # a new age key, e.g. the Master Key 
 | `app delete NAME [--cascade=false \| --volumes] [--yes]` | asks first on a terminal; `--cascade=false` keeps the containers; `--volumes` also deletes the volumes and their data |
 | `import [STACK]... [--ssh user@host --host NAME] [--recipient age1…] [--apps-dir apps] [--definitions platform/apps.yaml] [--repo-url URL] [--dry-run] [--force]` | run in your repository's checkout — see [Moving an existing server](#moving-an-existing-server-to-omegacd) |
 | `host list`, `host test NAME` | |
-| `host add NAME`, `host approve NAME FINGERPRINT` | v0.2, in development: enrolls a Host's Agent with a single-use invite (valid an hour), approved by its key's fingerprint |
+| `host add NAME`, `host approve NAME FINGERPRINT` | v0.2, in development: enrolls a Host's Agent with a single-use invite (valid an hour), approved by its key's fingerprint; Applications on it then deploy through the Agent, which decrypts their secrets (a Sync to it while it's offline waits for it). The Agent connects over https only, except to its own machine; `OMEGACD_AGENT_CA_FILE` trusts a private CA |
 | `host allow NAME [CIDR]...` | v0.2, in development: the addresses the Host's Agent may connect from (behind a reverse proxy: set `OMEGACD_TRUSTED_PROXIES`); none: anywhere |
 | `host rotate NAME`, `host unlock NAME`, `host delete NAME` | v0.2, in development: a new signing key for the connected Agent; let a Host locked by two connections with its key connect again; delete a Host, revoking its Agent's key |
 | `host key show HOST`, `host key generate HOST`, `host key import HOST --file PATH`, `host key remove HOST RECIPIENT` | private keys are read from a file or stdin, never from the command line, and never shown |

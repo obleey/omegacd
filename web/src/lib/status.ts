@@ -23,6 +23,8 @@ export const statusMeta: Record<string, [Tone, IconName, boolean?]> = {
 	Succeeded: ['green', 'check-circle'],
 	Running: ['blue', 'notch', true],
 	Failed: ['red', 'x-circle'],
+	Waiting: ['yellow', 'clock'], // for its offline Host (Q81)
+	Superseded: ['overlay', 'stop-circle'], // by a newer Sync before the Host came back
 	// Host connection
 	Connected: ['green', 'check-circle'],
 	Disconnected: ['red', 'x-circle'],

@@ -778,7 +778,18 @@ type DesiredState struct {
 	Profiles     []string               `protobuf:"bytes,5,rep,name=profiles,proto3" json:"profiles,omitempty"`
 	// the Application's own root for its folder (Q57), absolute; empty: the Agent's work dir. The Agent writes only under
 	// roots its own configuration allows (OMEGACD_AGENT_WORKDIR_ALLOW), whatever this says
-	WorkDir       string `protobuf:"bytes,6,opt,name=work_dir,json=workDir,proto3" json:"work_dir,omitempty"`
+	WorkDir string `protobuf:"bytes,6,opt,name=work_dir,json=workDir,proto3" json:"work_dir,omitempty"`
+	// the Sync Operation this deploys (Q62: the Agent's log entries for it carry it as op); its SyncOperationReport
+	// carries it back. 0: none (a resync, M3-06)
+	Op           uint64 `protobuf:"varint,7,opt,name=op,proto3" json:"op,omitempty"`
+	Prune        bool   `protobuf:"varint,8,opt,name=prune,proto3" json:"prune,omitempty"`
+	PruneVolumes bool   `protobuf:"varint,9,opt,name=prune_volumes,json=pruneVolumes,proto3" json:"prune_volumes,omitempty"`
+	SelfHeal     bool   `protobuf:"varint,10,opt,name=self_heal,json=selfHeal,proto3" json:"self_heal,omitempty"` // the Agent self-heals the Application, online and offline (Q82)
+	Parent       string `protobuf:"bytes,11,opt,name=parent,proto3" json:"parent,omitempty"`                      // its App of Apps, if any
+	// sha256 of the files (hex), as the Source Server rendered them: what the resync compares (M3-06)
+	Checksum string `protobuf:"bytes,12,opt,name=checksum,proto3" json:"checksum,omitempty"`
+	// take over a Compose project of the same name OmegaCD didn't start; without it the first deploy refuses one
+	Adopt         bool `protobuf:"varint,13,opt,name=adopt,proto3" json:"adopt,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -853,6 +864,55 @@ func (x *DesiredState) GetWorkDir() string {
 		return x.WorkDir
 	}
 	return ""
+}
+
+func (x *DesiredState) GetOp() uint64 {
+	if x != nil {
+		return x.Op
+	}
+	return 0
+}
+
+func (x *DesiredState) GetPrune() bool {
+	if x != nil {
+		return x.Prune
+	}
+	return false
+}
+
+func (x *DesiredState) GetPruneVolumes() bool {
+	if x != nil {
+		return x.PruneVolumes
+	}
+	return false
+}
+
+func (x *DesiredState) GetSelfHeal() bool {
+	if x != nil {
+		return x.SelfHeal
+	}
+	return false
+}
+
+func (x *DesiredState) GetParent() string {
+	if x != nil {
+		return x.Parent
+	}
+	return ""
+}
+
+func (x *DesiredState) GetChecksum() string {
+	if x != nil {
+		return x.Checksum
+	}
+	return ""
+}
+
+func (x *DesiredState) GetAdopt() bool {
+	if x != nil {
+		return x.Adopt
+	}
+	return false
 }
 
 type File struct {
@@ -1159,6 +1219,7 @@ type SyncOperationReport struct {
 	// what started it on the Agent: "restore" (after a reboot), "self-heal", or "rollback" (run on the Host, Q25: the
 	// Control Plane shows the Application rolled back on the Host and turns its Auto-Sync off)
 	Trigger       string `protobuf:"bytes,5,opt,name=trigger,proto3" json:"trigger,omitempty"`
+	Op            uint64 `protobuf:"varint,6,opt,name=op,proto3" json:"op,omitempty"` // the DesiredState's op it answers; 0 for one the Agent started
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1226,6 +1287,13 @@ func (x *SyncOperationReport) GetTrigger() string {
 		return x.Trigger
 	}
 	return ""
+}
+
+func (x *SyncOperationReport) GetOp() uint64 {
+	if x != nil {
+		return x.Op
+	}
+	return 0
 }
 
 type LogsRequest struct {
@@ -1538,14 +1606,22 @@ const file_omegacd_agent_v1_agent_proto_rawDesc = "" +
 	"\vKeyRotation\x12\x1d\n" +
 	"\n" +
 	"public_key\x18\x01 \x01(\fR\tpublicKey\x12\x1c\n" +
-	"\tsignature\x18\x02 \x01(\fR\tsignature\"\xc6\x01\n" +
+	"\tsignature\x18\x02 \x01(\fR\tsignature\"\xf8\x02\n" +
 	"\fDesiredState\x12\x10\n" +
 	"\x03app\x18\x01 \x01(\tR\x03app\x12\x1a\n" +
 	"\brevision\x18\x02 \x01(\tR\brevision\x12,\n" +
 	"\x05files\x18\x03 \x03(\v2\x16.omegacd.agent.v1.FileR\x05files\x12#\n" +
 	"\rcompose_files\x18\x04 \x03(\tR\fcomposeFiles\x12\x1a\n" +
 	"\bprofiles\x18\x05 \x03(\tR\bprofiles\x12\x19\n" +
-	"\bwork_dir\x18\x06 \x01(\tR\aworkDir\"F\n" +
+	"\bwork_dir\x18\x06 \x01(\tR\aworkDir\x12\x0e\n" +
+	"\x02op\x18\a \x01(\x04R\x02op\x12\x14\n" +
+	"\x05prune\x18\b \x01(\bR\x05prune\x12#\n" +
+	"\rprune_volumes\x18\t \x01(\bR\fpruneVolumes\x12\x1b\n" +
+	"\tself_heal\x18\n" +
+	" \x01(\bR\bselfHeal\x12\x16\n" +
+	"\x06parent\x18\v \x01(\tR\x06parent\x12\x1a\n" +
+	"\bchecksum\x18\f \x01(\tR\bchecksum\x12\x14\n" +
+	"\x05adopt\x18\r \x01(\bR\x05adopt\"F\n" +
 	"\x04File\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x12\n" +
 	"\x04mode\x18\x02 \x01(\rR\x04mode\x12\x16\n" +
@@ -1567,13 +1643,14 @@ const file_omegacd_agent_v1_agent_proto_rawDesc = "" +
 	"\brevision\x18\x02 \x01(\tR\brevision\x12\x16\n" +
 	"\x06health\x18\x03 \x01(\tR\x06health\x12\x18\n" +
 	"\adrifted\x18\x04 \x01(\bR\adrifted\x12\x18\n" +
-	"\amessage\x18\x05 \x01(\tR\amessage\"\x8d\x01\n" +
+	"\amessage\x18\x05 \x01(\tR\amessage\"\x9d\x01\n" +
 	"\x13SyncOperationReport\x12\x10\n" +
 	"\x03app\x18\x01 \x01(\tR\x03app\x12\x1a\n" +
 	"\brevision\x18\x02 \x01(\tR\brevision\x12\x14\n" +
 	"\x05phase\x18\x03 \x01(\tR\x05phase\x12\x18\n" +
 	"\amessage\x18\x04 \x01(\tR\amessage\x12\x18\n" +
-	"\atrigger\x18\x05 \x01(\tR\atrigger\"e\n" +
+	"\atrigger\x18\x05 \x01(\tR\atrigger\x12\x0e\n" +
+	"\x02op\x18\x06 \x01(\x04R\x02op\"e\n" +
 	"\vLogsRequest\x12\x10\n" +
 	"\x03app\x18\x01 \x01(\tR\x03app\x12\x18\n" +
 	"\aservice\x18\x02 \x01(\tR\aservice\x12\x12\n" +

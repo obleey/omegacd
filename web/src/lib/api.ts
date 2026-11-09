@@ -4,7 +4,7 @@ import { goto } from '$app/navigation';
 // JSON shapes mirror internal/domain/domain.go.
 export type SyncStatus = 'Synced' | 'OutOfSync' | 'Unknown';
 export type HealthStatus = 'Healthy' | 'Progressing' | 'Degraded' | 'Missing';
-export type OpPhase = 'Running' | 'Succeeded' | 'Failed';
+export type OpPhase = 'Running' | 'Succeeded' | 'Failed' | 'Waiting' | 'Superseded';
 
 export interface Application {
 	name: string;

@@ -351,6 +351,17 @@ func (s *Store) FinishOp(ctx context.Context, id int64, phase domain.OpPhase, me
 	return tx.Commit()
 }
 
+func (s *Store) SetOpPhase(ctx context.Context, id int64, phase domain.OpPhase, message string) error {
+	return affected(s.db.ExecContext(ctx, `UPDATE ops SET phase=?, message=? WHERE id=? AND finished_at=0`, phase, message, id))
+}
+
+func (s *Store) SupersedeWaitingOps(ctx context.Context, app string, by int64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE ops SET phase=?, message=?, finished_at=? WHERE app=? AND phase=? AND id<>?`,
+		domain.OpSuperseded, fmt.Sprintf("superseded by Sync Operation %d before the Host came back", by),
+		time.Now().UnixNano(), app, domain.OpWaiting, by)
+	return err
+}
+
 func (s *Store) GetOp(ctx context.Context, id int64) (domain.SyncOperation, error) {
 	return scanOp(s.db.QueryRowContext(ctx, `SELECT `+opCols+` FROM ops WHERE id = ?`, id))
 }

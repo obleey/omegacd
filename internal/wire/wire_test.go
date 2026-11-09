@@ -230,7 +230,7 @@ func TestPingEndsDeadConnection(t *testing.T) {
 	block := make(chan struct{})
 	t.Cleanup(func() { close(block) })
 	url := serve(t, func(c *Conn) { <-block }) // never reads: never answers a ping
-	c, err := dial(ctx, url, nil, 100*time.Millisecond)
+	c, err := dial(ctx, url, nil, nil, 100*time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
 	}
