@@ -62,6 +62,10 @@ type Agents interface {
 	Deploy(ctx context.Context, host string, ds *agentv1.DesiredState) error
 	// Remove has the Agent remove app, or with keepContainers forget it (Q83); errors like Deploy's
 	Remove(ctx context.Context, host, app string, volumes, keepContainers bool) error
+	// Logs writes an Application's logs from its Agent to w (M4-02)
+	Logs(ctx context.Context, host, app, container string, follow bool, tail int, w io.Writer) error
+	// Online reports whether the Host's Agent is connected now
+	Online(host string) bool
 }
 
 type appState struct {
@@ -70,6 +74,7 @@ type appState struct {
 	deleting   bool // set before a delete touches containers, so nothing re-syncs the app meanwhile
 	targetTree string
 	drift      bool
+	agentDrift bool // drifted on an Agent's Host: its Agent heals it (Self-Heal) or it stays; never re-synced from here (Q82)
 	retries    int
 	nextRetry  time.Time
 	failedTree string // tree that exhausted its retries; auto-sync waits for a new one
@@ -230,7 +235,7 @@ func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fe
 	v := domain.AppView{Application: a, SyncStatus: domain.Unknown, Health: domain.Missing, ReconciledAt: time.Now()}
 	viaAgent := a.Kind == domain.KindCompose && c.agentHost(ctx, a.Host)
 	var targetTree string
-	var drift bool
+	var drift, agentDrift bool
 
 	last, err := c.cfg.Store.LastSucceededOp(ctx, a.Name)
 	deployed := err == nil
@@ -284,8 +289,12 @@ func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fe
 			v.SyncStatus, v.SyncMessage = domain.OutOfSync, "not in Git: "+strings.Join(gone, ", ")
 		}
 	case viaAgent:
-		// the deployed tree is the target's; its Agent self-heals drift (Q82), and reports it from M4-02 on
+		// the deployed tree is the target's; what runs may still have drifted, as its Agent reported (M4-02)
 		v.SyncStatus = domain.Synced
+		if st, err := c.cfg.Store.AgentStatus(ctx, a.Name); err == nil && st.Drifted && st.Revision == last.Revision {
+			v.SyncStatus, v.SyncMessage = domain.OutOfSync, "live state drifted: "+describe(st.Drift)
+			agentDrift = true
+		}
 	default:
 		diffs, derr := c.cfg.Engine.Diff(ctx, a, c.liveDir(a), "")
 		switch {
@@ -327,7 +336,13 @@ func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fe
 
 	// after Diff: loading the project tells the engine which services are declared
 	if viaAgent {
-		v.Health = domain.HealthUnknown // reported by the Agent from M4-02 on
+		v.Health = domain.HealthUnknown // until its Agent first reports
+		if st, err := c.cfg.Store.AgentStatus(ctx, a.Name); err == nil {
+			v.Health = st.Health
+		}
+		if !c.cfg.Agents.Online(a.Host) {
+			v.SyncMessage = strings.TrimPrefix(v.SyncMessage+"; "+c.offline(ctx, a), "; ")
+		}
 	} else if a.Kind != domain.KindApps {
 		if live, err := c.cfg.Engine.Status(ctx, a); err == nil {
 			v.Health = live.Health
@@ -342,7 +357,7 @@ func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fe
 
 	c.mu.Lock()
 	s := c.state(a.Name)
-	s.targetTree, s.drift = targetTree, drift
+	s.targetTree, s.drift, s.agentDrift = targetTree, drift, agentDrift
 	if v.SyncStatus == domain.Synced {
 		s.retries, s.nextRetry = 0, time.Time{}
 	}
@@ -462,6 +477,8 @@ func (c *Controller) autoTrigger(a domain.Application, s *appState, v domain.App
 		return "", "busy"
 	case a.Deleting != "":
 		return "", "deleting, waiting for its Host"
+	case s.agentDrift:
+		return "", "drifted on its Host: its Agent heals what it should (Self-Heal)"
 	case v.LastOperation != nil && v.LastOperation.TreeHash == s.targetTree &&
 		(v.LastOperation.Phase == domain.OpWaiting || v.LastOperation.Phase == domain.OpRunning):
 		return "", "a Sync to this tree waits for its Host" // or for its disconnected Agent's report (Q81, Q93)
@@ -1168,6 +1185,9 @@ func (c *Controller) Resources(ctx context.Context, name string) (domain.LiveSta
 		// its children are Applications of their own, listed with ListApps
 		return domain.LiveState{Services: []string{}, Containers: []domain.Container{}, Resources: []domain.Resource{}, Health: c.cachedView(ctx, a).Health}, nil
 	}
+	if c.agentHost(ctx, a.Host) {
+		return c.agentLive(ctx, a), nil
+	}
 	live, err := c.cfg.Engine.Status(ctx, a)
 	if err != nil {
 		return domain.LiveState{}, err
@@ -1204,6 +1224,9 @@ func (c *Controller) ResourceDetail(ctx context.Context, name, kind, resName str
 	a, err := c.cfg.Store.GetApp(ctx, name)
 	if err != nil {
 		return domain.ResourceDetail{}, err
+	}
+	if c.agentHost(ctx, a.Host) {
+		return c.agentDetail(ctx, a, d)
 	}
 	if kind == "volume" || kind == "network" {
 		d.Info, err = c.cfg.Engine.Inspect(ctx, a, kind, resName)
@@ -1397,6 +1420,9 @@ func (c *Controller) Logs(ctx context.Context, name, containerID string, follow 
 	a, err := c.cfg.Store.GetApp(ctx, name)
 	if err != nil {
 		return err
+	}
+	if c.agentHost(ctx, a.Host) {
+		return c.cfg.Agents.Logs(ctx, a.Host, a.Name, containerID, follow, tail, w)
 	}
 	return c.cfg.Engine.Logs(ctx, a, containerID, follow, tail, w)
 }
@@ -1765,8 +1791,15 @@ func (c *Controller) hostView(ctx context.Context, h domain.Host, apps []string)
 		apps = []string{}
 	}
 	v := domain.HostView{Host: h, Status: domain.HostStatus{Name: h.Name}, Apps: apps}
-	if h.URL != "" || h.Name == domain.LocalHost { // a Host with an Agent reports through it, from M4-02 on
+	switch {
+	case h.URL != "" || h.Name == domain.LocalHost:
 		v.Status = c.cfg.Engine.HostStatus(ctx, h.Name)
+	case c.cfg.Agents != nil && h.Agent != nil: // a Host with an Agent: as its Agent reported (M4-02)
+		v.Status.Connected = c.cfg.Agents.Online(h.Name)
+		v.Status.ServerVersion, v.Status.OS = h.Agent.EngineVersion, h.Agent.OS
+		if !v.Status.Connected && !h.Agent.LeftAt.IsZero() {
+			v.Status.Error = "offline since " + h.Agent.LeftAt.Local().Format(time.DateTime)
+		}
 	}
 	if keys, err := c.hostKeys(ctx, h.Name); err != nil {
 		c.cfg.Log.Warn("list host keys", "host", h.Name, "err", err)

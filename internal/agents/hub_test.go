@@ -7,7 +7,9 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -826,9 +828,139 @@ func TestRemoveOnAClosingConnection(t *testing.T) {
 	approved := make(chan struct{})
 	close(approved)
 	h.mu.Lock()
-	h.conns["web"] = &session{conn: c, approved: approved, removes: map[uint64]chan *agentv1.AppRemoved{}}
+	h.conns["web"] = &session{conn: c, approved: approved, removes: map[uint64]chan *agentv1.AppRemoved{},
+		logs: map[uint64]chan *agentv1.LogChunk{}}
 	h.mu.Unlock()
 	if err := h.Remove(t.Context(), "web", "app", false, false); !errors.Is(err, ErrDisconnected) {
 		t.Fatalf("Remove = %v", err)
+	}
+	if err := h.Logs(t.Context(), "web", "app", "", false, 0, io.Discard); !errors.Is(err, ErrDisconnected) {
+		t.Fatalf("Logs = %v", err)
+	}
+}
+
+// M4-02: an Agent's status reports are kept for its own Host's apps and the controller is told; when it leaves, the
+// Host records the time.
+func TestStatusReports(t *testing.T) {
+	h, st, url := newHub(t)
+	ctx := t.Context()
+	told := make(chan string, 4)
+	h.Status = func(_ context.Context, app string) { told <- app }
+	key := approvedAgent(t, h, st, url, "web")
+	if h.Online("web") {
+		t.Fatal("online with no connection")
+	}
+	st.CreateApp(ctx, domain.Application{Name: "app", Host: "web"})
+	st.CreateApp(ctx, domain.Application{Name: "elsewhere", Host: "other"})
+	c, _ := agent(t, url, key, "", nil)
+	if !h.Online("web") {
+		t.Fatal("not online while connected")
+	}
+	live, _ := json.Marshal(domain.LiveState{Health: domain.Healthy, Containers: []domain.Container{{Name: "app-1"}}})
+	send := func(r *agentv1.StatusReport) {
+		c.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_StatusReport{StatusReport: r}})
+	}
+	send(&agentv1.StatusReport{App: "elsewhere", Health: "Healthy", LiveState: live})          // not its Host's
+	send(&agentv1.StatusReport{App: "app", Health: "Healthy", LiveState: []byte("{not json")}) // broken
+	send(&agentv1.StatusReport{App: "app", Revision: "r1", Health: "Healthy", Drifted: true, LiveState: live,
+		Drift: []byte(`[{"service":"app","change":"changed"}]`), Details: []byte(`{"volume/data":{"driver":"local"}}`), TimeUnix: 1794200000})
+	if app := <-told; app != "app" {
+		t.Fatalf("told about %s", app)
+	}
+	got, err := st.AgentStatus(ctx, "app")
+	if err != nil || got.Revision != "r1" || got.Health != domain.Healthy || !got.Drifted || got.Live.Containers[0].Name != "app-1" ||
+		got.Drift[0].Service != "app" || got.Details["volume/data"]["driver"] != "local" || got.At.Unix() != 1794200000 {
+		t.Fatalf("kept %+v %v", got, err)
+	}
+	if _, err := st.AgentStatus(ctx, "elsewhere"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatal("kept another Host's app's report")
+	}
+	select {
+	case app := <-told:
+		t.Fatalf("told about %s too", app)
+	default:
+	}
+
+	c.Close()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if hst, _ := st.GetHost(ctx, "web"); hst.Agent != nil && !hst.Agent.LeftAt.IsZero() {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no time recorded for the Agent leaving")
+		}
+	}
+	if h.Online("web") {
+		t.Fatal("online after leaving")
+	}
+}
+
+// failWriter is a viewer that went away.
+type failWriter struct{}
+
+func (failWriter) Write([]byte) (int, error) { return 0, errors.New("viewer gone") }
+
+// M4-02: logs stream from the Agent: chunks until done, its error; a viewer that leaves or a context that ends stops
+// the Agent (LogsStop); a connection that drops ends them.
+func TestLogs(t *testing.T) {
+	h, st, url := newHub(t)
+	ctx := t.Context()
+	var out bytes.Buffer
+	if err := h.Logs(ctx, "web", "app", "", false, 10, &out); !errors.Is(err, ErrOffline) {
+		t.Fatalf("offline: %v", err)
+	}
+	key := approvedAgent(t, h, st, url, "web")
+	c, _ := agent(t, url, key, "", nil)
+	got := reading(c)
+	chunk := func(id uint64, ch *agentv1.LogChunk) {
+		c.Send(ctx, &agentv1.Envelope{ReplyTo: id, Body: &agentv1.Envelope_LogChunk{LogChunk: ch}})
+	}
+	done := make(chan error, 1)
+	go func() { done <- h.Logs(ctx, "web", "app", "app-1", false, 10, &out) }()
+	e := next(t, got)
+	if r := e.GetLogsRequest(); r.GetApp() != "app" || r.Service != "app-1" || r.Tail != 10 || r.Follow {
+		t.Fatalf("request %v", e)
+	}
+	chunk(e.Id, &agentv1.LogChunk{Data: []byte("one\n")})
+	chunk(e.Id, &agentv1.LogChunk{Data: []byte("two\n")})
+	chunk(e.Id, &agentv1.LogChunk{Done: true})
+	if err := <-done; err != nil || out.String() != "one\ntwo\n" {
+		t.Fatalf("logs %q %v", out.String(), err)
+	}
+	chunk(999, &agentv1.LogChunk{Data: []byte("for no one")}) // a request that ended: dropped
+
+	go func() { done <- h.Logs(ctx, "web", "app", "nope", false, 0, &out) }()
+	e = next(t, got)
+	chunk(e.Id, &agentv1.LogChunk{Done: true, Error: "no container for nope"})
+	if err := <-done; err == nil || err.Error() != "no container for nope" {
+		t.Fatalf("the Agent's error: %v", err)
+	}
+
+	go func() { done <- h.Logs(ctx, "web", "app", "", true, 0, failWriter{}) }()
+	e = next(t, got)
+	chunk(e.Id, &agentv1.LogChunk{Data: []byte("x")})
+	if stop := next(t, got); stop.GetLogsStop() == nil || stop.ReplyTo != e.Id {
+		t.Fatalf("want LogsStop for %d, got %v", e.Id, stop)
+	}
+	if err := <-done; err == nil {
+		t.Fatal("the viewer left: no error")
+	}
+
+	lctx, cancel := context.WithCancel(ctx)
+	go func() { done <- h.Logs(lctx, "web", "app", "", true, 0, &out) }()
+	e = next(t, got)
+	cancel()
+	if stop := next(t, got); stop.GetLogsStop() == nil || stop.ReplyTo != e.Id {
+		t.Fatalf("want LogsStop, got %v", stop)
+	}
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+
+	go func() { done <- h.Logs(ctx, "web", "app", "", true, 0, &out) }()
+	next(t, got)
+	c.Close()
+	if err := <-done; !errors.Is(err, ErrDisconnected) {
+		t.Fatalf("dropped: %v", err)
 	}
 }

@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"path/filepath"
+	"slices"
+	"time"
 
 	"github.com/obleey/omegacd/internal/domain"
 	agentv1 "github.com/obleey/omegacd/internal/proto/agent/v1"
@@ -139,4 +142,75 @@ func (c *Controller) ForgetApp(ctx context.Context, name string) error {
 		c.finishDeleting(ctx, a.Parent)
 	}
 	return nil
+}
+
+// AgentStatusChanged shows an Application's new report from its Agent (M4-02).
+func (c *Controller) AgentStatusChanged(ctx context.Context, app string) {
+	a, err := c.cfg.Store.GetApp(ctx, app)
+	if err != nil {
+		c.cfg.Log.DebugContext(ctx, "a report for an application not here (deleted meanwhile)", "app", app, "err", err)
+		return
+	}
+	c.reconcileWith(ctx, a, false)
+}
+
+// offline says since when an Application's Host is offline and how old what is shown of it is (Q38).
+func (c *Controller) offline(ctx context.Context, a domain.Application) string {
+	msg := "Host " + a.Host + " offline"
+	if h, err := c.cfg.Store.GetHost(ctx, a.Host); err == nil && h.Agent != nil && !h.Agent.LeftAt.IsZero() {
+		msg += " since " + h.Agent.LeftAt.Local().Format(time.DateTime)
+	}
+	if st, err := c.cfg.Store.AgentStatus(ctx, a.Name); err == nil {
+		msg += "; last known state from " + st.At.Local().Format(time.DateTime)
+	}
+	return msg
+}
+
+// agentLive is what runs for an Application on an Agent's Host, as its Agent last reported (M4-02): the same view,
+// online or, last known, offline.
+func (c *Controller) agentLive(ctx context.Context, a domain.Application) domain.LiveState {
+	st, err := c.cfg.Store.AgentStatus(ctx, a.Name)
+	if err != nil {
+		return domain.LiveState{Services: []string{}, Containers: []domain.Container{}, Resources: []domain.Resource{}, Health: domain.HealthUnknown}
+	}
+	return st.Live
+}
+
+// agentDetail fills in a resource of an Application on an Agent's Host: a volume's or network's details as its Agent
+// reported them; a file's content from the Revision the Control Plane rendered, as in Git. A secret's content is only
+// on the Host: shown as such.
+func (c *Controller) agentDetail(ctx context.Context, a domain.Application, d domain.ResourceDetail) (domain.ResourceDetail, error) {
+	if d.Kind == "volume" || d.Kind == "network" {
+		st, _ := c.cfg.Store.AgentStatus(ctx, a.Name)
+		d.Info = st.Details[d.Kind+"/"+d.Name]
+		return d, nil
+	}
+	if d.Secret {
+		d.Info = map[string]string{"type": "file", "secret": "decrypted on the Host: its content never leaves it"}
+		return d, nil
+	}
+	last, err := c.cfg.Store.LastSucceededOp(ctx, a.Name)
+	if err != nil {
+		return d, err
+	}
+	r, err := c.render(ctx, a, last.Revision)
+	if err != nil {
+		return d, err
+	}
+	i := slices.IndexFunc(r.Files, func(f domain.File) bool { return f.Path == filepath.ToSlash(d.Name) })
+	if i < 0 {
+		d.Info = map[string]string{"type": "on the Host only"} // made there, e.g. a bind mount's folder
+		return d, nil
+	}
+	b, err := c.cfg.Source.Blob(ctx, r.Files[i].SHA256)
+	if err != nil {
+		return d, err
+	}
+	d.Info = map[string]string{"type": "file", "size": fmt.Sprintf("%d bytes", len(b))}
+	if len(b) > maxResourceContent {
+		b = b[:maxResourceContent]
+		d.Info["truncated"] = "showing the first 256 KiB"
+	}
+	d.Content = string(b)
+	return d, nil
 }

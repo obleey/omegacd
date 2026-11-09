@@ -862,7 +862,7 @@ func (e *Engine) Logs(ctx context.Context, app domain.Application, containerID s
 		ShowStdout: true, ShowStderr: true, Timestamps: true, Follow: follow, Tail: t,
 	})
 	if err != nil {
-		return err
+		return logsHint(err)
 	}
 	defer rc.Close()
 	if insp.Container.Config.Tty {
@@ -899,6 +899,16 @@ type authCLI struct {
 }
 
 func (c authCLI) ConfigFile() *configfile.ConfigFile { return c.cf }
+
+// logsHint says what to change when Podman can't follow logs: its containers log to journald while its events go to
+// a file, which the Agent's Self-Heal needs; logs in files too fix it.
+func logsHint(err error) error {
+	if strings.Contains(err.Error(), "using --follow with the journald --log-driver") {
+		return fmt.Errorf("%w (on this Host's Podman: set log_driver = \"k8s-file\" under [containers] in containers.conf, "+
+			"next to events_logger = \"file\" under [engine], which Self-Heal needs; new containers then log to files)", err)
+	}
+	return err
+}
 
 // registries are the registries the project's images come from, as the docker CLI names them (docker.io for Docker
 // Hub), each once.

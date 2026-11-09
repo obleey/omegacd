@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/compose-spec/compose-go/v2/types"
@@ -206,5 +207,17 @@ func TestRegistries(t *testing.T) {
 	}}
 	if got := registries(p); !slices.Equal(got, []string{"docker.io", "ghcr.io", "localhost:5000"}) {
 		t.Fatalf("registries = %v", got)
+	}
+}
+
+// Podman can't follow journald logs with its events in a file: the error says what to set.
+func TestLogsHint(t *testing.T) {
+	podman := errors.New("Error response from daemon: failed to obtain logs for Container 'x': using --follow with the journald --log-driver but without the journald --events-backend (file) is not supported")
+	if err := logsHint(podman); !errors.Is(err, podman) || !strings.Contains(err.Error(), `log_driver = "k8s-file"`) {
+		t.Fatalf("hint: %v", err)
+	}
+	other := errors.New("no such container")
+	if err := logsHint(other); err != other {
+		t.Fatalf("other errors pass as they are: %v", err)
 	}
 }

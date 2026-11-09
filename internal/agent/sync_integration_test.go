@@ -3,10 +3,13 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -15,6 +18,7 @@ import (
 	"time"
 
 	"filippo.io/age"
+	"github.com/moby/moby/client"
 
 	"github.com/obleey/omegacd/internal/agents"
 	"github.com/obleey/omegacd/internal/crypto"
@@ -203,4 +207,124 @@ func TestAgentSyncWithoutHostKey(t *testing.T) {
 	if err2 == nil || !strings.Contains(err2.Error(), "registry credentials: no Host Key") {
 		t.Fatalf("Deploy = %v", err2)
 	}
+}
+
+// M4-02 against a real engine: after a Sync the Control Plane holds the Agent's report (containers, Health, the
+// decrypted file marked secret, the volume's details); logs stream from the Agent, following until stopped; a
+// container stopped by hand shows as drift; the Agent leaving records the time.
+func TestAgentReportsThroughHub(t *testing.T) {
+	reportDelay = 100 * time.Millisecond
+	t.Cleanup(func() { reportDelay = 500 * time.Millisecond })
+	ag, src, recipient := testAgent(t)
+	hostKey := ag.secrets.sources[0].(SOPS).HostKey
+	ctx := t.Context()
+	name := appName(t)
+	t.Cleanup(func() { ag.Remove(context.Background(), name, true) })
+	id, _ := age.GenerateX25519Identity()
+	st, err := store.Open(filepath.Join(t.TempDir(), "omegacd.db"), crypto.NewSealer(id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	hub := agents.New(st, nil)
+	hub.Blob = func(_ context.Context, hash string) ([]byte, error) { return src.fetch(hash) }
+	srv := httptest.NewServer(hub)
+	defer srv.Close()
+	st.CreateApp(ctx, domain.Application{Name: name, Host: "edge"})
+	invite, _ := st.CreateInvite(ctx, "edge", time.Now().Add(time.Hour))
+	key, _ := SigningKey(t.TempDir())
+	actx, stop := context.WithCancel(ctx)
+	defer stop()
+	go ag.Run(actx) // its engine watch reports changes
+	go ag.Connect(actx, Connection{URL: srv.URL, Invite: invite, Key: key, AgeRecipient: recipient, HostKey: hostKey})
+	eventually(t, "the Agent enrolled", func() bool { h, _ := st.GetHost(ctx, "edge"); return h.Fingerprint != "" })
+	hub.Approve(ctx, "edge", domain.Fingerprint(key.Public().(ed25519.PublicKey)))
+
+	files := map[string]string{
+		"compose.yaml": strings.Replace(compose, "%s", "", 1),
+		"conf.txt":     "conf v1",
+		".sops.env":    encrypted(t, "SECRET=decrypted-on-the-agent\n", ".sops.env", recipient),
+	}
+	r1 := src.revision(name, "r1", files)
+	var err2 error
+	eventually(t, "the Sync", func() bool {
+		err2 = hub.Deploy(ctx, "edge", desiredState(App{Name: name}, r1, 1))
+		return !errors.Is(err2, agents.ErrNotApproved) && !errors.Is(err2, agents.ErrOffline)
+	})
+	if err2 != nil {
+		t.Fatal(err2)
+	}
+	var rep domain.AgentStatus
+	eventually(t, "the report after the Sync", func() bool {
+		rep, err = st.AgentStatus(ctx, name)
+		return err == nil && rep.Revision == "r1" && len(rep.Live.Containers) == 1 && rep.Live.Containers[0].State == "running"
+	})
+	secret := map[string]bool{}
+	for _, res := range rep.Live.Resources {
+		secret[res.Kind+" "+res.Name] = res.Secret
+	}
+	if !secret["env_file .env"] || secret["bind conf.txt"] || rep.Drifted || rep.Details["volume/"+name+"_data"] == nil {
+		t.Fatalf("report: secrets %v, drifted %v, details %v", secret, rep.Drifted, rep.Details)
+	}
+	if b, _ := json.Marshal(rep); strings.Contains(string(b), "decrypted-on-the-agent") {
+		t.Fatal("a secret's value in the report")
+	}
+
+	var logs bytes.Buffer
+	eventually(t, "logs from the Agent", func() bool {
+		logs.Reset()
+		return hub.Logs(ctx, "edge", name, "", false, 20, &logs) == nil && strings.Contains(logs.String(), "conf v1")
+	})
+	fctx, fstop := context.WithTimeout(ctx, 2*time.Second)
+	defer fstop()
+	if err := hub.Logs(fctx, "edge", name, "", true, 5, &logs); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("following logs end with their context: %v", err)
+	}
+	if err := hub.Logs(ctx, "edge", name, "no-such-service", false, 5, &logs); err == nil {
+		t.Fatal("logs of a service the app doesn't have")
+	}
+
+	c, err := client.New(client.FromEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if _, err := c.ContainerStop(ctx, rep.Live.Containers[0].ID, client.ContainerStopOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the stopped container reported", func() bool {
+		rep, err = st.AgentStatus(ctx, name)
+		return err == nil && rep.Live.Containers[0].State != "running" && rep.Health != domain.Healthy
+	})
+
+	// the Agent's connection ends while logs follow (of a running container: a stopped one's end at once): the
+	// viewer hears the Host disconnect
+	if _, err := c.ContainerStart(ctx, rep.Live.Containers[0].ID, client.ContainerStartOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	following := make(chan error, 1)
+	// the connection cut by the Control Plane while logs follow, the Agent staying up: it stops its streams of that
+	// connection itself (nothing else would end them) and reconnects
+	go func() { following <- hub.Logs(ctx, "edge", name, "", true, 5, io.Discard) }()
+	time.Sleep(time.Second)
+	hub.Disconnect("edge")
+	if err := <-following; !errors.Is(err, agents.ErrDisconnected) {
+		t.Fatalf("following logs on a cut connection: %v", err)
+	}
+	eventually(t, "the Agent back", func() bool { return hub.Online("edge") })
+	go func() { following <- hub.Logs(ctx, "edge", name, "", true, 5, io.Discard) }()
+	time.Sleep(time.Second)
+	stop()
+	select {
+	case err := <-following:
+		if err == nil {
+			t.Fatal("following logs ended without an error when the Agent left")
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("following logs outlived the Agent's connection")
+	}
+	eventually(t, "the Agent's leaving recorded", func() bool {
+		h, _ := st.GetHost(ctx, "edge")
+		return h.Agent != nil && !h.Agent.LeftAt.IsZero()
+	})
 }

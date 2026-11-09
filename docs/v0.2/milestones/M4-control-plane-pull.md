@@ -23,14 +23,19 @@ follows one Sync by its `op` from the Control Plane's log into the Agent's; an A
 Plane that isn't on loopback.
 
 ### M4-02 · Status from Agents, last-known state offline
-**Status:** todo
+**Status:** done (2026-11-09, PR #120)
 **Depends on:** M4-01, M4-08
 
-Sync Status from target vs deployed Revision plus the Agent's drift report; Live State, Diff, Health, resources and
-logs from the Agent (Q23). Offline: the last known values with their time, "Host offline since …" (Q38). Disconnected
-Hosts no longer make apps Unknown just because they're offline.
+The Agent reports each Application's Health, Live State (containers), drift and resources whenever they change
+(engine events, after a Sync, on connect) (Q23); the Control Plane keeps the latest report with its time. Sync Status
+from target vs deployed Revision plus the reported drift; the UI's views (Health, Live State, resources, drift) read
+the reports. Offline: the last known values with their time, "Host offline since …" (Q38); disconnected Hosts no
+longer make apps Unknown just because they're offline. Logs come from the Agent on demand, `-f` included, while it is
+connected. `app sync --wait` waits for Health again on Agent Hosts. The Diff of a new Revision is M4-11 (Q98).
 
-**Done when:** the UI's views work unchanged against Agent-reported data, and an offline Host shows last-known state.
+**Done when:** the UI's views (except a new Revision's Diff) work unchanged against Agent-reported data; an offline
+Host shows the last-known state with its time; logs stream from an Agent; `--wait` waits for Health; e2e through the
+binary for each.
 
 ### M4-03 · Polling, webhooks and App of Apps through the Source Server
 **Status:** todo
@@ -105,6 +110,18 @@ Host and done on reconnect, `--forget`; an image from a private registry pulled 
 log, on no disk of the Agent and never in plaintext on the wire (checked by capturing it); the UI's live progress fed
 by an Agent.
 
+### M4-11 · The Diff of a new Revision on the Agent
+**Status:** todo
+**Depends on:** M4-02
+
+Split from M4-02 (Q98). The Diff view for a Revision not yet deployed: the Control Plane sends its Desired State; the
+Agent fetches the files it lacks, stages them in its work dir (RAM by default: decrypted values never on disk, Q19),
+decrypts and diffs against what runs, without deploying; the staged folder is removed. Offline: the last Diff it
+reported, with its time.
+
+**Done when:** the UI's Diff of a new Revision works against an Agent unchanged, nothing is deployed or left behind,
+no decrypted value is in the Control Plane's data or logs; e2e through the binary.
+
 ### M4-09 · Coverage: measured combined, checked in CI
 **Status:** done (2026-11-09, PR #118)
 **Depends on:** M4-08
@@ -119,12 +136,15 @@ TESTING.md documents it.
 **Done when:** `make cover` prints the combined total and every uncovered line; CI fails a PR that leaves a changed
 line uncovered and unlisted, or lowers the total (tested with a throwaway change).
 
-### M4-10 · Existing code to 100% coverage
+### M4-10 · Existing code to 100% coverage, and no silent path
 **Status:** todo
 **Depends on:** M4-09, M4-05 (Q97: v0.1-only code is deleted, not tested)
 
 Q96: every package's reachable lines covered, unit + integration + e2e combined; what no test can reach is marked in the code with
-its reason. Code M4-05 deletes (push, SSH/TLS Hosts, the local engine path) is left
+its reason. The same pass checks logging (Q62): every error path logs or returns to a caller that logs, every
+decision logs at debug, nothing fails silently; where the log is what tells an operator what happened, the path's
+test checks the log line. Code M4-05 deletes (push, SSH/TLS Hosts, the local engine path) is left
 out: it is deleted first, never tested (Q97). Then CI requires 100%: any uncovered line not in the exceptions fails.
 
-**Done when:** `make cover` shows 100% of the lines not listed as exceptions, and CI enforces it.
+**Done when:** `make cover` shows 100% of the lines not marked unreachable, CI enforces it, and no error path is
+silent (reviewed package by package, the operator-facing ones tested by their log line).

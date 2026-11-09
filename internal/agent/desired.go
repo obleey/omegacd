@@ -223,6 +223,7 @@ func (ag *Agent) desired(ctx context.Context, conn *wire.Conn, b *blobs, q *requ
 		ag.log.ErrorContext(ctx, "deploy failed", "app", ds.App, "err", err)
 		rep.Phase, rep.Message = string(domain.OpFailed), err.Error()
 	}
+	ag.reports.soon(ctx, ds.App)
 	if err := conn.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_SyncOperationReport{SyncOperationReport: rep}}); err != nil {
 		ag.log.WarnContext(ctx, "the Control Plane is gone: the Sync's result waits in the outbox", "app", ds.App, "err", err)
 		if err := ag.record(context.WithoutCancel(ctx), rep); err != nil {
@@ -267,6 +268,7 @@ var resyncInterval = 5 * time.Minute // tests wait less
 // the next.
 func (ag *Agent) keepInSync(ctx context.Context, conn *wire.Conn) {
 	var sent uint64
+	reported := false
 	tick := time.NewTicker(resyncInterval)
 	defer tick.Stop()
 	for {
@@ -285,6 +287,13 @@ func (ag *Agent) keepInSync(ctx context.Context, conn *wire.Conn) {
 		}
 		if err := conn.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_Resync{Resync: ag.checksums(ctx)}}); err != nil {
 			return
+		}
+		if !reported { // on connect, after the outbox: what runs now, for the Control Plane's views (M4-02)
+			reported = true
+			apps, _ := ag.db.ListApps(ctx)
+			for _, a := range apps {
+				ag.sendReport(ctx, conn, a.Name)
+			}
 		}
 		select {
 		case <-conn.Done():

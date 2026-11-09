@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"filippo.io/age"
@@ -129,6 +130,16 @@ func (ag *Agent) serve(ctx context.Context, conn *wire.Conn, c *Connection) erro
 	var next ed25519.PrivateKey
 	b := newBlobs(conn)
 	q := newRequests(conn)
+	var logsMu sync.Mutex
+	logs := map[uint64]context.CancelFunc{} // requests streaming logs, by id: a LogsStop ends one
+	defer func() {
+		ag.reports.connected(nil)
+		logsMu.Lock()
+		for _, stop := range logs {
+			stop()
+		}
+		logsMu.Unlock()
+	}()
 	for {
 		e, err := conn.Recv(ctx)
 		if err != nil {
@@ -192,6 +203,7 @@ func (ag *Agent) serve(ctx context.Context, conn *wire.Conn, c *Connection) erro
 			if s.Approved {
 				ag.log.Info("connected to the Control Plane, approved", "host", s.Host)
 				if ag.db != nil { // an Agent without its state (tests of the connection alone) has nothing to sync
+					ag.reports.connected(conn)
 					go ag.keepInSync(ctx, conn)
 				}
 			} else {
@@ -203,6 +215,24 @@ func (ag *Agent) serve(ctx context.Context, conn *wire.Conn, c *Connection) erro
 			go ag.desired(ctx, conn, b, q, c.HostKey, e.GetDesiredState())
 		case e.GetRemoveApp() != nil:
 			go ag.removeApp(ctx, conn, e.Id, e.GetRemoveApp())
+		case e.GetLogsRequest() != nil:
+			lctx, stop := context.WithCancel(ctx)
+			logsMu.Lock()
+			logs[e.Id] = stop
+			logsMu.Unlock()
+			go func(id uint64) {
+				ag.streamLogs(lctx, conn, id, e.GetLogsRequest())
+				logsMu.Lock()
+				delete(logs, id)
+				logsMu.Unlock()
+				stop()
+			}(e.Id)
+		case e.GetLogsStop() != nil:
+			logsMu.Lock()
+			if stop := logs[e.ReplyTo]; stop != nil {
+				stop()
+			}
+			logsMu.Unlock()
 		case e.GetBlobChunk() != nil:
 			b.chunk(e.GetBlobChunk())
 		case e.GetError() != nil && e.ReplyTo != 0 && b.refused(e.ReplyTo, e.GetError().Message):
