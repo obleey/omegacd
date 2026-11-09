@@ -87,6 +87,11 @@ import json,sys; h=[h for h in json.load(sys.stdin) if h[\"name\"]==\"edge\"][0]
 
 echo "conf v2" > "$REPO/web/conf.txt"; gitc commit -qam v2
 "$BIN" app refresh $APP >/dev/null 2>&1
+# M4-11: the Diff of the new Revision, computed by the Agent without deploying it
+out=$("$BIN" app diff $APP 2>&1); rc=$?
+check "app diff of a new Revision through the Agent: the service would change" '[ $rc -eq 1 ] && echo "$out" | grep -q "~ web"'
+check "nothing deployed by it, and no staged file left on the Host" \
+  'docker logs $(ctr) 2>&1 | tail -3 | grep -q "conf v1" && [ -z "$(ls -A "$T/edge/run/omegacd/.omegacd-diff" 2>/dev/null)" ]'
 "$BIN" app sync $APP --wait --timeout 3m >/dev/null 2>&1
 check "a new Revision deploys" 'sleep 2; docker logs $(ctr) 2>&1 | grep -q "conf v2"'
 out=$("$BIN" app rollback $APP "$OP" --wait --timeout 3m 2>&1); rc=$?
@@ -103,6 +108,8 @@ import json,sys; v=json.load(sys.stdin); m=v.get(\"syncMessage\",\"\")
 assert \"Host edge offline since\" in m and \"last known state from\" in m and v[\"health\"]==\"Healthy\", v"'
 check "its resources still show, as last known" 'api resources | grep -q "\"state\":\"running\""'
 check "and logs say the Host is offline" '! "$BIN" app logs $APP --tail 5 >/dev/null 2>&1'
+out=$("$BIN" app diff $APP 2>&1)
+check "offline, app diff shows the last Diff its Agent computed, saying so (M4-11)" 'echo "$out" | grep -q "warning: Host edge offline: the services. changes as its Agent computed them at"'
 
 # M3-06: back online, the Sync that waited runs; a rollback run on the Host while offline arrives exactly once
 hist() { "$BIN" app history $APP -o json | python3 -c "import json,sys; ops=json.load(sys.stdin); $1"; }

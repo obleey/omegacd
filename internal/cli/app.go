@@ -507,6 +507,9 @@ func (c *CLI) appDiff(ctx context.Context, args []string) error {
 			return err
 		}
 	} else {
+		for _, w := range d.Warnings { // e.g. a Diff its offline Host's Agent computed earlier: say so first
+			fmt.Fprintln(c.Stderr, c.paint(yellow, "warning: "+w))
+		}
 		for _, s := range d.Services {
 			mark, code := "~", yellow
 			switch s.Change {

@@ -49,7 +49,7 @@ run() {
   on "$t" true 2>/dev/null || { echo "can't reach omegacd-test-$t: make ip in $infra (this Mac's address changed?)" >&2; return 1; }
   stop "$t"
   # the repository as it is here, built web UI included; not node_modules, binaries, or what tests left
-  rsync -a --delete --exclude /web/node_modules/ --exclude /bin/ -e "ssh -F $infra/ssh_config" "$repo/" "omegacd-test-$t:omegacd/"
+  rsync -a --delete --exclude /web/node_modules/ --exclude /bin/ --exclude /cover/ -e "ssh -F $infra/ssh_config" "$repo/" "omegacd-test-$t:omegacd/"
   local cmd="make test-all ENGINES='$engines'"
   [ -n "$only" ] && cmd=$only
   echo "=== $t: $cmd"
@@ -74,7 +74,7 @@ logs=${TMPDIR:-/tmp}
 failed='^--- FAIL|^FAIL|^✗ |^make: \*\*\*'
 running=() queue=($targets)
 # a new file each run: processes left from an aborted one keep writing to the old one, not into this run's log
-launch() { rm -f "$logs/omegacd-test-$1.log"; run "$1" > "$logs/omegacd-test-$1.log" 2>&1 & running+=("$1:$!"); }
+launch() { rm -f "$logs/omegacd-test-$1.log"; { trap - INT TERM; run "$1"; } > "$logs/omegacd-test-$1.log" 2>&1 & running+=("$1:$!"); }
 fill() { while [ ${#queue[@]} -gt 0 ]; do launch "${queue[0]}"; queue=("${queue[@]:1}"); done; }
 failures=()
 fail() { # target $1 (pid $2) failed: it stops, the others go on
@@ -84,6 +84,8 @@ fail() { # target $1 (pid $2) failed: it stops, the others go on
   stop "$1"
   failures+=("$1")
 }
+# Ctrl-C stops the servers' work too, not only the ssh sessions that started it (kill: Ctrl-C may have ended them)
+trap 'echo "=== interrupted: stopping ${running[*]%%:*}"; for e in "${running[@]}"; do kill "${e#*:}" 2>/dev/null || true; stop "${e%%:*}" & done; wait; exit 130' INT TERM
 fill
 while [ ${#running[@]} -gt 0 ]; do
   sleep 5

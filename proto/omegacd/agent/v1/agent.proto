@@ -34,6 +34,8 @@ message Envelope {
     RegistryAuth registry_auth = 31;
     SyncProgress sync_progress = 32;
     LogsStop logs_stop = 33;
+    DiffRequest diff_request = 34;
+    DiffResult diff_result = 35;
   }
 }
 
@@ -227,6 +229,19 @@ message SyncProgress {
   string resource = 3;
   string status = 4;
   string text = 5;
+}
+
+// DiffRequest asks the Agent how a Revision not deployed yet would change what runs (M4-11): it stages the files in
+// its work dir (RAM by default, Q19), decrypts and diffs them as if in the Application's folder, never deploys, and
+// removes the staged files. Answered by DiffResult (reply_to). The Desired State's op is 0.
+message DiffRequest {
+  DesiredState desired_state = 1;
+}
+
+// DiffResult answers a DiffRequest: services is JSON []domain.ServiceDiff; error says why there is none.
+message DiffResult {
+  bytes services = 1;
+  string error = 2;
 }
 
 // OutboxAck tells the Agent the Control Plane has its entries up to seq: it deletes them. An entry sent again (no ack

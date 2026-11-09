@@ -263,6 +263,14 @@ type AgentStatus struct {
 	At       time.Time
 }
 
+// AgentDiff is how a Revision not deployed would change what runs, as the Application's Agent computed it (M4-11): what
+// the Diff view shows while the Host is offline.
+type AgentDiff struct {
+	Revision string
+	Services []ServiceDiff
+	At       time.Time
+}
+
 // AgentConnection is where and since when an Agent was connected.
 type AgentConnection struct {
 	Address string    `json:"address"`
@@ -497,6 +505,9 @@ type Store interface {
 	// on that Host. AgentStatus is the latest, ErrNotFound before any.
 	SaveAgentStatus(ctx context.Context, host, app string, st AgentStatus) error
 	AgentStatus(ctx context.Context, app string) (AgentStatus, error)
+	// SaveAgentDiff keeps the latest Diff an Application's Agent computed; AgentDiff is it, ErrNotFound before any.
+	SaveAgentDiff(ctx context.Context, app string, d AgentDiff) error
+	AgentDiff(ctx context.Context, app string) (AgentDiff, error)
 	// AgentLeft records when the Host's Agent's connection ended (AgentInfo.LeftAt).
 	AgentLeft(ctx context.Context, host string, at time.Time) error
 	// RecordAgent keeps what the Host's Agent said about itself.
