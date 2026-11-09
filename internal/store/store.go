@@ -139,6 +139,11 @@ CREATE TABLE agent_status (
 	app TEXT PRIMARY KEY REFERENCES apps(name) ON DELETE CASCADE,
 	status TEXT NOT NULL
 );
+`, `
+CREATE TABLE agent_diff (
+	app TEXT PRIMARY KEY REFERENCES apps(name) ON DELETE CASCADE,
+	diff TEXT NOT NULL
+);
 `}
 
 type Store struct {
@@ -693,6 +698,31 @@ func (s *Store) AgentStatus(ctx context.Context, app string) (domain.AgentStatus
 		return st, mapErr(err)
 	}
 	return st, json.Unmarshal([]byte(b), &st)
+}
+
+func (s *Store) SaveAgentDiff(ctx context.Context, app string, d domain.AgentDiff) error {
+	b, err := json.Marshal(d)
+	if err != nil { // coverage: unreachable, a struct of strings and slices always encodes
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT INTO agent_diff (app, diff) VALUES (?, ?)
+		ON CONFLICT (app) DO UPDATE SET diff = excluded.diff`, app, string(b))
+	if err != nil {
+		var se *sqlite.Error
+		if errors.As(err, &se) && se.Code() == sqlite3.SQLITE_CONSTRAINT_FOREIGNKEY {
+			return domain.ErrNotFound
+		}
+	}
+	return err
+}
+
+func (s *Store) AgentDiff(ctx context.Context, app string) (domain.AgentDiff, error) {
+	var d domain.AgentDiff
+	var b string
+	if err := s.db.QueryRowContext(ctx, `SELECT diff FROM agent_diff WHERE app = ?`, app).Scan(&b); err != nil {
+		return d, mapErr(err)
+	}
+	return d, json.Unmarshal([]byte(b), &d)
 }
 
 func (s *Store) AgentLeft(ctx context.Context, host string, at time.Time) error {

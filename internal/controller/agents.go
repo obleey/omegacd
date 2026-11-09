@@ -3,11 +3,13 @@ package controller
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"slices"
 	"time"
 
+	"github.com/obleey/omegacd/internal/agents"
 	"github.com/obleey/omegacd/internal/domain"
 	agentv1 "github.com/obleey/omegacd/internal/proto/agent/v1"
 )
@@ -25,18 +27,82 @@ func (c *Controller) agentHost(ctx context.Context, host string) bool {
 // deploy sends a's Desired State at op's Revision to its Host's Agent, which fetches the files it lacks, decrypts and
 // deploys them, and waits for its report. The files travel as rendered: secrets stay encrypted until the Agent.
 func (c *Controller) deploy(ctx context.Context, a domain.Application, op domain.SyncOperation, r domain.Rendered) error {
-	ds := &agentv1.DesiredState{App: a.Name, Revision: op.Revision, ComposeFiles: a.ComposeFiles, Profiles: a.Profiles,
-		WorkDir: a.WorkDir, Op: uint64(op.ID), Prune: a.Prune, PruneVolumes: a.Prune && a.PruneVolumes,
-		SelfHeal: a.SelfHeal, Parent: a.Parent, Checksum: r.Checksum, Adopt: a.Adopt}
-	for _, f := range r.Files {
-		sum, err := hex.DecodeString(f.SHA256)
-		if err != nil {
-			return fmt.Errorf("file %s: %w", f.Path, err)
-		}
-		ds.Files = append(ds.Files, &agentv1.File{Path: f.Path, Mode: uint32(f.Mode), Sha256: sum})
+	ds, err := desiredState(a, op.Revision, op.ID, r)
+	if err != nil {
+		return err
 	}
 	c.cfg.Log.DebugContext(ctx, "desired state to the agent", "files", len(ds.Files), "tree", r.Checksum)
 	return c.cfg.Agents.Deploy(ctx, a.Host, ds)
+}
+
+// desiredState is a's Desired State at revision, rendered as r, for the Sync Operation op (0: none, e.g. a Diff).
+func desiredState(a domain.Application, revision string, op int64, r domain.Rendered) (*agentv1.DesiredState, error) {
+	ds := &agentv1.DesiredState{App: a.Name, Revision: revision, ComposeFiles: a.ComposeFiles, Profiles: a.Profiles,
+		WorkDir: a.WorkDir, Op: uint64(op), Prune: a.Prune, PruneVolumes: a.Prune && a.PruneVolumes,
+		SelfHeal: a.SelfHeal, Parent: a.Parent, Checksum: r.Checksum, Adopt: a.Adopt}
+	for _, f := range r.Files {
+		sum, err := hex.DecodeString(f.SHA256)
+		if err != nil { // coverage: unreachable, the Source Server names every file by its sha256 in hex
+			return nil, fmt.Errorf("file %s: %w", f.Path, err)
+		}
+		ds.Files = append(ds.Files, &agentv1.File{Path: f.Path, Mode: uint32(f.Mode), Sha256: sum})
+	}
+	return ds, nil
+}
+
+// agentDiff fills in the Diff view of an Application on an Agent's Host (M4-11): the service changes from its Agent,
+// which stages the target Revision without deploying; offline, the last ones it computed, saying so. The compose text
+// of both Revisions comes from what the Control Plane rendered (compose files are never secret; encrypted ones stay
+// ciphertext here).
+func (c *Controller) agentDiff(ctx context.Context, a domain.Application, dv domain.DiffView, r domain.Rendered) (domain.DiffView, error) {
+	ds, err := desiredState(a, dv.ToSHA, 0, r)
+	if err != nil {
+		return dv, err
+	}
+	services, err := c.cfg.Agents.Diff(ctx, a.Host, ds)
+	switch {
+	case err == nil:
+		dv.Services = services
+		if serr := c.cfg.Store.SaveAgentDiff(ctx, a.Name, domain.AgentDiff{Revision: dv.ToSHA, Services: services, At: time.Now()}); serr != nil {
+			c.cfg.Log.WarnContext(ctx, "keep the agent's diff", "app", a.Name, "err", serr)
+		}
+	case errors.Is(err, agents.ErrOffline) || errors.Is(err, agents.ErrNotApproved) || errors.Is(err, agents.ErrDisconnected):
+		last, lerr := c.cfg.Store.AgentDiff(ctx, a.Name)
+		if lerr != nil {
+			return dv, fmt.Errorf("Host %s offline, and its Agent never computed a Diff of %s: %w", a.Host, a.Name, err)
+		}
+		dv.Services = last.Services
+		note := "Host " + a.Host + " offline: the services' changes as its Agent computed them at " + last.At.Local().Format(time.DateTime)
+		if last.Revision != dv.ToSHA {
+			note += ", for Revision " + short(last.Revision) + " (not the target)"
+		}
+		dv.Warnings = append(dv.Warnings, note)
+	default:
+		return dv, err
+	}
+	if dv.Desired, err = c.renderedCompose(ctx, a, r); err != nil {
+		return dv, err
+	}
+	if dv.FromSHA != "" { // the deployed Revision's: shown beside, the Diff stands without it
+		dr, err := c.render(ctx, a, dv.FromSHA)
+		if err == nil {
+			dv.Live, err = c.renderedCompose(ctx, a, dr)
+		}
+		if err != nil {
+			c.cfg.Log.WarnContext(ctx, "the deployed revision's compose files", "app", a.Name, "revision", short(dv.FromSHA), "err", err)
+		}
+	}
+	return dv, nil
+}
+
+// renderedCompose is a's compose files' text as rendered in r, staged here as files (no decryption: none is needed).
+func (c *Controller) renderedCompose(ctx context.Context, a domain.Application, r domain.Rendered) (string, error) {
+	stage, done, err := c.stage(ctx, a, r)
+	if err != nil {
+		return "", err
+	}
+	defer done()
+	return composeText(a, stage)
 }
 
 // AgentReported shows what an Agent's report changed (M3-06): its Sync Operations, then its status.

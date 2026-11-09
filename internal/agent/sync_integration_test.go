@@ -11,7 +11,9 @@ import (
 	"errors"
 	"io"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -327,4 +329,78 @@ func TestAgentReportsThroughHub(t *testing.T) {
 		h, _ := st.GetHost(ctx, "edge")
 		return h.Agent != nil && !h.Agent.LeftAt.IsZero()
 	})
+}
+
+// M4-11 against a real engine: the Diff of a Revision not deployed, through the hub. A new secret value shows as a
+// service change (the Agent decrypted the staged files), nothing is deployed or cached as a Revision, no staged file
+// is left; a broken Revision is refused; an app never deployed shows its services as new.
+func TestAgentDiffThroughHub(t *testing.T) {
+	ag, src, recipient := testAgent(t)
+	hostKey := ag.secrets.sources[0].(SOPS).HostKey
+	ctx := t.Context()
+	name := appName(t)
+	t.Cleanup(func() { ag.Remove(context.Background(), name, true) })
+	id, _ := age.GenerateX25519Identity()
+	st, err := store.Open(filepath.Join(t.TempDir(), "omegacd.db"), crypto.NewSealer(id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	hub := agents.New(st, nil)
+	hub.Blob = func(_ context.Context, hash string) ([]byte, error) { return src.fetch(hash) }
+	srv := httptest.NewServer(hub)
+	defer srv.Close()
+	invite, _ := st.CreateInvite(ctx, "edge", time.Now().Add(time.Hour))
+	key, _ := SigningKey(t.TempDir())
+	go ag.Connect(ctx, Connection{URL: srv.URL, Invite: invite, Key: key, AgeRecipient: recipient, HostKey: hostKey})
+	eventually(t, "the Agent enrolled", func() bool { h, _ := st.GetHost(ctx, "edge"); return h.Fingerprint != "" })
+	hub.Approve(ctx, "edge", domain.Fingerprint(key.Public().(ed25519.PublicKey)))
+
+	a := App{Name: name}
+	files := func(secret string) map[string]string {
+		return map[string]string{
+			"compose.yaml": strings.Replace(compose, "%s", "", 1),
+			"conf.txt":     "conf v1",
+			".sops.env":    encrypted(t, "SECRET="+secret+"\n", ".sops.env", recipient),
+		}
+	}
+	never := src.revision(name, "r0", files("first"))
+	var services []domain.ServiceDiff
+	eventually(t, "the approved Agent's diff", func() bool {
+		services, err = hub.Diff(ctx, "edge", desiredState(a, never, 0))
+		return !errors.Is(err, agents.ErrNotApproved) && !errors.Is(err, agents.ErrOffline)
+	})
+	if err != nil || len(services) == 0 || services[0].Change != "added" {
+		t.Fatalf("an app never deployed: %+v %v", services, err)
+	}
+	if err := hub.Deploy(ctx, "edge", desiredState(a, src.revision(name, "r1", files("first")), 1)); err != nil {
+		t.Fatal(err)
+	}
+	before := cached(t, ag.db, name)
+
+	services, err = hub.Diff(ctx, "edge", desiredState(a, src.revision(name, "r2", files("second")), 0))
+	if err != nil || len(services) != 1 || services[0].Change != "changed" {
+		t.Fatalf("a new secret value: %+v %v", services, err)
+	}
+	if after := cached(t, ag.db, name); !slices.Equal(after, before) {
+		t.Fatalf("the cache's Revisions changed: %v, were %v", after, before)
+	}
+	if app, _ := ag.db.GetApp(ctx, name); app.Revision != "r1" {
+		t.Fatalf("deployed: %s", app.Revision)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(ag.work.Root, stagingDir)); len(entries) != 0 {
+		t.Fatalf("staged files left: %v", entries)
+	}
+	if !strings.Contains(logs(t, ag, name), "secret=first") {
+		t.Fatal("the running app changed")
+	}
+
+	broken := map[string]string{"compose.yaml": "services: [not, a, map]\n"}
+	if _, err := hub.Diff(ctx, "edge", desiredState(a, src.revision(name, "broken", broken), 0)); err == nil {
+		t.Fatal("a broken Revision diffed")
+	}
+	missing := src.revision(name, "nofile", map[string]string{"other.yaml": "x: 1\n"})
+	if _, err := hub.Diff(ctx, "edge", desiredState(a, missing, 0)); err == nil || !strings.Contains(err.Error(), "compose file") {
+		t.Fatalf("no compose file: %v", err)
+	}
 }

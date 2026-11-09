@@ -111,7 +111,7 @@ log, on no disk of the Agent and never in plaintext on the wire (checked by capt
 by an Agent.
 
 ### M4-11 · The Diff of a new Revision on the Agent
-**Status:** todo
+**Status:** done (2026-11-09, PR #121)
 **Depends on:** M4-02
 
 Split from M4-02 (Q98). The Diff view for a Revision not yet deployed: the Control Plane sends its Desired State; the

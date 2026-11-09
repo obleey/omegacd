@@ -103,6 +103,17 @@ func (b *blobs) deliver(hash string, r blobResult) {
 	}
 }
 
+// fromDesired is the Application and Revision a Desired State describes.
+func fromDesired(ds *agentv1.DesiredState) (App, Revision) {
+	a := App{Name: ds.App, Parent: ds.Parent, WorkDir: ds.WorkDir, SelfHeal: ds.SelfHeal, Prune: ds.Prune,
+		PruneVolumes: ds.PruneVolumes}
+	r := Revision{App: ds.App, Revision: ds.Revision, Checksum: ds.Checksum, ComposeFiles: ds.ComposeFiles, Profiles: ds.Profiles}
+	for _, f := range ds.Files {
+		r.Files = append(r.Files, domain.File{Path: f.Path, Mode: fs.FileMode(f.Mode), SHA256: hex.EncodeToString(f.Sha256)})
+	}
+	return a, r
+}
+
 // adoptable refuses a first deploy over a Compose project of the same name that OmegaCD didn't start, unless the
 // Application adopts it: a hand-started stack is never taken over by accident.
 func (ag *Agent) adoptable(ctx context.Context, ds *agentv1.DesiredState) error {
@@ -202,12 +213,7 @@ func (ag *Agent) desired(ctx context.Context, conn *wire.Conn, b *blobs, q *requ
 		return
 	}
 	defer ag.deploying.Delete(ds.Op)
-	a := App{Name: ds.App, Parent: ds.Parent, WorkDir: ds.WorkDir, SelfHeal: ds.SelfHeal, Prune: ds.Prune,
-		PruneVolumes: ds.PruneVolumes}
-	r := Revision{App: ds.App, Revision: ds.Revision, Checksum: ds.Checksum, ComposeFiles: ds.ComposeFiles, Profiles: ds.Profiles}
-	for _, f := range ds.Files {
-		r.Files = append(r.Files, domain.File{Path: f.Path, Mode: fs.FileMode(f.Mode), SHA256: hex.EncodeToString(f.Sha256)})
-	}
+	a, r := fromDesired(ds)
 	err := ag.adoptable(ctx, ds)
 	if err == nil {
 		progress := func(p domain.ProgressEvent) {

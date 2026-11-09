@@ -93,6 +93,7 @@ type session struct {
 	deploys map[uint64]chan *agentv1.SyncOperationReport
 	removes map[uint64]chan *agentv1.AppRemoved // RemoveApps waiting for their answer, by envelope id
 	logs    map[uint64]chan *agentv1.LogChunk   // LogsRequests being answered, by envelope id
+	diffs   map[uint64]chan *agentv1.DiffResult // DiffRequests waiting for their answer, by envelope id
 	sent    map[uint64]*agentv1.DesiredState    // in flight, by op: a resync re-sends one the Agent doesn't have
 	files   map[string]bool
 }
@@ -144,7 +145,8 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s := &session{conn: c, at: domain.AgentConnection{Address: addr, Since: h.now()}, approved: make(chan struct{}), key: key,
-		deploys: map[uint64]chan *agentv1.SyncOperationReport{}, removes: map[uint64]chan *agentv1.AppRemoved{}, logs: map[uint64]chan *agentv1.LogChunk{}, sent: map[uint64]*agentv1.DesiredState{}, files: map[string]bool{}}
+		deploys: map[uint64]chan *agentv1.SyncOperationReport{}, removes: map[uint64]chan *agentv1.AppRemoved{}, logs: map[uint64]chan *agentv1.LogChunk{},
+		diffs: map[uint64]chan *agentv1.DiffResult{}, sent: map[uint64]*agentv1.DesiredState{}, files: map[string]bool{}}
 	if host.Approved {
 		s.once.Do(func() { close(s.approved) })
 	}
@@ -213,6 +215,14 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		case e.GetRegistryAuthRequest() != nil:
 			go h.registryAuth(ctx, host.Name, s, e.Id, e.GetRegistryAuthRequest())
+		case e.GetDiffResult() != nil:
+			s.mu.Lock()
+			wait := s.diffs[e.ReplyTo]
+			delete(s.diffs, e.ReplyTo)
+			s.mu.Unlock()
+			if wait != nil {
+				wait <- e.GetDiffResult()
+			}
 		case e.GetStatusReport() != nil:
 			h.status(ctx, host.Name, e.GetStatusReport())
 		case e.GetLogChunk() != nil:
@@ -687,6 +697,48 @@ func (h *Hub) Logs(ctx context.Context, host, app, container string, follow bool
 		case <-s.conn.Done():
 			return fmt.Errorf("host %s: %w", host, ErrDisconnected)
 		}
+	}
+}
+
+// Diff has the Host's Agent tell how ds, a Revision not deployed yet, would change what runs (M4-11): it stages,
+// decrypts and diffs it without deploying. ErrOffline and ErrNotApproved without an Agent to ask; ErrDisconnected when
+// the connection dropped meanwhile.
+func (h *Hub) Diff(ctx context.Context, host string, ds *agentv1.DesiredState) ([]domain.ServiceDiff, error) {
+	s, err := h.approved(host)
+	if err != nil {
+		return nil, err
+	}
+	e := &agentv1.Envelope{Body: &agentv1.Envelope_DiffRequest{DiffRequest: &agentv1.DiffRequest{DesiredState: ds}}}
+	answer := make(chan *agentv1.DiffResult, 1)
+	s.mu.Lock() // registered before the answer can be read; its files are this Agent's to fetch
+	for _, f := range ds.Files {
+		s.files[hex.EncodeToString(f.Sha256)] = true
+	}
+	err = s.conn.Send(ctx, e)
+	s.diffs[e.Id] = answer
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.diffs, e.Id)
+		s.mu.Unlock()
+	}()
+	if err != nil {
+		return nil, fmt.Errorf("host %s: %w", host, ErrDisconnected)
+	}
+	select {
+	case r := <-answer:
+		if r.Error != "" {
+			return nil, errors.New(r.Error)
+		}
+		var services []domain.ServiceDiff
+		if err := json.Unmarshal(r.Services, &services); err != nil {
+			return nil, fmt.Errorf("host %s: the Agent's diff: %w", host, err)
+		}
+		return services, nil
+	case <-s.conn.Done():
+		return nil, fmt.Errorf("host %s: %w", host, ErrDisconnected)
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 }
 

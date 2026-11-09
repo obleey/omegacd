@@ -31,6 +31,7 @@ import (
 type fakeStore struct {
 	domain.Store                               // unimplemented methods panic
 	statuses     map[string]domain.AgentStatus // reports of Agents (M4-02)
+	diffs        map[string]domain.AgentDiff   // Diffs Agents computed (M4-11)
 	mu           sync.Mutex
 	apps         map[string]domain.Application
 	ops          []domain.SyncOperation
@@ -199,6 +200,7 @@ type fakeSource struct {
 	blobs         map[string][]byte
 	appFiles      map[string]string // more files every compose app gets
 	renderErr     error             // Render fails with it
+	renderErrRev  string            // and only Renders of this Revision fail with it, when set
 	blobErr       error             // Blob fails with it
 }
 
@@ -213,7 +215,7 @@ func (g *fakeSource) Render(_ context.Context, spec domain.RenderSpec) (domain.R
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	r := domain.Rendered{Checksum: "tree-" + spec.Revision}
-	if g.renderErr != nil {
+	if g.renderErr != nil && (g.renderErrRev == "" || g.renderErrRev == spec.Revision) {
 		return r, g.renderErr
 	}
 	files := map[string]string{"compose.yaml": "services: {}\n"}
@@ -1645,6 +1647,16 @@ type fakeAgents struct {
 	removed []string // "app volumes keep"
 	offline bool     // Online answers !offline
 	logs    string   // what Logs writes
+	diff    []domain.ServiceDiff
+	diffErr error
+	asked   []string // the Revisions Diff was asked about
+}
+
+func (f *fakeAgents) Diff(_ context.Context, host string, ds *agentv1.DesiredState) ([]domain.ServiceDiff, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.asked = append(f.asked, ds.Revision)
+	return f.diff, f.diffErr
 }
 
 func (f *fakeAgents) Online(string) bool { f.mu.Lock(); defer f.mu.Unlock(); return !f.offline }
@@ -2245,5 +2257,87 @@ func TestAgentDetailEdges(t *testing.T) {
 	r.g.mu.Unlock()
 	if _, err := r.c.ResourceDetail(ctx, "web", "bind", "compose.yaml"); err == nil || err.Error() != "render failed" {
 		t.Fatalf("render: %v", err)
+	}
+}
+
+func (s *fakeStore) SaveAgentDiff(_ context.Context, app string, d domain.AgentDiff) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.diffs == nil {
+		s.diffs = map[string]domain.AgentDiff{}
+	}
+	s.diffs[app] = d
+	return nil
+}
+
+func (s *fakeStore) AgentDiff(_ context.Context, app string) (domain.AgentDiff, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d, ok := s.diffs[app]
+	if !ok {
+		return d, domain.ErrNotFound
+	}
+	return d, nil
+}
+
+// M4-11: the Diff of a Revision not deployed comes from the Agent; offline, the last one it computed, saying when and
+// for which Revision; never a Diff from nothing.
+func TestAgentDiff(t *testing.T) {
+	r, ag := agentRig(t)
+	ctx := t.Context()
+	a := app("web")
+	a.Host = "edge"
+	r.c.CreateApp(ctx, a)
+	r.waitIdle(t, "web")
+	r.c.Sync(ctx, "web", domain.SyncRequest{}) // deployed: aaaaaaaa
+	r.waitIdle(t, "web")
+	r.g.set("bbbbbbbb")
+	ag.diff = []domain.ServiceDiff{{Service: "web", Change: "changed", Fields: []string{"image"}}}
+
+	dv, err := r.c.Diff(ctx, "web")
+	if err != nil || len(dv.Services) != 1 || dv.FromSHA != "aaaaaaaa" || dv.ToSHA != "bbbbbbbb" ||
+		!strings.Contains(dv.Desired, "services") || !strings.Contains(dv.Live, "services") {
+		t.Fatalf("online: %+v %v", dv, err)
+	}
+	if slices.Contains(ag.asked, "") || ag.asked[len(ag.asked)-1] != "bbbbbbbb" {
+		t.Fatalf("asked about %v", ag.asked)
+	}
+	if d, _ := r.st.AgentDiff(ctx, "web"); d.Revision != "bbbbbbbb" || len(d.Services) != 1 {
+		t.Fatalf("kept %+v", d)
+	}
+
+	ag.mu.Lock()
+	ag.diffErr = fmt.Errorf("host edge: %w", agents.ErrOffline)
+	ag.mu.Unlock()
+	if dv, err := r.c.Diff(ctx, "web"); err != nil || len(dv.Services) != 1 ||
+		!strings.Contains(strings.Join(dv.Warnings, " "), "Host edge offline: the services' changes as its Agent computed them at") {
+		t.Fatalf("offline: %+v %v", dv, err)
+	}
+	r.g.set("cccccccc")
+	if dv, err := r.c.Diff(ctx, "web"); err != nil || !strings.Contains(strings.Join(dv.Warnings, " "), "for Revision bbbbbbb (not the target)") {
+		t.Fatalf("offline, another target: %+v %v", dv.Warnings, err)
+	}
+
+	b := app("db")
+	b.Host = "edge"
+	r.c.CreateApp(ctx, b)
+	if _, err := r.c.Diff(ctx, "db"); err == nil || !strings.Contains(err.Error(), "never computed a Diff") {
+		t.Fatalf("offline without any: %v", err)
+	}
+	ag.mu.Lock()
+	ag.diffErr = errors.New("compose file not found")
+	ag.mu.Unlock()
+	if _, err := r.c.Diff(ctx, "web"); err == nil || err.Error() != "compose file not found" {
+		t.Fatalf("the Agent's error: %v", err)
+	}
+
+	ag.mu.Lock()
+	ag.diffErr = nil
+	ag.mu.Unlock()
+	r.g.mu.Lock()
+	r.g.renderErr, r.g.renderErrRev = errors.New("gone from Git"), "aaaaaaaa"
+	r.g.mu.Unlock()
+	if dv, err := r.c.Diff(ctx, "web"); err != nil || dv.Live != "" || len(dv.Services) != 1 {
+		t.Fatalf("the deployed Revision unrendered: %+v %v", dv, err)
 	}
 }

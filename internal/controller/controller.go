@@ -66,6 +66,8 @@ type Agents interface {
 	Logs(ctx context.Context, host, app, container string, follow bool, tail int, w io.Writer) error
 	// Online reports whether the Host's Agent is connected now
 	Online(host string) bool
+	// Diff has the Agent tell how a Revision not deployed would change what runs (M4-11); errors like Deploy's
+	Diff(ctx context.Context, host string, ds *agentv1.DesiredState) ([]domain.ServiceDiff, error)
 }
 
 type appState struct {
@@ -1133,7 +1135,7 @@ func (c *Controller) Diff(ctx context.Context, name string) (domain.DiffView, er
 	}
 
 	var keys []domain.HostKey
-	if a.Kind != domain.KindApps {
+	if a.Kind != domain.KindApps && !c.agentHost(ctx, a.Host) { // an Agent decrypts with its own key
 		if keys, err = c.syncKeys(ctx, a); err != nil {
 			return domain.DiffView{}, err
 		}
@@ -1148,6 +1150,9 @@ func (c *Controller) Diff(ctx context.Context, name string) (domain.DiffView, er
 	if a.Kind == domain.KindApps {
 		dv.Services, err = c.childDiff(ctx, a.Name, r.Apps)
 		return dv, err
+	}
+	if c.agentHost(ctx, a.Host) {
+		return c.agentDiff(ctx, a, dv, r)
 	}
 	stage, done, err := c.stage(ctx, a, r)
 	if err != nil {

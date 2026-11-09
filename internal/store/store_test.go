@@ -633,3 +633,24 @@ func TestAgentStatus(t *testing.T) {
 	_, err = s.AgentStatus(ctx, "web")
 	wantErr(t, err, domain.ErrNotFound)
 }
+
+// M4-11: the last Diff an Application's Agent computed, gone with the app.
+func TestAgentDiff(t *testing.T) {
+	s, _ := open(t)
+	_, err := s.AgentDiff(ctx, "web")
+	wantErr(t, err, domain.ErrNotFound)
+	wantErr(t, s.SaveAgentDiff(ctx, "web", domain.AgentDiff{Revision: "r1"}), domain.ErrNotFound) // no such app
+	must(t, s.CreateApp(ctx, domain.Application{Name: "web", Host: "edge"}))
+	at := time.Date(2026, 11, 9, 16, 0, 0, 0, time.UTC)
+	d := domain.AgentDiff{Revision: "r2", Services: []domain.ServiceDiff{{Service: "web", Change: "changed"}}, At: at}
+	must(t, s.SaveAgentDiff(ctx, "web", domain.AgentDiff{Revision: "r1"}))
+	must(t, s.SaveAgentDiff(ctx, "web", d)) // the latest wins
+	got, err := s.AgentDiff(ctx, "web")
+	must(t, err)
+	if !reflect.DeepEqual(got, d) {
+		t.Fatalf("got %+v", got)
+	}
+	must(t, s.DeleteApp(ctx, "web"))
+	_, err = s.AgentDiff(ctx, "web")
+	wantErr(t, err, domain.ErrNotFound)
+}

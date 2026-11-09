@@ -829,13 +829,16 @@ func TestRemoveOnAClosingConnection(t *testing.T) {
 	close(approved)
 	h.mu.Lock()
 	h.conns["web"] = &session{conn: c, approved: approved, removes: map[uint64]chan *agentv1.AppRemoved{},
-		logs: map[uint64]chan *agentv1.LogChunk{}}
+		logs: map[uint64]chan *agentv1.LogChunk{}, diffs: map[uint64]chan *agentv1.DiffResult{}, files: map[string]bool{}}
 	h.mu.Unlock()
 	if err := h.Remove(t.Context(), "web", "app", false, false); !errors.Is(err, ErrDisconnected) {
 		t.Fatalf("Remove = %v", err)
 	}
 	if err := h.Logs(t.Context(), "web", "app", "", false, 0, io.Discard); !errors.Is(err, ErrDisconnected) {
 		t.Fatalf("Logs = %v", err)
+	}
+	if _, err := h.Diff(t.Context(), "web", &agentv1.DesiredState{}); !errors.Is(err, ErrDisconnected) {
+		t.Fatalf("Diff = %v", err)
 	}
 }
 
@@ -958,6 +961,64 @@ func TestLogs(t *testing.T) {
 	}
 
 	go func() { done <- h.Logs(ctx, "web", "app", "", true, 0, &out) }()
+	next(t, got)
+	c.Close()
+	if err := <-done; !errors.Is(err, ErrDisconnected) {
+		t.Fatalf("dropped: %v", err)
+	}
+}
+
+// M4-11: Diff asks the Agent with the Desired State (its files then fetchable) and returns its answer, its error, or
+// why there is none.
+func TestDiff(t *testing.T) {
+	h, st, url := newHub(t)
+	ctx := t.Context()
+	ds := &agentv1.DesiredState{App: "app", Revision: "r2", Files: []*agentv1.File{{Path: "compose.yaml", Sha256: bytes.Repeat([]byte{7}, 32)}}}
+	if _, err := h.Diff(ctx, "web", ds); !errors.Is(err, ErrOffline) {
+		t.Fatalf("offline: %v", err)
+	}
+	h.Blob = func(context.Context, string) ([]byte, error) { return []byte("services: {}\n"), nil }
+	key := approvedAgent(t, h, st, url, "web")
+	c, _ := agent(t, url, key, "", nil)
+	got := reading(c)
+	answer := func(res *agentv1.DiffResult) ([]domain.ServiceDiff, error) {
+		done := make(chan struct{})
+		var out []domain.ServiceDiff
+		var err error
+		go func() { out, err = h.Diff(ctx, "web", ds); close(done) }()
+		e := next(t, got)
+		if e.GetDiffRequest().GetDesiredState().GetRevision() != "r2" {
+			t.Fatalf("want the DiffRequest, got %v", e)
+		}
+		// its files are this Agent's to fetch now
+		req := &agentv1.Envelope{Body: &agentv1.Envelope_BlobRequest{BlobRequest: &agentv1.BlobRequest{Sha256: [][]byte{ds.Files[0].Sha256}}}}
+		c.Send(ctx, req)
+		if b := next(t, got); b.GetBlobChunk() == nil {
+			t.Fatalf("its file wasn't served: %v", b)
+		}
+		c.Send(ctx, &agentv1.Envelope{ReplyTo: e.Id, Body: &agentv1.Envelope_DiffResult{DiffResult: res}})
+		<-done
+		return out, err
+	}
+	if out, err := answer(&agentv1.DiffResult{Services: []byte(`[{"service":"web","change":"changed"}]`)}); err != nil || len(out) != 1 || out[0].Service != "web" {
+		t.Fatalf("answer %+v %v", out, err)
+	}
+	if _, err := answer(&agentv1.DiffResult{Error: "compose file not found"}); err == nil || err.Error() != "compose file not found" {
+		t.Fatalf("the Agent's error: %v", err)
+	}
+	if _, err := answer(&agentv1.DiffResult{Services: []byte("{not json")}); err == nil || !strings.Contains(err.Error(), "the Agent's diff") {
+		t.Fatalf("a broken answer: %v", err)
+	}
+	c.Send(ctx, &agentv1.Envelope{ReplyTo: 999, Body: &agentv1.Envelope_DiffResult{DiffResult: &agentv1.DiffResult{}}}) // asked by no one: dropped
+
+	dctx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+	defer cancel()
+	if _, err := h.Diff(dctx, "web", ds); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("no answer: %v", err)
+	}
+	next(t, got)
+	done := make(chan error, 1)
+	go func() { _, err := h.Diff(ctx, "web", ds); done <- err }()
 	next(t, got)
 	c.Close()
 	if err := <-done; !errors.Is(err, ErrDisconnected) {

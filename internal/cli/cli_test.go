@@ -614,3 +614,14 @@ func TestDeleteForgetConfirmation(t *testing.T) {
 		t.Fatalf("an app the server doesn't have: %+v", r)
 	}
 }
+
+// app diff says what the Diff's warnings say, e.g. that an offline Host's Agent computed it earlier.
+func TestDiffWarnings(t *testing.T) {
+	_, srv := newAPI(t, map[string]any{"GET /api/apps/web/diff": domain.DiffView{
+		Services: []domain.ServiceDiff{{Service: "web", Change: "changed"}},
+		Warnings: []string{"Host edge offline: the services' changes as its Agent computed them at 2026-11-09 16:00:00"}}})
+	r := run(t, srv, nil, "", "app", "diff", "web")
+	if r.code != 1 || !strings.Contains(r.stderr, "warning: Host edge offline") || !strings.Contains(r.stdout, "web") {
+		t.Fatalf("%+v", r)
+	}
+}
