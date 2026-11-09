@@ -4,6 +4,7 @@ package main
 import (
 	"cmp"
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -23,6 +24,7 @@ import (
 	"google.golang.org/grpc/credentials"
 
 	"github.com/obleey/omegacd/internal/agent"
+	"github.com/obleey/omegacd/internal/agents"
 	"github.com/obleey/omegacd/internal/api"
 	"github.com/obleey/omegacd/internal/cli"
 	"github.com/obleey/omegacd/internal/controller"
@@ -159,6 +161,7 @@ func run(log *slog.Logger) error {
 		Handler: api.New(api.Config{
 			Controller:     ctl,
 			Store:          st,
+			Agents:         agents.New(st, log.With("component", "agents")),
 			Source:         src,
 			WebhookSecret:  os.Getenv("OMEGACD_WEBHOOK_SECRET"),
 			WebhookParse:   source.ParseWebhook,
@@ -285,6 +288,10 @@ func runAgent(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	signingKey, err := agent.SigningKey(cfg.StateDir)
+	if err != nil {
+		return err
+	}
 	secrets := agent.NewSecrets(cfg.SecretGroup, agent.SOPS{HostKey: hostKey})
 	work := agent.NewWorkDir(cfg.WorkDir, db, cache, log.With("component", "agent"))
 	work.Allow = cfg.WorkDirAllow
@@ -331,9 +338,15 @@ func runAgent(log *slog.Logger) error {
 	}
 	defer eng.Close()
 	log.Info("omegacd agent", "state", cfg.StateDir, "workdir", cfg.WorkDir, "controlPlane", cfg.ControlPlane,
-		"cacheRevisions", cfg.CacheRevisions, "apps", len(apps), "hostKey", hostKey.Recipient().String())
+		"cacheRevisions", cfg.CacheRevisions, "apps", len(apps), "hostKey", hostKey.Recipient().String(),
+		"fingerprint", domain.Fingerprint(signingKey.Public().(ed25519.PublicKey)))
 	log.Info("omegacd agent running")
-	return agent.New(db, cache, work, secrets, eng, log.With("component", "agent")).Run(ctx)
+	ag := agent.New(db, cache, work, secrets, eng, log.With("component", "agent"))
+	if cfg.ControlPlane != "" {
+		go ag.Connect(ctx, agent.Connection{URL: cfg.ControlPlane, Invite: cfg.Invite, Key: signingKey,
+			AgeRecipient: hostKey.Recipient().String()})
+	}
+	return ag.Run(ctx)
 }
 
 // localHostDisabled reads OMEGACD_LOCAL_HOST: "false" where no Docker engine runs next to OmegaCD (Kubernetes).

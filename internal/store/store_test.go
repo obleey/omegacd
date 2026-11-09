@@ -377,3 +377,74 @@ func TestHostKeys(t *testing.T) {
 		t.Fatalf("%d keys left after deleting the Host", left)
 	}
 }
+
+func TestEnrollment(t *testing.T) {
+	s, _ := open(t)
+	now := time.Now()
+	invite, err := s.CreateInvite(ctx, "web", now.Add(time.Hour))
+	must(t, err)
+	var stored string
+	must(t, s.db.QueryRow(`SELECT hash FROM invites WHERE host = 'web'`).Scan(&stored))
+	if !strings.HasPrefix(invite, "omegacd-invite-") || stored == "" || strings.Contains(invite, stored) || stored == invite {
+		t.Fatalf("invite %q stored as %q: want a hash", invite, stored)
+	}
+	h, err := s.GetHost(ctx, "web")
+	must(t, err)
+	if h.URL != "" || h.Fingerprint != "" || h.Approved {
+		t.Fatalf("an invited Host: %+v", h)
+	}
+
+	again, err := s.CreateInvite(ctx, "web", now.Add(time.Hour)) // a new invite replaces the last
+	must(t, err)
+	_, err = s.Enroll(ctx, invite, []byte("key-1"), "age1web", now)
+	wantErr(t, err, domain.ErrInvalid)
+
+	h, err = s.Enroll(ctx, again, []byte("key-1"), "age1web", now)
+	must(t, err)
+	if h.Name != "web" || h.Fingerprint != domain.Fingerprint([]byte("key-1")) || h.AgeRecipient != "age1web" || h.Approved {
+		t.Fatalf("enrolled: %+v", h)
+	}
+	_, err = s.Enroll(ctx, again, []byte("key-2"), "age1other", now) // used up
+	wantErr(t, err, domain.ErrInvalid)
+	got, err := s.HostBySigningKey(ctx, []byte("key-1"))
+	must(t, err)
+	if got.Name != "web" {
+		t.Fatalf("by key: %+v", got)
+	}
+	_, err = s.HostBySigningKey(ctx, []byte("key-2"))
+	wantErr(t, err, domain.ErrNotFound)
+	_, err = s.CreateInvite(ctx, "web", now.Add(time.Hour)) // re-enrolling means revoking first (M3-03)
+	wantErr(t, err, domain.ErrAlreadyExists)
+
+	wantErr(t, s.ApproveHost(ctx, "web", domain.Fingerprint([]byte("key-2"))), domain.ErrInvalid)
+	must(t, s.ApproveHost(ctx, "web", h.Fingerprint))
+	if h, _ = s.GetHost(ctx, "web"); !h.Approved {
+		t.Fatalf("not approved: %+v", h)
+	}
+	// SaveHost, the push Hosts' path, keeps what enrollment set
+	must(t, s.SaveHost(ctx, domain.Host{Name: "web", WorkDir: "/srv"}))
+	if h, _ = s.GetHost(ctx, "web"); !h.Approved || h.AgeRecipient != "age1web" {
+		t.Fatalf("after SaveHost: %+v", h)
+	}
+
+	expired, err := s.CreateInvite(ctx, "db", now.Add(time.Hour))
+	must(t, err)
+	_, err = s.Enroll(ctx, expired, []byte("key-3"), "age1db", now.Add(time.Hour))
+	wantErr(t, err, domain.ErrInvalid)
+	_, err = s.Enroll(ctx, expired, []byte("key-3"), "age1db", now) // and used up by the try
+	wantErr(t, err, domain.ErrInvalid)
+	wantErr(t, s.ApproveHost(ctx, "db", "SHA256:x"), domain.ErrInvalid) // no key to approve
+
+	must(t, s.SaveHost(ctx, domain.Host{Name: "prod", URL: "ssh://deploy@prod"}))
+	_, err = s.CreateInvite(ctx, "prod", now.Add(time.Hour))
+	wantErr(t, err, domain.ErrInvalid)
+
+	_, err = s.CreateInvite(ctx, "db", now.Add(time.Hour))
+	must(t, err)
+	must(t, s.DeleteHost(ctx, "db")) // its invite goes with it
+	var n int
+	must(t, s.db.QueryRow(`SELECT count(*) FROM invites`).Scan(&n))
+	if n != 0 {
+		t.Fatalf("%d invites left", n)
+	}
+}

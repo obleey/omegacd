@@ -1574,3 +1574,35 @@ func TestAutoTriggerSaysWhy(t *testing.T) {
 		}
 	}
 }
+
+func (s *fakeStore) CreateInvite(_ context.Context, host string, expires time.Time) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.hosts[host] = domain.Host{Name: host}
+	return "omegacd-invite-" + host, nil
+}
+
+// An admin adds a Host by name for its Agent: the name is checked like any Host's, the invite lasts an hour (Q73),
+// and the Host, not yet reporting through its Agent, isn't dialed for a status.
+func TestInviteHost(t *testing.T) {
+	r := newRig(t)
+	ctx := t.Context()
+	for _, name := range []string{"Web", "", domain.LocalHost} {
+		if _, _, err := r.c.InviteHost(ctx, name); !errors.Is(err, domain.ErrInvalid) {
+			t.Fatalf("InviteHost(%q): %v", name, err)
+		}
+	}
+	invite, expires, err := r.c.InviteHost(ctx, " web ")
+	if err != nil || invite != "omegacd-invite-web" || time.Until(expires) < 59*time.Minute || time.Until(expires) > time.Hour {
+		t.Fatalf("%q %v %v", invite, expires, err)
+	}
+	hosts, err := r.c.ListHosts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range hosts {
+		if h.Name == "web" && (h.Status != domain.HostStatus{Name: "web"}) {
+			t.Fatalf("an Agent's Host got an engine status: %+v", h.Status)
+		}
+	}
+}

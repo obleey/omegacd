@@ -5,6 +5,8 @@ package domain
 import (
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -175,6 +177,19 @@ type Host struct {
 	HasSSHKey     bool      `json:"hasSSHKey"`
 	HasTLS        bool      `json:"hasTLS"`
 	CreatedAt     time.Time `json:"createdAt"`
+	// an enrolled Agent's (Q22): its ed25519 public key, empty until it enrolls; its age Host Key's recipient; and
+	// whether an admin approved the key, comparing Fingerprint (Q28, Q74)
+	SigningKey   []byte `json:"-"`
+	Fingerprint  string `json:"fingerprint,omitempty"`
+	AgeRecipient string `json:"ageRecipient,omitempty"`
+	Approved     bool   `json:"approved"`
+}
+
+// Fingerprint is how an admin compares an Agent's signing key with what the Agent prints: "SHA256:" and the unpadded
+// base64 of the key's sha256, as ssh-keygen -l shows keys.
+func Fingerprint(publicKey []byte) string {
+	sum := sha256.Sum256(publicKey)
+	return "SHA256:" + base64.RawStdEncoding.EncodeToString(sum[:])
 }
 
 // HostStatus is the result of contacting a Host's Docker engine.
@@ -363,6 +378,16 @@ type Store interface {
 	SaveHost(ctx context.Context, h Host) error        // create or update by Name
 	DeleteHost(ctx context.Context, name string) error // also deletes its Host Keys
 
+	// Enrollment (Q22, Q73): CreateInvite adds the Host by name if it's new and returns a single-use invite for it,
+	// valid until expires; a new one replaces the Host's previous. ErrAlreadyExists once an Agent enrolled for it.
+	CreateInvite(ctx context.Context, host string, expires time.Time) (invite string, err error)
+	// Enroll uses up invite (ErrInvalid if unknown, used or expired at now): its Host gets the Agent's keys, waiting
+	// for approval.
+	Enroll(ctx context.Context, invite string, signingKey []byte, ageRecipient string, now time.Time) (Host, error)
+	HostBySigningKey(ctx context.Context, key []byte) (Host, error) // ErrNotFound for a key no Host has
+	// ApproveHost approves the Host's key if fingerprint is the key's (ErrInvalid otherwise, or without a key).
+	ApproveHost(ctx context.Context, host, fingerprint string) error
+
 	// Host Keys: PrivateKey is sealed at rest. ListHostKeys returns the current key first, then the previous ones, newest first.
 	ListHostKeys(ctx context.Context, host string) ([]HostKey, error)
 	// AddHostKey stores k as the Host's current key; the old current key becomes previous. ErrAlreadyExists if the Host has it already.
@@ -534,6 +559,9 @@ type Controller interface {
 	// DeleteHost refuses (ErrInvalid) while Applications use the Host.
 	DeleteHost(ctx context.Context, name string) error
 	TestHost(ctx context.Context, name string) (HostStatus, error)
+	// InviteHost adds a Host reached through an Agent, by name, and returns a single-use invite for it, valid an hour
+	// (Q22, Q73); for such a Host no Agent has enrolled for yet, a new invite that replaces the last.
+	InviteHost(ctx context.Context, name string) (invite string, expires time.Time, err error)
 	// HostKeys lists a Host's keys without private keys (LocalHost: just the Master Key).
 	HostKeys(ctx context.Context, host string) ([]HostKey, error)
 	// GenerateHostKey and ImportHostKey (an AGE-SECRET-KEY-1... string) add a new current key; the old one becomes previous.

@@ -529,6 +529,8 @@ Then review with `git diff`, commit and push, add the server under **Settings �
 ```sh
 omegacd host list                          # Hosts with status, Docker version and Host Key
 omegacd host test vps                      # can OmegaCD reach its Docker engine?
+omegacd host add web                       # v0.2, in development: a Host with an Agent; prints the command with its invite
+omegacd host approve web SHA256:…          # after comparing the fingerprint the Agent printed with host list's
 omegacd host key show vps                  # the public key, for .sops.yaml
 omegacd host key generate vps              # a new Host Key; the old one stays as "previous" until removed
 omegacd host key import vps --file key.txt # use a key made elsewhere (- reads stdin)
@@ -552,6 +554,7 @@ omegacd keygen --out age.key               # a new age key, e.g. the Master Key 
 | `app delete NAME [--cascade=false \| --volumes] [--yes]` | asks first on a terminal; `--cascade=false` keeps the containers; `--volumes` also deletes the volumes and their data |
 | `import [STACK]... [--ssh user@host --host NAME] [--recipient age1…] [--apps-dir apps] [--definitions platform/apps.yaml] [--repo-url URL] [--dry-run] [--force]` | run in your repository's checkout — see [Moving an existing server](#moving-an-existing-server-to-omegacd) |
 | `host list`, `host test NAME` | |
+| `host add NAME`, `host approve NAME FINGERPRINT` | v0.2, in development: enrolls a Host's Agent with a single-use invite (valid an hour), approved by its key's fingerprint |
 | `host key show HOST`, `host key generate HOST`, `host key import HOST --file PATH`, `host key remove HOST RECIPIENT` | private keys are read from a file or stdin, never from the command line, and never shown |
 | `keygen [--out FILE]` | a new age key, like `age-keygen`; works offline, never overwrites a file |
 

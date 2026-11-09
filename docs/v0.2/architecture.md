@@ -148,7 +148,12 @@ only the Control Plane, never Agents or users. A reverse proxy in between must p
    single-use, short-lived invite (stored as a hash).
 2. The Agent starts with the invite, generates an **ed25519 signing key** and its **age Host Key**, and registers
    both public keys; the invite is used up.
-3. The UI shows the key fingerprint (also printed by the Agent); an admin compares and **approves**.
+   On the wire (M3-02): the Control Plane sends a challenge; the Agent answers with Hello, `Enroll` (invite and age
+   recipient, while it has an invite) and its signature over `omegacd-agent-v1 challenge\n` + nonce. A known key needs
+   no invite. A refused Agent learns only that the invite is unknown, used or expired, and retries with backoff.
+3. The UI shows the key fingerprint (also printed by the Agent; `SHA256:` + base64, as `ssh-keygen -l`); an admin
+   compares and **approves**, sending the fingerprint compared: approval of a key that changed meanwhile fails. The
+   waiting Agent stays connected and is sent nothing but `EnrollmentStatus` until then, and hears its approval at once.
 4. Every connection authenticates by **signing a fresh challenge**: no bearer tokens to store or rotate. Works
    behind TLS-terminating proxies.
 5. A second live connection with the same key **locks** the Host until an admin acts. Optional IP allowlist per

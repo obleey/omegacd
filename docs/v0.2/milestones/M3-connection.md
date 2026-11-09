@@ -20,7 +20,7 @@ as reverse proxies.
 never cutting a quiet connection; a test runs through a real reverse proxy container.
 
 ### M3-02 · Enrollment with invites and approval
-**Status:** todo
+**Status:** done (2026-11-09, PR #103)
 **Depends on:** M3-01
 
 An admin adds a Host by **name** → single-use invite, valid one hour, stored as a hash (Q22, Q43, Q73). The Agent starts with

@@ -24,8 +24,10 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/obleey/omegacd/internal/agents"
 	"github.com/obleey/omegacd/internal/domain"
 	"github.com/obleey/omegacd/internal/logging"
+	"github.com/obleey/omegacd/internal/wire"
 )
 
 type fakeStore struct {
@@ -303,7 +305,7 @@ func newEnv(t *testing.T, mustChange bool) *env {
 	logger, _ := logging.New(&log, "debug", "text")
 	h := New(Config{
 		Log:        logger,
-		Controller: ctrl, Store: store, Source: src, WebhookSecret: "s3",
+		Controller: ctrl, Store: store, Source: src, WebhookSecret: "s3", Agents: agents.New(store, logger),
 		WebhookParse: func(provider string, h http.Header, body []byte, secret string) ([]string, error) {
 			if h.Get("X-Sig") != secret {
 				return nil, errors.New("bad signature")
@@ -702,6 +704,47 @@ func TestHostsAPI(t *testing.T) {
 		t.Fatal(b)
 	}
 	e.expect("DELETE", "/api/settings/hosts/prod", "", 204)
+}
+
+func (c *fakeController) InviteHost(_ context.Context, name string) (string, time.Time, error) {
+	if name == domain.LocalHost {
+		return "", time.Time{}, fmt.Errorf("%w: the built-in Host", domain.ErrInvalid)
+	}
+	return "omegacd-invite-abc", time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC), nil
+}
+
+func (s *fakeStore) ApproveHost(_ context.Context, host, fingerprint string) error {
+	if fingerprint != "SHA256:right" {
+		return fmt.Errorf("%w: Host %s's Agent has another key", domain.ErrInvalid, host)
+	}
+	return nil
+}
+
+func TestEnrollmentAPI(t *testing.T) {
+	e := newEnv(t, false)
+	e.expect("POST", "/api/settings/hosts/web/invite", "", 401) // an admin's
+	e.login()
+	if b := e.expect("POST", "/api/settings/hosts/web/invite", "", 201); !strings.Contains(b, `"invite":"omegacd-invite-abc"`) ||
+		!strings.Contains(b, `"expiresAt":"2026-11-09T12:00:00Z"`) {
+		t.Fatal(b)
+	}
+	e.expect("POST", "/api/settings/hosts/local/invite", "", 400)
+	e.expect("POST", "/api/settings/hosts/web/approve", `{"fingerprint":"SHA256:wrong"}`, 400)
+	e.expect("POST", "/api/settings/hosts/web/approve", `{"fingerprint":"SHA256:right"}`, 204)
+}
+
+// The Agents' endpoint needs no session (an Agent signs a challenge instead) and upgrades through the API's
+// middleware: the Agent gets its challenge.
+func TestAgentsConnectIsPublic(t *testing.T) {
+	e := newEnv(t, false)
+	c, err := wire.Dial(t.Context(), "ws"+strings.TrimPrefix(e.srv.URL, "http")+"/api/agents/v1/connect", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if m, err := c.Recv(t.Context()); err != nil || m.GetChallenge() == nil {
+		t.Fatalf("want a challenge, got %v, %v", m, err)
+	}
 }
 
 func TestVersionIsPublic(t *testing.T) {

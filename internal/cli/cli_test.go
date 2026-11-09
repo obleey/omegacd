@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -524,5 +525,36 @@ func TestImportRecipientFlagAndErrors(t *testing.T) {
 	t.Chdir(t.TempDir()) // not a Git checkout
 	if r := runWith(t, nil, nil, withHost, "import", "--recipient", id.Recipient().String()); r.code == 0 || !strings.Contains(r.stderr, "inside your Git repository") {
 		t.Errorf("outside a repository: %+v", r)
+	}
+}
+
+func TestHostEnrollment(t *testing.T) {
+	f, srv := newAPI(t, map[string]any{
+		"POST /api/settings/hosts/web/invite":  map[string]any{"invite": "omegacd-invite-abc", "expiresAt": time.Now().Add(time.Hour)},
+		"POST /api/settings/hosts/web/approve": nil,
+		"GET /api/settings/hosts": []domain.HostView{
+			{Host: domain.Host{Name: "local"}},
+			{Host: domain.Host{Name: "web", Fingerprint: "SHA256:abc", AgeRecipient: "age1web"}},
+			{Host: domain.Host{Name: "db"}},
+			{Host: domain.Host{Name: "cache", Fingerprint: "SHA256:def", Approved: true}},
+		},
+	})
+	r := run(t, srv, nil, "", "host", "add", "web")
+	if r.code != 0 || !strings.Contains(r.stdout, "OMEGACD_AGENT_CONTROL_PLANE="+srv.URL+" OMEGACD_AGENT_INVITE=omegacd-invite-abc omegacd agent") ||
+		!strings.Contains(r.stdout, "omegacd host approve web") {
+		t.Fatalf("add: %+v", r)
+	}
+	r = run(t, srv, nil, "", "host", "list")
+	for _, want := range []string{"to approve SHA256:abc", "age1web", "approved SHA256:def", "invited", "(docker socket)"} {
+		if !strings.Contains(r.stdout, want) {
+			t.Fatalf("list lacks %q:\n%s", want, r.stdout)
+		}
+	}
+	if r := run(t, srv, nil, "", "host", "approve", "web", "SHA256:abc"); r.code != 0 || !strings.Contains(r.stdout, "Host web approved") ||
+		!slices.Contains(f.bodies, `{"fingerprint":"SHA256:abc"}`) {
+		t.Fatalf("approve: %+v %v", r, f.bodies)
+	}
+	if r := run(t, srv, nil, "", "host", "approve", "web"); r.code != 2 {
+		t.Fatalf("approve without the fingerprint: %+v", r)
 	}
 }
