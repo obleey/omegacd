@@ -106,13 +106,13 @@ log, on no disk of the Agent and never in plaintext on the wire (checked by capt
 by an Agent.
 
 ### M4-09 · Coverage: measured combined, checked in CI
-**Status:** todo
+**Status:** done (2026-11-09, PR #118)
 **Depends on:** M4-08
 
 Q96: `make cover` builds the binary with `go build -cover`, runs unit (`-coverprofile`), integration and e2e (the
 binary's `GOCOVERDIR`; the e2e scripts pass it to every process they start) and merges them (`go tool covdata`),
 generated protobuf code excluded, into one total, a per-package table and the list of uncovered lines.
-`test/coverage-exceptions.txt` lists lines no test can reach, each with its reason. CI runs it on every push and
+Lines no test can reach are marked in the code (`coverage: unreachable, <reason>`). CI runs it on every push and
 fails when a changed line is uncovered and not an exception, or the total drops (until M4-10 makes it 100%).
 TESTING.md documents it.
 
@@ -123,8 +123,8 @@ line uncovered and unlisted, or lowers the total (tested with a throwaway change
 **Status:** todo
 **Depends on:** M4-09, M4-05 (Q97: v0.1-only code is deleted, not tested)
 
-Q96: every package's reachable lines covered, unit + integration + e2e combined; what no test can reach goes into
-`test/coverage-exceptions.txt` with its reason. Code M4-05 deletes (push, SSH/TLS Hosts, the local engine path) is left
+Q96: every package's reachable lines covered, unit + integration + e2e combined; what no test can reach is marked in the code with
+its reason. Code M4-05 deletes (push, SSH/TLS Hosts, the local engine path) is left
 out: it is deleted first, never tested (Q97). Then CI requires 100%: any uncovered line not in the exceptions fails.
 
 **Done when:** `make cover` shows 100% of the lines not listed as exceptions, and CI enforces it.

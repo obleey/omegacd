@@ -813,3 +813,22 @@ func TestOutboxRemovalOfAGoneHost(t *testing.T) {
 	case <-time.After(300 * time.Millisecond):
 	}
 }
+
+// Remove on a connection that closed but is still registered (the hub hears the close a moment later): the send
+// fails, and the delete reads as disconnected, which the controller retries on resync.
+func TestRemoveOnAClosingConnection(t *testing.T) {
+	h, _, url := newHub(t)
+	c, err := wire.Dial(t.Context(), url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+	approved := make(chan struct{})
+	close(approved)
+	h.mu.Lock()
+	h.conns["web"] = &session{conn: c, approved: approved, removes: map[uint64]chan *agentv1.AppRemoved{}}
+	h.mu.Unlock()
+	if err := h.Remove(t.Context(), "web", "app", false, false); !errors.Is(err, ErrDisconnected) {
+		t.Fatalf("Remove = %v", err)
+	}
+}

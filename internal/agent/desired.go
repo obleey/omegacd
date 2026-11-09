@@ -252,7 +252,7 @@ func (ag *Agent) removeApp(ctx context.Context, conn *wire.Conn, id uint64, r *a
 		ag.log.InfoContext(ctx, "application removed", "volumes", r.Volumes, "keepContainers", r.KeepContainers)
 	}
 	if err := conn.Send(ctx, &agentv1.Envelope{ReplyTo: id, Body: &agentv1.Envelope_AppRemoved{AppRemoved: done}}); err != nil && done.Error == "" {
-		if err := ag.recordEntry(context.WithoutCancel(ctx), &agentv1.OutboxEntry{Event: &agentv1.OutboxEntry_AppRemoved{AppRemoved: done}}); err != nil {
+		if err := ag.recordEntry(context.WithoutCancel(ctx), &agentv1.OutboxEntry{Event: &agentv1.OutboxEntry_AppRemoved{AppRemoved: done}}); err != nil { // coverage: unreachable, the same database just removed the app; failing the very next write needs a broken disk
 			ag.log.ErrorContext(ctx, "record the removal", "err", err)
 		}
 	}

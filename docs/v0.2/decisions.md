@@ -256,8 +256,9 @@ is declared. Their details (syntax, UI, messages) are decided when each is built
 - **Q96** Coverage is **100% of all reachable code, existing code included**, measured combined: unit, integration
   and e2e (the binary built with `go build -cover`, its coverage collected while the e2e scripts drive it), generated
   protobuf code excluded. A line no test can reach (an error that can't happen, such as encoding a fixed struct into
-  memory or a healthy SQLite transaction failing) is listed with its reason in `test/coverage-exceptions.txt`, reviewed
-  like code; any other uncovered line fails CI. No fault-injection hooks are added to production code just to reach
+  memory or a healthy SQLite transaction failing) is marked in the code with a comment `coverage: unreachable, <reason>`
+  on its block's first line (M4-09: a marker moves with the code and is reviewed with it, where a list of line numbers
+  would go stale); any other uncovered line fails CI. No fault-injection hooks are added to production code just to reach
   such lines. M4-09 builds the measurement and the CI check (at first: a PR's changed lines, and no drop in total);
   M4-10 brings the existing code to 100%, after which CI checks all of it. (Refined the same day: first only new code
   was required; the user wants all code.)

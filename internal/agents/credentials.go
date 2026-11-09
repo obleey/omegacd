@@ -25,13 +25,13 @@ func SealCredential(recipient string, c domain.RegistryCredential) ([]byte, erro
 	}
 	var buf bytes.Buffer
 	w, err := age.Encrypt(&buf, r)
-	if err != nil {
+	if err != nil { // coverage: unreachable, age.Encrypt into a bytes.Buffer with a parsed recipient
 		return nil, err
 	}
-	if err := json.NewEncoder(w).Encode(sealed{c.Username, c.Password}); err != nil {
+	if err := json.NewEncoder(w).Encode(sealed{c.Username, c.Password}); err != nil { // coverage: unreachable, two strings always encode, into memory
 		return nil, err
 	}
-	if err := w.Close(); err != nil {
+	if err := w.Close(); err != nil { // coverage: unreachable, closing writes the last chunk into memory
 		return nil, err
 	}
 	return buf.Bytes(), nil

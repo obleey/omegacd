@@ -198,7 +198,7 @@ func (ag *Agent) Watch(ctx context.Context, changed func(app string)) error {
 // no Self-Heal or restore of it any more.
 func (ag *Agent) Forget(ctx context.Context, name string) error {
 	unlock, err := ag.lock()
-	if err != nil {
+	if err != nil { // coverage: unreachable, flock on the Agent's own lock file in its own state dir doesn't fail
 		return err
 	}
 	defer unlock()

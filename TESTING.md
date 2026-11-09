@@ -13,6 +13,23 @@
 | On the supported Linux Hosts (Q61) | the whole suite (`make test-all`) on **Ubuntu 24.04** and **Debian 13**, amd64 and arm64: four Hetzner servers, native, each with its distribution's own Docker, Compose and Podman (Ubuntu: Docker 29.1, Compose 2.40, Podman 4.9; Debian: Docker 26.1, Compose 2.26, Podman 5.4). All four run the same tests on the same engines: rootful and rootless Docker, rootless Podman in a container, and the server's own rootless Podman as the test's user. Files on Linux's own disk with real owners and modes | `make test-linux` (Hetzner servers from the separate omegacd-testinfra project: `make up` before, `make down` after); CI: Go, Agent engines and End to end on amd64 and arm64 runners |
 | Security | secret scan of the full Git history | gitleaks (CI) |
 
+## Coverage (Q96)
+
+Every kind of test counts: unit, integration, the Agent on every engine, and the e2e scripts, whose binary is built
+with `go build -cover` so every OmegaCD process they start records what it ran. Generated protobuf code is left out.
+
+```sh
+make cover          # the whole suite with coverage on (needs what make test-all needs), then the check
+go run ./test/coverage -base origin/main -floor test/coverage-floor cover/*.out   # the check alone
+```
+
+It prints each package's share and the total. It fails when a block no test reaches has a line changed against
+`main`, or when the total drops below `test/coverage-floor`. A block no test *can* reach (an error that can't happen,
+such as encoding a fixed struct into memory) is marked in the code with a comment `coverage: unreachable, <reason>` on
+its first line, and reviewed like any code. CI runs the same check in its Coverage job, merging the profiles of every
+job (amd64 and arm64). The floor starts just under the first measured total (84.0%, 2026-11-09: 987 uncovered blocks, 16
+marked unreachable); it only goes up, and after M4-10 it is 100%.
+
 ## Real-world run (v0.2, M7-04)
 
 What the maintainer runs by hand on real machines before v0.2.0, once install (M6) and the UI (M5) exist. Each row

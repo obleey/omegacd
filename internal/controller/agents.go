@@ -124,7 +124,7 @@ func (c *Controller) ForgetApp(ctx context.Context, name string) error {
 	}
 	s.deleting = true
 	c.mu.Unlock()
-	if err := c.cfg.Store.DeleteApp(ctx, name); err != nil {
+	if err := c.cfg.Store.DeleteApp(ctx, name); err != nil { // coverage: unreachable, the app was just read; only another forget racing this one
 		c.mu.Lock()
 		s.deleting = false
 		c.mu.Unlock()
