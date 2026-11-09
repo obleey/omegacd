@@ -5,7 +5,7 @@
 	import { toasts, dismiss } from './toast.svelte.ts';
 	import { ms } from './status.ts';
 
-	const icon = { green: 'check-circle', red: 'x-circle', blue: 'sync' } as const;
+	const icon = { green: 'check-circle', yellow: 'clock', red: 'x-circle', blue: 'sync' } as const;
 </script>
 
 <div class="toasts" role="status" aria-live="polite">
@@ -45,6 +45,7 @@
 	}
 	.toast > :global(.icon) { color: var(--c); margin-top: 0.1rem; }
 	.green { --c: var(--green); }
+	.yellow { --c: var(--yellow); }
 	.red { --c: var(--red); }
 	.txt { flex: 1; min-width: 0; }
 	.txt strong { font-weight: 600; }

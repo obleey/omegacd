@@ -1,7 +1,10 @@
 package agent
 
 import (
+	"context"
 	"crypto/ed25519"
+	"encoding/pem"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -147,5 +150,43 @@ func TestSigningKeyOwnerOnly(t *testing.T) {
 	os.Chmod(filepath.Join(dir, "signing.key"), 0o644)
 	if _, err := SigningKey(dir); err == nil || !strings.Contains(err.Error(), "chmod 600") {
 		t.Fatalf("a key others can read: %v", err)
+	}
+}
+
+// Q95: a Control Plane with a private certificate is trusted only through OMEGACD_AGENT_CA_FILE.
+func TestPrivateCA(t *testing.T) {
+	ctx := t.Context()
+	id, _ := age.GenerateX25519Identity()
+	st, err := store.Open(filepath.Join(t.TempDir(), "omegacd.db"), crypto.NewSealer(id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	srv := httptest.NewTLSServer(agents.New(st, nil))
+	defer srv.Close()
+	invite, _ := st.CreateInvite(ctx, "web", time.Now().Add(time.Hour))
+	key, _ := SigningKey(t.TempDir())
+
+	connect := func(client *http.Client) *logging.Buffer {
+		var log logging.Buffer
+		l, _ := logging.New(&log, "info", "text")
+		cctx, cancel := context.WithCancel(ctx)
+		t.Cleanup(cancel)
+		go New(nil, nil, nil, nil, nil, l).Connect(cctx, Connection{URL: srv.URL, Invite: invite, Key: key, AgeRecipient: "age1web", HTTPClient: client})
+		return &log
+	}
+	waitLog(t, connect(nil), "certificate signed by unknown authority")
+
+	ca := filepath.Join(t.TempDir(), "ca.pem")
+	os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}), 0o644)
+	client, err := TrustCA(ca)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitLog(t, connect(client), "waiting for an admin to approve")
+
+	os.WriteFile(ca, []byte("not a certificate"), 0o644)
+	if _, err := TrustCA(ca); err == nil || !strings.Contains(err.Error(), "no PEM certificate") {
+		t.Fatalf("a file without certificates: %v", err)
 	}
 }

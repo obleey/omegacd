@@ -55,6 +55,25 @@ func TestConfigDefaults(t *testing.T) {
 		"bad control plane": {
 			env: map[string]string{"HOME": "/h", "OMEGACD_AGENT_CONTROL_PLANE": "omegacd.example.com"}, euid: 1000, err: "https://",
 		},
+		"http to another machine (Q95)": {
+			env: map[string]string{"HOME": "/h", "OMEGACD_AGENT_CONTROL_PLANE": "http://cp.example.com"}, euid: 1000,
+			err: "https only, except to its own machine",
+		},
+		"http to an address on the network": {
+			env: map[string]string{"HOME": "/h", "OMEGACD_AGENT_CONTROL_PLANE": "http://10.0.0.5:8080"}, euid: 1000, err: "https only",
+		},
+		"http to loopback": {
+			env: map[string]string{"HOME": "/h", "OMEGACD_AGENT_CONTROL_PLANE": "http://127.0.0.1:8080"}, euid: 1000,
+			state: "/h/.local/share/omegacd-agent", work: "/run/omegacd",
+		},
+		"http to ::1": {
+			env: map[string]string{"HOME": "/h", "OMEGACD_AGENT_CONTROL_PLANE": "http://[::1]:8080"}, euid: 1000,
+			state: "/h/.local/share/omegacd-agent", work: "/run/omegacd",
+		},
+		"http to localhost": {
+			env: map[string]string{"HOME": "/h", "OMEGACD_AGENT_CONTROL_PLANE": "http://localhost:8080"}, euid: 1000,
+			state: "/h/.local/share/omegacd-agent", work: "/run/omegacd",
+		},
 		"bad secret group": {
 			env: map[string]string{"HOME": "/h", "OMEGACD_AGENT_SECRET_GROUP": "no-such-group-xyz"}, euid: 1000, err: "no such group",
 		},

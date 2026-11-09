@@ -1,8 +1,11 @@
 package agents
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"net/http/httptest"
 	"path/filepath"
@@ -485,5 +488,62 @@ func TestAllowlist(t *testing.T) {
 	}
 	if host, _ := st.GetHost(ctx, "web"); len(host.AllowIPs) != 0 {
 		t.Fatalf("stored %v", host.AllowIPs)
+	}
+}
+
+// Deploy sends the Desired State, serves the blobs it lists (and no other), and returns the Agent's report.
+func TestDeploy(t *testing.T) {
+	h, st, url := newHub(t)
+	ctx := t.Context()
+	files := map[string][]byte{"compose.yaml": []byte("services: {}\n"), "secret.sops.env": []byte("ENC[...]")}
+	sums := map[string][]byte{}
+	for name, b := range files {
+		sum := sha256.Sum256(b)
+		sums[name] = sum[:]
+	}
+	h.Blob = func(_ context.Context, hash string) ([]byte, error) {
+		for name, sum := range sums {
+			if hex.EncodeToString(sum) == hash {
+				return files[name], nil
+			}
+		}
+		return nil, domain.ErrNotFound
+	}
+	if err := h.Deploy(ctx, "web", &agentv1.DesiredState{App: "a"}); !errors.Is(err, ErrOffline) {
+		t.Fatalf("offline: %v", err)
+	}
+	key := approvedAgent(t, h, st, url, "web")
+	c, _ := agent(t, url, key, "", nil)
+	got := reading(c)
+
+	ds := &agentv1.DesiredState{App: "a", Revision: "r1", Op: 7, Files: []*agentv1.File{
+		{Path: "compose.yaml", Sha256: sums["compose.yaml"]}, {Path: "secret.sops.env", Sha256: sums["secret.sops.env"]}}}
+	done := make(chan error, 1)
+	go func() { done <- h.Deploy(ctx, "web", ds) }()
+	e := next(t, got)
+	if e.GetDesiredState().GetOp() != 7 || len(e.GetDesiredState().GetFiles()) != 2 {
+		t.Fatalf("want the Desired State, got %v", e)
+	}
+	c.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_BlobRequest{BlobRequest: &agentv1.BlobRequest{Sha256: [][]byte{sums["secret.sops.env"]}}}})
+	if e := next(t, got); !bytes.Equal(e.GetBlobChunk().GetData(), files["secret.sops.env"]) {
+		t.Fatalf("want the blob as rendered (still encrypted), got %v", e)
+	}
+	other := sha256.Sum256([]byte("another Host's file"))
+	req := &agentv1.Envelope{Body: &agentv1.Envelope_BlobRequest{BlobRequest: &agentv1.BlobRequest{Sha256: [][]byte{other[:]}}}}
+	c.Send(ctx, req)
+	if e := next(t, got); e.ReplyTo != req.Id || !strings.Contains(e.GetError().GetMessage(), "not a file of a Desired State sent to this Agent") {
+		t.Fatalf("a blob outside its Desired States: %v", e)
+	}
+	c.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_SyncOperationReport{SyncOperationReport: &agentv1.SyncOperationReport{
+		App: "a", Op: 7, Phase: "Failed", Message: "image not found"}}})
+	if err := <-done; err == nil || err.Error() != "image not found" {
+		t.Fatalf("Deploy = %v, want the Agent's failure", err)
+	}
+
+	go func() { done <- h.Deploy(ctx, "web", &agentv1.DesiredState{App: "a", Op: 8}) }()
+	next(t, got)
+	c.Close() // the connection drops before the report
+	if err := <-done; !errors.Is(err, ErrDisconnected) {
+		t.Fatalf("dropped mid-Sync: %v", err)
 	}
 }

@@ -62,11 +62,16 @@ func Accept(w http.ResponseWriter, r *http.Request) (*Conn, error) {
 
 // Dial opens a connection to url (ws:// or wss://, also http:// and https://): the Agent's side.
 func Dial(ctx context.Context, url string, header http.Header) (*Conn, error) {
-	return dial(ctx, url, header, PingInterval)
+	return dial(ctx, url, header, nil, PingInterval)
 }
 
-func dial(ctx context.Context, url string, header http.Header, ping time.Duration) (*Conn, error) {
-	ws, _, err := websocket.Dial(ctx, url, &websocket.DialOptions{HTTPHeader: header})
+// DialWith is Dial through client, e.g. one that trusts a private CA; nil: the default client.
+func DialWith(ctx context.Context, url string, header http.Header, client *http.Client) (*Conn, error) {
+	return dial(ctx, url, header, client, PingInterval)
+}
+
+func dial(ctx context.Context, url string, header http.Header, client *http.Client, ping time.Duration) (*Conn, error) {
+	ws, _, err := websocket.Dial(ctx, url, &websocket.DialOptions{HTTPHeader: header, HTTPClient: client})
 	if err != nil {
 		return nil, err
 	}

@@ -363,8 +363,11 @@ func (c *CLI) waitOp(ctx context.Context, cl *client, name string, id int64, hea
 			return err
 		}
 	}
-	if op.Phase == domain.OpFailed {
+	switch op.Phase {
+	case domain.OpFailed:
 		return errors.New(op.Message)
+	case domain.OpWaiting, domain.OpSuperseded: // nothing finishes it while its Host is offline: don't wait for that
+		return fmt.Errorf("Sync Operation #%d %s: %s", id, op.Phase, op.Message)
 	}
 	if !health {
 		return nil

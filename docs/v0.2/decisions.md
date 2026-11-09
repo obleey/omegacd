@@ -210,7 +210,9 @@ is declared. Their details (syntax, UI, messages) are decided when each is built
   Operations, end to end through the binary, instead of stand-ins.
 - **Q80** Agents sit behind the controller's existing engine seam (`domain.Engine`): the controller and its tests stay.
   Push Hosts (SSH/TLS) and Agent Hosts coexist, chosen per Host, until M4-05 deletes push; `local` uses the Docker
-  socket until the built-in Agent (M4-04).
+  socket until the built-in Agent (M4-04). M4-01 refined it: a Sync to an Agent Host branches right after Render, since
+  the engine seam works on a folder the Control Plane writes and decrypts; the files go to the Agent as rendered,
+  secrets still encrypted. Diff, Live State, logs and resources stay behind the seam until M4-02 moves them.
 - **Q81** A Sync to an offline Host is a Sync Operation "Waiting for Host", kept in the database (it survives a Control
   Plane restart). No separate queue: on reconnect the resync (M3-06) finds the difference and delivers it. A newer
   Sync supersedes a waiting one (Q38).

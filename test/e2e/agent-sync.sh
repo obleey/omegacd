@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# End-to-end: a Sync through an Agent (M4-01). The Control Plane renders from Git and sends the Desired State; the
+# enrolled Agent fetches the files, decrypts the SOPS secret with its own Host Key (nothing decrypted, or written, on
+# the Control Plane's side) and deploys; one Sync is followed by its op from the Control Plane's log into the Agent's;
+# a rollback; a Sync to an offline Host waits for it (Q81); an Agent refuses plain http to another machine (Q95).
+set -u # no pipefail: grep -q closing the pipe early must not fail a check
+BIN=${OMEGACD_BIN:-$(cd "$(dirname "$0")/../.." && pwd)/bin/omegacd}
+T=$(mktemp -d "${TMPDIR:-/tmp}/omegacd-e2eg.XXXX")
+REPO=$T/repo API=http://127.0.0.1:18080/api APP=e2e-agentsync
+mkdir -p "$REPO/web" "$T/data" "$T/work"
+fail=0
+check() { if eval "$2"; then echo "PASS  $1"; else echo "FAIL  $1"; fail=1; fi; }
+gitc() { git -C "$REPO" -c user.name=e2e -c user.email=e2e@local "$@"; }
+PIDS=()
+cleanup() {
+  docker rm -f $(docker ps -aq --filter label=com.docker.compose.project=$APP) >/dev/null 2>&1
+  docker network rm ${APP}_default >/dev/null 2>&1
+  kill ${PIDS[@]+"${PIDS[@]}"} 2>/dev/null; wait 2>/dev/null; [ -n "${KEEP:-}" ] || rm -rf "$T"
+}
+trap cleanup EXIT
+
+age-keygen -o "$T/age.key" 2>/dev/null
+OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_WORKDIR=$T/work OMEGACD_AGE_KEY_FILE=$T/age.key \
+  OMEGACD_ADMIN_PASSWORD=e2e-password-123 OMEGACD_POLL_INTERVAL=1h "$BIN" > "$T/server.log" 2>&1 &
+PIDS+=($!)
+for _ in $(seq 50); do curl -sf $API/version >/dev/null && break; sleep 0.2; done
+curl -sf -c "$T/j" -H 'Content-Type: application/json' -d '{"username":"admin","password":"e2e-password-123"}' $API/auth/login >/dev/null
+export OMEGACD_SERVER=http://127.0.0.1:18080
+export OMEGACD_TOKEN=$(curl -sf -b "$T/j" -H 'Content-Type: application/json' -H 'X-Requested-With: omegacd' \
+  -d '{"name":"e2e"}' $API/settings/tokens | python3 -c 'import json,sys; print(json.load(sys.stdin)["plaintext"])')
+waitfor() { for _ in $(seq $((${3:-10} * 10))); do grep -qF -- "$2" "$1" 2>/dev/null && return 0; sleep 0.1; done; return 1; }
+agent() {
+  env -i PATH="$PATH" HOME="$T/edge" XDG_RUNTIME_DIR="$T/edge/run" ${DOCKER_HOST:+DOCKER_HOST=$DOCKER_HOST} \
+    OMEGACD_LOG_LEVEL=debug OMEGACD_AGENT_CONTROL_PLANE=$OMEGACD_SERVER "$@" "$BIN" agent >> "$T/agent.log" 2>&1 &
+  AGENT=$!
+  PIDS+=($AGENT)
+}
+
+INVITE=$("$BIN" host add edge | grep -o 'omegacd-invite-[0-9a-f]*' | head -1)
+agent OMEGACD_AGENT_INVITE="$INVITE"
+waitfor "$T/agent.log" "waiting for an admin to approve"
+FP=$(grep -o 'fingerprint=SHA256:[A-Za-z0-9+/]*' "$T/agent.log" | head -1 | cut -d= -f2)
+"$BIN" host approve edge "$FP" >/dev/null
+waitfor "$T/agent.log" "connected to the Control Plane, approved"
+RCPT=$("$BIN" host list -o json | python3 -c 'import json,sys; print([h for h in json.load(sys.stdin) if h["name"]=="edge"][0]["ageRecipient"])')
+
+# the secret is encrypted for the Agent's Host Key only: the Control Plane couldn't decrypt it if it tried
+cat > "$REPO/web/compose.yaml" <<'EOF'
+services:
+  web:
+    image: busybox:1.36
+    command: ["sh", "-c", "cat /conf.txt; echo secret=$$SECRET; sleep 3600"]
+    environment:
+      SECRET: ${SECRET}
+    volumes: ["./conf.txt:/conf.txt:ro"]
+EOF
+echo "conf v1" > "$REPO/web/conf.txt"
+printf 'SECRET=only-the-agent-reads-this\n' > "$T/plain"
+SOPS_AGE_RECIPIENTS=$RCPT sops --encrypt --input-type dotenv --output-type dotenv "$T/plain" > "$REPO/web/.sops.env" 2> "$T/sops.err"
+rm "$T/plain"
+gitc init -q -b main && gitc add -A && gitc commit -qm v1
+
+ctr() { docker ps -q --filter label=com.docker.compose.project=$APP; }
+"$BIN" app create $APP --repo "$REPO" --path web --host edge > "$T/create.out" 2>&1
+out=$("$BIN" app sync $APP --wait --no-health --timeout 3m 2>&1); rc=$?
+check "a Sync through the Agent succeeds" '[ $rc -eq 0 ]'
+check "its container runs on the Agent's Host, the secret decrypted by the Agent" \
+  '[ -n "$(ctr)" ] && docker logs $(ctr) 2>&1 | grep -q "secret=only-the-agent-reads-this" && docker logs $(ctr) 2>&1 | grep -q "conf v1"'
+check "the Agent's work dir has the app's files" '[ -f "$T/edge/run/omegacd/$APP/conf.txt" ]'
+check "the Control Plane wrote no file of it" '[ -z "$(find "$T/work" -path "*$APP*" 2>/dev/null)" ]'
+check "and decrypted nothing: the secret is nowhere on its side" '! grep -rqaF only-the-agent-reads-this "$T/data" "$T/work" "$T/server.log"'
+check "nor in the Agent's log (Q62)" '! grep -qF only-the-agent-reads-this "$T/agent.log"'
+OP=$("$BIN" app history $APP -o json | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["id"])')
+check "one Sync followed by its op from the Control Plane's log into the Agent's (Q62)" \
+  'grep "op=$OP " "$T/server.log" | grep -q "sync started" && grep "op=$OP " "$T/agent.log" | grep -q "msg=deploy"'
+check "Synced" '"$BIN" app get $APP -o json | python3 -c "import json,sys; v=json.load(sys.stdin); assert v[\"syncStatus\"]==\"Synced\", v[\"syncStatus\"]"'
+
+echo "conf v2" > "$REPO/web/conf.txt"; gitc commit -qam v2
+"$BIN" app refresh $APP >/dev/null 2>&1
+"$BIN" app sync $APP --wait --no-health --timeout 3m >/dev/null 2>&1
+check "a new Revision deploys" 'sleep 2; docker logs $(ctr) 2>&1 | grep -q "conf v2"'
+# Health comes from the Agent with M4-02: until then --no-health
+out=$("$BIN" app rollback $APP "$OP" --wait --no-health --timeout 3m 2>&1); rc=$?
+check "a rollback through the Agent" '[ $rc -eq 0 ] && sleep 2 && docker logs $(ctr) 2>&1 | grep -q "conf v1" && ! docker logs $(ctr) 2>&1 | grep -q "conf v2"'
+
+kill $AGENT; wait $AGENT 2>/dev/null
+out=$("$BIN" app sync $APP --wait --no-health --timeout 1m 2>&1); rc=$?
+check "app sync --wait stops at a Sync waiting for its Host, saying so" '[ $rc -ne 0 ] && echo "$out" | grep -q "Waiting: waiting for Host edge"'
+check "a Sync to an offline Host waits for it (Q81)" '"$BIN" app history $APP -o json | python3 -c "
+import json,sys; op=json.load(sys.stdin)[0]; assert op[\"phase\"]==\"Waiting\" and \"waiting for Host edge\" in op[\"message\"], op"'
+check "its containers keep running meanwhile" '[ -n "$(ctr)" ]'
+
+out=$(env -i PATH="$PATH" HOME="$T/other" OMEGACD_AGENT_CONTROL_PLANE=http://cp.example.com "$BIN" agent 2>&1); rc=$?
+check "an Agent refuses plain http to another machine (Q95)" '[ $rc -ne 0 ] && echo "$out" | grep -q "https only"'
+
+[ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- server log"; tail -20 "$T/server.log"; echo "--- agent log"; tail -20 "$T/agent.log"; }
+exit $fail

@@ -118,7 +118,7 @@ func TestQuietConnectionThroughProxy(t *testing.T) {
 		}
 	})
 
-	c, err := dial(ctx, url, nil, proxyTimeout/4)
+	c, err := dial(ctx, url, nil, nil, proxyTimeout/4)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestQuietConnectionThroughProxy(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	quiet, err := dial(ctx, url, nil, time.Hour) // no pings
+	quiet, err := dial(ctx, url, nil, nil, time.Hour) // no pings
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +169,7 @@ func TestReconnectThroughProxyRestart(t *testing.T) {
 	})
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	go Keep(ctx, func(ctx context.Context) (*Conn, error) { return dial(ctx, url, nil, proxyTimeout/4) },
+	go Keep(ctx, func(ctx context.Context) (*Conn, error) { return dial(ctx, url, nil, nil, proxyTimeout/4) },
 		func(ctx context.Context, c *Conn) error {
 			_, err := c.Recv(ctx)
 			return err

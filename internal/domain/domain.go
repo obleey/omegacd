@@ -97,6 +97,9 @@ const (
 	OpRunning   OpPhase = "Running"
 	OpSucceeded OpPhase = "Succeeded"
 	OpFailed    OpPhase = "Failed"
+	// a Sync to an offline Host: it runs when its Agent reconnects (Q81), unless a newer one supersedes it first
+	OpWaiting    OpPhase = "Waiting"
+	OpSuperseded OpPhase = "Superseded"
 )
 
 // SyncOperation is one attempt to Sync an Application to a Revision.
@@ -412,6 +415,10 @@ type Store interface {
 	// and trims history to the newest 20 operations per app.
 	CreateOp(ctx context.Context, op SyncOperation) (int64, error)
 	FinishOp(ctx context.Context, id int64, phase OpPhase, message string) error
+	// SetOpPhase sets an unfinished op's phase and message (Waiting, or Running again).
+	SetOpPhase(ctx context.Context, id int64, phase OpPhase, message string) error
+	// SupersedeWaitingOps finishes the app's Waiting ops as Superseded by op by (Q81).
+	SupersedeWaitingOps(ctx context.Context, app string, by int64) error
 	GetOp(ctx context.Context, id int64) (SyncOperation, error)
 	ListOps(ctx context.Context, app string) ([]SyncOperation, error) // newest first
 	// LastSucceededOp returns the newest Succeeded op, or ErrNotFound.

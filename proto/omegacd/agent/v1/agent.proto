@@ -88,6 +88,17 @@ message DesiredState {
   // the Application's own root for its folder (Q57), absolute; empty: the Agent's work dir. The Agent writes only under
   // roots its own configuration allows (OMEGACD_AGENT_WORKDIR_ALLOW), whatever this says
   string work_dir = 6;
+  // the Sync Operation this deploys (Q62: the Agent's log entries for it carry it as op); its SyncOperationReport
+  // carries it back. 0: none (a resync, M3-06)
+  uint64 op = 7;
+  bool prune = 8;
+  bool prune_volumes = 9;
+  bool self_heal = 10; // the Agent self-heals the Application, online and offline (Q82)
+  string parent = 11; // its App of Apps, if any
+  // sha256 of the files (hex), as the Source Server rendered them: what the resync compares (M3-06)
+  string checksum = 12;
+  // take over a Compose project of the same name OmegaCD didn't start; without it the first deploy refuses one
+  bool adopt = 13;
 }
 
 message File {
@@ -130,6 +141,7 @@ message SyncOperationReport {
   // what started it on the Agent: "restore" (after a reboot), "self-heal", or "rollback" (run on the Host, Q25: the
   // Control Plane shows the Application rolled back on the Host and turns its Auto-Sync off)
   string trigger = 5;
+  uint64 op = 6; // the DesiredState's op it answers; 0 for one the Agent started
 }
 
 message LogsRequest {

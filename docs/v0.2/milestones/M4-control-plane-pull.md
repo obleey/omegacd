@@ -4,7 +4,7 @@ The Control Plane stops talking to Docker and drives Agents instead; push is del
 See [architecture](../architecture.md#control-plane-q9-q23-q26-q30-q31-q35-q36-q38-q41-q46-q49).
 
 ### M4-01 · Sync through Agents
-**Status:** todo
+**Status:** done (2026-11-09, PR #113)
 **Depends on:** M1-03, M3-03
 
 Sync = Source Server Render → blobs stored (kept, Q31) → desired state sent to the Host's Agent, which asks for the

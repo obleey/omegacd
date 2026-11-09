@@ -95,6 +95,10 @@ func (e *Engine) dial(h domain.Host) (*hostConn, error) {
 	if h.Name == "" || h.Name != filepath.Base(h.Name) || h.Name == ".." {
 		return nil, fmt.Errorf("%w: host name %q", domain.ErrInvalid, h.Name)
 	}
+	if h.URL == "" {
+		return nil, fmt.Errorf("%w: Host %s is reached through its Agent, not over SSH or TLS: the Control Plane has no "+
+			"engine to ask, its Agent reports instead", domain.ErrInvalid, h.Name)
+	}
 	u, err := url.Parse(h.URL)
 	if err != nil {
 		return nil, fmt.Errorf("%w: host url: %v", domain.ErrInvalid, err)

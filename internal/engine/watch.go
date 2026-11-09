@@ -37,7 +37,7 @@ func (e *Engine) Watch(ctx context.Context, changed func(host, project string)) 
 				}
 			}
 			for _, h := range hosts {
-				want[h.Name] = true
+				want[h.Name] = h.URL != "" // a Host with an Agent has no engine here to watch: its Agent watches
 			}
 		}
 		for name, cancel := range streams {

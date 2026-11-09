@@ -18,10 +18,12 @@ import (
 
 	"filippo.io/age"
 
+	"github.com/obleey/omegacd/internal/agents"
 	"github.com/obleey/omegacd/internal/appdef"
 	"github.com/obleey/omegacd/internal/blob"
 	"github.com/obleey/omegacd/internal/domain"
 	"github.com/obleey/omegacd/internal/logging"
+	agentv1 "github.com/obleey/omegacd/internal/proto/agent/v1"
 )
 
 // ---- fakes ----
@@ -1604,5 +1606,133 @@ func TestInviteHost(t *testing.T) {
 		if h.Name == "web" && (h.Status != domain.HostStatus{Name: "web"}) {
 			t.Fatalf("an Agent's Host got an engine status: %+v", h.Status)
 		}
+	}
+}
+
+func (s *fakeStore) SetOpPhase(_ context.Context, id int64, p domain.OpPhase, m string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ops[id-1].Phase, s.ops[id-1].Message = p, m
+	return nil
+}
+func (s *fakeStore) SupersedeWaitingOps(_ context.Context, app string, by int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.ops {
+		if s.ops[i].App == app && s.ops[i].Phase == domain.OpWaiting && s.ops[i].ID != by {
+			s.ops[i].Phase, s.ops[i].FinishedAt = domain.OpSuperseded, time.Now()
+		}
+	}
+	return nil
+}
+
+// fakeAgents is the Hosts' Agents: Deploy records each Desired State and answers with err.
+type fakeAgents struct {
+	mu  sync.Mutex
+	got []*agentv1.DesiredState
+	err error
+}
+
+func (f *fakeAgents) Deploy(_ context.Context, host string, ds *agentv1.DesiredState) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.got = append(f.got, ds)
+	return f.err
+}
+
+func (f *fakeAgents) sent() []*agentv1.DesiredState {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.got)
+}
+
+// agentRig is a rig whose Host "edge" has an enrolled Agent.
+func agentRig(t *testing.T) (rig, *fakeAgents) {
+	r := newRig(t)
+	ag := &fakeAgents{}
+	r.c.cfg.Agents = ag
+	r.st.mu.Lock()
+	r.st.hosts["edge"] = domain.Host{Name: "edge", Fingerprint: "SHA256:edge", Approved: true}
+	r.st.mu.Unlock()
+	return r, ag
+}
+
+// M4-01: a Sync to a Host with an Agent sends it the Desired State, the files as rendered, and records its report;
+// nothing is written, decrypted or run on the Control Plane's side.
+func TestSyncThroughAgent(t *testing.T) {
+	r, ag := agentRig(t)
+	ctx := t.Context()
+	a := app("web")
+	a.Host, a.WorkDir, a.SelfHeal, a.Prune, a.Profiles = "edge", "/srv/apps", true, true, []string{"debug"}
+	if _, err := r.c.CreateApp(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	id, err := r.c.Sync(ctx, "web", domain.SyncRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.waitIdle(t, "web")
+	sent := ag.sent()
+	if len(sent) != 1 {
+		t.Fatalf("sent %d Desired States", len(sent))
+	}
+	ds := sent[0]
+	if ds.App != "web" || ds.Op != uint64(id) || ds.Revision != "aaaaaaaa" || ds.WorkDir != "/srv/apps" || !ds.SelfHeal ||
+		!ds.Prune || !slices.Equal(ds.Profiles, []string{"debug"}) || len(ds.Files) == 0 || ds.Checksum == "" {
+		t.Fatalf("Desired State %v", ds)
+	}
+	if r.e.syncCount() != 0 {
+		t.Fatal("the Control Plane's engine ran the Sync")
+	}
+	if entries, _ := os.ReadDir(r.c.cfg.WorkDir); len(entries) != 0 {
+		t.Fatalf("files written on the Control Plane: %v", entries)
+	}
+	op, _ := r.st.GetOp(ctx, id)
+	v, _ := r.c.GetApp(ctx, "web")
+	if op.Phase != domain.OpSucceeded || v.SyncStatus != domain.Synced || v.Health != domain.HealthUnknown {
+		t.Fatalf("op %s, app %s %s", op.Phase, v.SyncStatus, v.Health)
+	}
+
+	ag.mu.Lock()
+	ag.err = errors.New("image not found")
+	ag.mu.Unlock()
+	id, _ = r.c.Sync(ctx, "web", domain.SyncRequest{})
+	r.waitIdle(t, "web")
+	if op, _ := r.st.GetOp(ctx, id); op.Phase != domain.OpFailed || op.Message != "image not found" {
+		t.Fatalf("the Agent's failure: %+v", op)
+	}
+}
+
+// Q81: a Sync to an offline Host waits for it, Auto-Sync doesn't pile up more, and a newer Sync supersedes it.
+// Q93: one whose connection dropped stays Running.
+func TestSyncWaitsForAgent(t *testing.T) {
+	r, ag := agentRig(t)
+	ctx := t.Context()
+	ag.err = fmt.Errorf("host edge: %w", agents.ErrOffline)
+	a := app("web")
+	a.Host, a.AutoSync = "edge", true
+	r.c.CreateApp(ctx, a)
+	r.waitIdle(t, "web")
+	ops, _ := r.st.ListOps(ctx, "web")
+	if len(ops) != 1 || ops[0].Phase != domain.OpWaiting || !strings.Contains(ops[0].Message, "waiting for Host edge") {
+		t.Fatalf("ops %+v", ops)
+	}
+	for range 3 {
+		r.c.Refresh(ctx, "web")
+		r.waitIdle(t, "web")
+	}
+	if ops, _ := r.st.ListOps(ctx, "web"); len(ops) != 1 {
+		t.Fatalf("Auto-Sync piled up %d Syncs for an offline Host", len(ops))
+	}
+
+	ag.mu.Lock()
+	ag.err = fmt.Errorf("host edge: %w", agents.ErrDisconnected)
+	ag.mu.Unlock()
+	id, _ := r.c.Sync(ctx, "web", domain.SyncRequest{})
+	r.waitIdle(t, "web")
+	ops, _ = r.st.ListOps(ctx, "web")
+	if ops[1].Phase != domain.OpSuperseded || ops[0].ID != id || ops[0].Phase != domain.OpRunning ||
+		!strings.Contains(ops[0].Message, "disconnected") {
+		t.Fatalf("ops %+v", ops)
 	}
 }

@@ -1,6 +1,6 @@
 import { errMsg, OfflineError } from './api.ts';
 
-export type Toast = { id: number; tone: 'green' | 'red' | 'blue'; title: string; body?: string; href?: string };
+export type Toast = { id: number; tone: 'green' | 'yellow' | 'red' | 'blue'; title: string; body?: string; href?: string };
 
 export const toasts = $state<Toast[]>([]);
 let next = 1;

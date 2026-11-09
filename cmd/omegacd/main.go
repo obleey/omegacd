@@ -136,8 +136,11 @@ func run(log *slog.Logger) error {
 	}
 
 	selfID, _ := os.Hostname() // inside a container this is the container ID prefix
+	hub := agents.New(st, log.With("component", "agents"))
+	hub.Blob = src.Blob // the files as rendered, secrets still encrypted: only the Agent decrypts (Q19)
 	ctl := controller.New(controller.Config{
-		Store: st, Source: src, Secrets: secrets.Decryptor{}, MasterKey: id, Engine: eng,
+		Agents: hub,
+		Store:  st, Source: src, Secrets: secrets.Decryptor{}, MasterKey: id, Engine: eng,
 		WorkDir: workDir, PollInterval: poll, NoLocalHost: noLocal,
 		NormalizeURL: source.NormalizeURL,
 		ObserveSync:  api.ObserveSync,
@@ -161,7 +164,7 @@ func run(log *slog.Logger) error {
 		Handler: api.New(api.Config{
 			Controller:     ctl,
 			Store:          st,
-			Agents:         agents.New(st, log.With("component", "agents")),
+			Agents:         hub,
 			Source:         src,
 			WebhookSecret:  os.Getenv("OMEGACD_WEBHOOK_SECRET"),
 			WebhookParse:   source.ParseWebhook,
@@ -345,7 +348,13 @@ func runAgent(log *slog.Logger) error {
 	log.Info("omegacd agent running")
 	ag := agent.New(db, cache, work, secrets, eng, log.With("component", "agent"))
 	if cfg.ControlPlane != "" {
-		go ag.Connect(ctx, agent.Connection{URL: cfg.ControlPlane, Invite: cfg.Invite, Key: signingKey,
+		var client *http.Client
+		if cfg.CAFile != "" {
+			if client, err = agent.TrustCA(cfg.CAFile); err != nil {
+				return err
+			}
+		}
+		go ag.Connect(ctx, agent.Connection{HTTPClient: client, URL: cfg.ControlPlane, Invite: cfg.Invite, Key: signingKey,
 			KeyPath: filepath.Join(cfg.StateDir, "signing.key"), Engine: detected,
 			AgeRecipient: hostKey.Recipient().String()})
 	}
