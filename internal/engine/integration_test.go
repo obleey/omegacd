@@ -800,3 +800,23 @@ func TestRemoveVolumes(t *testing.T) {
 		}
 	}
 }
+
+// Logs the engine refuses (here: a service logging nowhere; on Podman also journald logs with events in a file) come
+// back as the engine's error, with what to do when there is something to say (logsHint).
+func TestLogsRefused(t *testing.T) {
+	ctx := context.Background()
+	e := newTestEngine(t)
+	app := testApp(t, e)
+	dir := t.TempDir()
+	write(t, dir, "compose.yaml", "services:\n  quiet:\n    image: busybox\n    command: [\"sleep\", \"3600\"]\n    logging:\n      driver: none\n")
+	if err := e.Sync(ctx, app, dir, domain.SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	live, err := e.Status(ctx, app)
+	if err != nil || len(live.Containers) != 1 {
+		t.Fatalf("status: %+v %v", live, err)
+	}
+	if err := e.Logs(ctx, app, live.Containers[0].ID, false, 10, io.Discard); err == nil {
+		t.Fatal("logs of a container logging nowhere")
+	}
+}

@@ -17,6 +17,7 @@ git fetch -q origin 2>/dev/null # the base the changed lines are diffed against
 # GATE_CMD replaces the suite, to try this script itself in seconds
 test/linux.sh --only "${GATE_CMD:-make cover-profiles ENGINES='rootful rootless podman host-podman'}" "$@" > "$repo/cover/gate.log" 2>&1
 suite=$?
+[ $suite -eq 130 ] && { echo "gate interrupted"; exit 130; }
 
 rm -rf cover/gate && mkdir -p cover/gate
 {

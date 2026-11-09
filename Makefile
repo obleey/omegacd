@@ -53,7 +53,7 @@ test-all:
 # and the e2e scripts' binary built with -cover); generated protobuf code is left out. make cover runs it and checks:
 # blocks no test reaches fail where a line of them changed since COVER_BASE (unless marked "coverage: unreachable,
 # <reason>" in the code), and the total may not drop below test/coverage-floor.
-COVERPKG = $(shell go list ./cmd/... ./internal/... | grep -v /internal/proto/ | paste -sd, -)
+COVERPKG = ./cmd/...,./internal/... # patterns, so the commands stay short; test/coverage leaves the generated code out
 cov = $(if $(COVER_DIR),-coverpkg=$(COVERPKG) -coverprofile=$(COVER_DIR)/$(1).out)
 COVER_BASE ?= origin/main
 cover: cover-profiles

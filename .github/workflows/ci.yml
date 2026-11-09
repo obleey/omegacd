@@ -72,7 +72,7 @@ jobs:
         run: make proto && git diff --exit-code
       - run: go vet ./...
       - run: go vet -tags integration ./...
-      - run: mkdir cover && echo "COVERPKG=$(go list ./cmd/... ./internal/... | grep -v /internal/proto/ | paste -sd, -)" >> "$GITHUB_ENV"
+      - run: mkdir cover && echo "COVERPKG=./cmd/...,./internal/..." >> "$GITHUB_ENV"
       # with coverage (Q96): the Coverage job merges every kind of test's
       - run: go test -race -coverpkg="$COVERPKG" -coverprofile=cover/unit.out ./...
       # Needs Docker (available on ubuntu-latest); the remote Host tests run docker:dind --privileged.
@@ -114,8 +114,7 @@ jobs:
       - run: docker compose -f test/e2e/forgejo.yaml up -d --wait
       # built with -cover: every process the scripts start writes its coverage to GOCOVERDIR (Q96)
       - run: |
-          CGO_ENABLED=0 go build -cover -coverpkg="$(go list ./cmd/... ./internal/... | grep -v /internal/proto/ | paste -sd, -)" \
-            -o bin/omegacd ./cmd/omegacd
+          CGO_ENABLED=0 go build -cover -coverpkg=./cmd/...,./internal/... -o bin/omegacd ./cmd/omegacd
           mkdir -p cover/e2e
       - run: GOCOVERDIR=$PWD/cover/e2e test/e2e/run.sh
       - run: go tool covdata textfmt -i=cover/e2e -o cover/e2e.out && rm -r cover/e2e
