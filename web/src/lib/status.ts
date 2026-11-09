@@ -25,6 +25,7 @@ export const statusMeta: Record<string, [Tone, IconName, boolean?]> = {
 	Failed: ['red', 'x-circle'],
 	Waiting: ['yellow', 'clock'], // for its offline Host (Q81)
 	Superseded: ['overlay', 'stop-circle'], // by a newer Sync before the Host came back
+	Deleting: ['yellow', 'trash'], // waiting for its Host's Agent (Q83)
 	// Host connection
 	Connected: ['green', 'check-circle'],
 	Disconnected: ['red', 'x-circle'],
@@ -42,7 +43,8 @@ export const meta = (s?: string) => statusMeta[s ?? ''] ?? statusMeta.Unknown;
 
 export const isSyncing = (a?: AppView) => a?.lastOperation?.phase === 'Running';
 /** Sync Status as shown: "Syncing" while a Sync Operation runs. */
-export const shownSync = (a: AppView) => (isSyncing(a) ? 'Syncing' : (live.finished[a.name] ?? (a.syncStatus || 'Unknown')));
+export const shownSync = (a: AppView) =>
+	a.deleting ? 'Deleting' : isSyncing(a) ? 'Syncing' : (live.finished[a.name] ?? (a.syncStatus || 'Unknown'));
 
 /** One color summarising an Application, worst signal first (tile status bar). */
 export function appTone(a: AppView): Tone {

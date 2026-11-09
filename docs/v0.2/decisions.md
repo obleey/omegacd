@@ -250,3 +250,12 @@ is declared. Their details (syntax, UI, messages) are decided when each is built
   Control Plane and deploy to the Host; the Agent's signature proves the Agent, only TLS proves the Control Plane.
   `OMEGACD_AGENT_CA_FILE` trusts a private CA. Part of M4-01, the first ticket where the Control Plane sends what
   deploys.
+
+## Coverage (2026-11-09)
+
+- **Q96** Coverage is measured combined: unit, integration and e2e (the binary built with `go build -cover`, its
+  coverage collected while the e2e scripts drive it), generated protobuf code excluded. Every PR covers 100% of its
+  reachable changed lines; a changed line no test reaches is named in the PR with why it can't be reached (an error
+  that can't happen, such as encoding a fixed struct). CI fails if total coverage drops (a ratchet). Literal 100% of
+  all code was rejected: it would need fault-injection hooks in production code for errors that can't happen. Set up
+  by M4-09; older code is raised over time.

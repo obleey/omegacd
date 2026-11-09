@@ -89,7 +89,7 @@ Control Plane's blob store; new Revisions wait with the reason shown.
 **Done when:** tested with the Source Server stopped.
 
 ### M4-08 · Deletes, registry credentials and live progress through Agents
-**Status:** todo
+**Status:** done (2026-11-09, PR #116)
 **Depends on:** M4-01, M3-06
 
 Split from M4-01 (Q94). Deleting goes through the Agent (`RemoveApp`: delete volumes, keep containers), so `app
@@ -104,3 +104,17 @@ Agent, so the UI's progress view keeps working (Q87).
 Host and done on reconnect, `--forget`; an image from a private registry pulled with credentials that appear in no
 log, on no disk of the Agent and never in plaintext on the wire (checked by capturing it); the UI's live progress fed
 by an Agent.
+
+### M4-09 · Coverage: measured combined, a ratchet, 100% of changed lines
+**Status:** todo
+**Depends on:** M4-08
+
+Q96: `make cover` builds the binary with `go build -cover`, runs unit (`-coverprofile`), integration and e2e (the
+binary's `GOCOVERDIR`) and merges them (`go tool covdata`), generated protobuf code excluded, into one total and a
+per-package table. A script lists a branch's changed lines no test reaches (`git diff` against main × the merged
+profile); the PR names each with why it can't be reached. CI runs it on every push: fails when total coverage drops
+below the recorded floor (raised as it grows, never lowered by hand) or a changed line is uncovered without being
+listed. TESTING.md documents it.
+
+**Done when:** `make cover` prints the combined total and the uncovered changed lines; CI fails a PR that lowers the
+total or leaves a changed line uncovered and unlisted (tested with a throwaway change); the floor is recorded.

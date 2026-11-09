@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -64,7 +65,7 @@ func agentV(t *testing.T, url string, key ed25519.PrivateKey, invite string, sig
 		c.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_Hello{Hello: hello}})
 	}
 	if invite != "" {
-		c.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_Enroll{Enroll: &agentv1.Enroll{Invite: invite, AgeRecipient: "age1test"}}})
+		c.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_Enroll{Enroll: &agentv1.Enroll{Invite: invite, AgeRecipient: testRecipient}}})
 	}
 	c.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_ChallengeResponse{ChallengeResponse: &agentv1.ChallengeResponse{
 		PublicKey: key.Public().(ed25519.PublicKey), Signature: sign(e.GetChallenge().Nonce)}}})
@@ -74,6 +75,9 @@ func agentV(t *testing.T, url string, key ed25519.PrivateKey, invite string, sig
 	}
 	return c, e
 }
+
+// testRecipient is a real Host Key's recipient: enrollment refuses anything else.
+var testRecipient = func() string { id, _ := age.GenerateX25519Identity(); return id.Recipient().String() }()
 
 func newKey() ed25519.PrivateKey { _, k, _ := ed25519.GenerateKey(nil); return k }
 
@@ -100,7 +104,7 @@ func TestEnrollAndApprove(t *testing.T) {
 		t.Fatalf("want waiting for approval with the key's fingerprint %s, got %v", fp, e)
 	}
 	host, _ := st.GetHost(ctx, "web")
-	if host.Fingerprint != fp || host.AgeRecipient != "age1test" {
+	if host.Fingerprint != fp || host.AgeRecipient != testRecipient {
 		t.Fatalf("the Control Plane shows %+v, the Agent %s", host, fp)
 	}
 
@@ -608,5 +612,204 @@ func TestResyncHealsALostSignal(t *testing.T) {
 	case e := <-got:
 		t.Fatalf("an Agent that has it got it again: %v", e)
 	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+// Q83: Remove asks the Agent and waits for its answer; offline there's no one to ask.
+func TestRemove(t *testing.T) {
+	h, st, url := newHub(t)
+	ctx := t.Context()
+	if err := h.Remove(ctx, "web", "app", true, false); !errors.Is(err, ErrOffline) {
+		t.Fatalf("offline: %v", err)
+	}
+	key := approvedAgent(t, h, st, url, "web")
+	c, _ := agent(t, url, key, "", nil)
+	got := reading(c)
+	done := make(chan error, 1)
+	go func() { done <- h.Remove(ctx, "web", "app", true, false) }()
+	e := next(t, got)
+	if r := e.GetRemoveApp(); r.GetApp() != "app" || !r.Volumes || r.KeepContainers {
+		t.Fatalf("got %v", e)
+	}
+	c.Send(ctx, &agentv1.Envelope{ReplyTo: e.Id, Body: &agentv1.Envelope_AppRemoved{AppRemoved: &agentv1.AppRemoved{App: "app", Error: "volume in use"}}})
+	if err := <-done; err == nil || err.Error() != "volume in use" {
+		t.Fatalf("Remove = %v, want the Agent's error", err)
+	}
+}
+
+// Q85/Q86: an Agent gets the credentials of the registries it asks for, sealed to its Host Key: only that key opens
+// them, and a Host with no Application gets none.
+func TestRegistryAuth(t *testing.T) {
+	h, st, url := newHub(t)
+	ctx := t.Context()
+	hostKey, _ := age.GenerateX25519Identity()
+	invite, _ := st.CreateInvite(ctx, "web", time.Now().Add(time.Hour))
+	key := newKey()
+	// enroll with this test's Host Key, so the test can open what is sealed to it
+	cc, err := wire.Dial(ctx, url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch, _ := cc.Recv(ctx)
+	cc.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_Hello{Hello: &agentv1.Hello{AgentVersion: "(devel)"}}})
+	cc.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_Enroll{Enroll: &agentv1.Enroll{Invite: invite, AgeRecipient: hostKey.Recipient().String()}}})
+	cc.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_ChallengeResponse{ChallengeResponse: &agentv1.ChallengeResponse{
+		PublicKey: key.Public().(ed25519.PublicKey), Signature: ed25519.Sign(key, append([]byte(ChallengePrefix), ch.GetChallenge().Nonce...))}}})
+	cc.Recv(ctx)
+	cc.Close()
+	h.Approve(ctx, "web", domain.Fingerprint(key.Public().(ed25519.PublicKey)))
+	// made up per run: no password, real or not, is ever written into the repository
+	pull, hub := rand.Text(), rand.Text()
+	for _, r := range []domain.RegistryCredential{
+		{Registry: "registry.example.com:5000", Username: "deploy", Password: pull},
+		{Registry: "https://index.docker.io/v1/", Username: "hub", Password: hub},
+		{Registry: "ghcr.io", Username: "other", Password: rand.Text()},
+	} {
+		if _, err := st.SaveRegistryCredential(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ask := func() *agentv1.Envelope {
+		c, _ := agent(t, url, key, "", nil)
+		got := reading(c)
+		req := &agentv1.Envelope{Body: &agentv1.Envelope_RegistryAuthRequest{RegistryAuthRequest: &agentv1.RegistryAuthRequest{
+			Registries: []string{"docker.io", "registry.example.com:5000"}}}}
+		c.Send(ctx, req)
+		e := next(t, got)
+		if e.ReplyTo != req.Id {
+			t.Fatalf("want the answer, got %v", e)
+		}
+		c.Close() // gone before the next ask, or two live connections with one key lock the Host
+		for h.session("web") != nil {
+			time.Sleep(10 * time.Millisecond)
+		}
+		return e
+	}
+	if e := ask(); len(e.GetRegistryAuth().GetCredentials()) != 0 {
+		t.Fatalf("a Host without Applications got credentials: %v", e)
+	}
+	st.CreateApp(ctx, domain.Application{Name: "app", Host: "web"})
+	creds := ask().GetRegistryAuth().GetCredentials()
+	if len(creds) != 2 {
+		t.Fatalf("want the two asked for, got %v", creds)
+	}
+	other, _ := age.GenerateX25519Identity()
+	for _, sc := range creds {
+		if bytes.Contains(sc.Sealed, []byte(pull)) || bytes.Contains(sc.Sealed, []byte(hub)) {
+			t.Fatal("a password in plaintext on the wire")
+		}
+		if _, err := OpenCredential(other, sc.Registry, sc.Sealed); err == nil {
+			t.Fatal("another key opened it")
+		}
+		cred, err := OpenCredential(hostKey, sc.Registry, sc.Sealed)
+		if err != nil || (cred.Password != pull && cred.Password != hub) {
+			t.Fatalf("opened %+v, %v", cred, err)
+		}
+	}
+}
+
+// Q87 and Q83 through the outbox: progress goes to the controller; a removal reported later applies once.
+func TestProgressAndRemovalFromOutbox(t *testing.T) {
+	h, st, url := newHub(t)
+	ctx := t.Context()
+	progress := make(chan domain.ProgressEvent, 1)
+	h.Progress = func(_ context.Context, app string, p domain.ProgressEvent) { progress <- p }
+	var removed atomic.Int32
+	h.Removed = func(context.Context, string, string) { removed.Add(1) }
+	key := approvedAgent(t, h, st, url, "web")
+	st.CreateApp(ctx, domain.Application{Name: "app", Host: "web"})
+	st.SetAppDeleting(ctx, "app", "volumes")
+	c, _ := agent(t, url, key, "", nil)
+	got := reading(c)
+	c.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_SyncProgress{SyncProgress: &agentv1.SyncProgress{App: "app", Op: 4, Resource: "Image busybox", Status: "Pulling"}}})
+	if p := <-progress; p.OpID != 4 || p.Status != "Pulling" {
+		t.Fatalf("progress %+v", p)
+	}
+	entry := &agentv1.OutboxEntry{Seq: 1, Event: &agentv1.OutboxEntry_AppRemoved{AppRemoved: &agentv1.AppRemoved{App: "app"}}}
+	for range 2 {
+		c.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_OutboxEntry{OutboxEntry: entry}})
+		if e := next(t, got); e.GetOutboxAck().GetSeq() != 1 {
+			t.Fatalf("want the ack, got %v", e)
+		}
+	}
+	if _, err := st.GetApp(ctx, "app"); !errors.Is(err, domain.ErrNotFound) || removed.Load() != 1 {
+		t.Fatalf("removal applied: %v, told %d times", err, removed.Load())
+	}
+}
+
+// Enrollment refuses a Host Key that isn't an age recipient: everything later encrypted to it would fail.
+func TestEnrollRefusesABadHostKey(t *testing.T) {
+	_, st, url := newHub(t)
+	ctx := t.Context()
+	invite, _ := st.CreateInvite(ctx, "web", time.Now().Add(time.Hour))
+	c, err := wire.Dial(ctx, url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	key := newKey()
+	ch, _ := c.Recv(ctx)
+	c.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_Hello{Hello: &agentv1.Hello{AgentVersion: "(devel)"}}})
+	c.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_Enroll{Enroll: &agentv1.Enroll{Invite: invite, AgeRecipient: "age1-not-a-key"}}})
+	c.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_ChallengeResponse{ChallengeResponse: &agentv1.ChallengeResponse{
+		PublicKey: key.Public().(ed25519.PublicKey), Signature: ed25519.Sign(key, append([]byte(ChallengePrefix), ch.GetChallenge().Nonce...))}}})
+	e, _ := c.Recv(ctx)
+	refused(t, e, `the Host Key "age1-not-a-key" isn't an age recipient`)
+	if h, _ := st.GetHost(ctx, "web"); h.Fingerprint != "" {
+		t.Fatalf("enrolled with it: %+v", h)
+	}
+}
+
+func TestCredentialFormat(t *testing.T) {
+	if _, err := SealCredential("not-a-recipient", domain.RegistryCredential{}); err == nil {
+		t.Fatal("sealed to no key")
+	}
+	id, _ := age.GenerateX25519Identity()
+	var buf bytes.Buffer
+	w, _ := age.Encrypt(&buf, id.Recipient())
+	w.Write([]byte("not json"))
+	w.Close()
+	if _, err := OpenCredential(id, "r.example.com", buf.Bytes()); err == nil || !strings.Contains(err.Error(), "registry r.example.com") {
+		t.Fatalf("opened garbage: %v", err)
+	}
+}
+
+// Remove on a connection that drops, or a context that ends, before the Agent answers.
+func TestRemoveUnanswered(t *testing.T) {
+	h, st, url := newHub(t)
+	key := approvedAgent(t, h, st, url, "web")
+	c, _ := agent(t, url, key, "", nil)
+	got := reading(c)
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+	if err := h.Remove(ctx, "web", "app", false, false); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("no answer: %v", err)
+	}
+	next(t, got)
+	done := make(chan error, 1)
+	go func() { done <- h.Remove(t.Context(), "web", "app", false, false) }()
+	next(t, got)
+	c.Close()
+	if err := <-done; !errors.Is(err, ErrDisconnected) {
+		t.Fatalf("dropped: %v", err)
+	}
+}
+
+// A removal from the outbox of a Host deleted meanwhile isn't acknowledged: nothing applied it.
+func TestOutboxRemovalOfAGoneHost(t *testing.T) {
+	h, st, url := newHub(t)
+	ctx := t.Context()
+	key := approvedAgent(t, h, st, url, "web")
+	c, _ := agent(t, url, key, "", nil)
+	got := reading(c)
+	st.DeleteHost(ctx, "web")
+	c.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_OutboxEntry{OutboxEntry: &agentv1.OutboxEntry{Seq: 1,
+		Event: &agentv1.OutboxEntry_AppRemoved{AppRemoved: &agentv1.AppRemoved{App: "app"}}}}})
+	c.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_OutboxEntry{OutboxEntry: &agentv1.OutboxEntry{Seq: 2,
+		Event: &agentv1.OutboxEntry_SyncOperationReport{SyncOperationReport: &agentv1.SyncOperationReport{App: "app"}}}}})
+	select {
+	case e := <-got:
+		t.Fatalf("acknowledged: %v", e)
+	case <-time.After(300 * time.Millisecond):
 	}
 }

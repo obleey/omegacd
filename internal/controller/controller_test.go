@@ -1628,9 +1628,19 @@ func (s *fakeStore) SupersedeWaitingOps(_ context.Context, app string, by int64)
 
 // fakeAgents is the Hosts' Agents: Deploy records each Desired State and answers with err.
 type fakeAgents struct {
-	mu  sync.Mutex
-	got []*agentv1.DesiredState
-	err error
+	mu      sync.Mutex
+	got     []*agentv1.DesiredState
+	err     error
+	removed []string // "app volumes keep"
+}
+
+func (f *fakeAgents) Remove(_ context.Context, host, app string, volumes, keep bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err == nil {
+		f.removed = append(f.removed, fmt.Sprint(app, " ", volumes, " ", keep))
+	}
+	return f.err
 }
 
 func (f *fakeAgents) Deploy(_ context.Context, host string, ds *agentv1.DesiredState) error {
@@ -1774,5 +1784,287 @@ func TestWaitingSyncRunsOnResync(t *testing.T) {
 	}
 	if ops, _ := r.st.ListOps(ctx, "web"); len(ops) != 1 {
 		t.Fatalf("%d Sync Operations, want the one that waited", len(ops))
+	}
+}
+
+func (s *fakeStore) SetAppDeleting(_ context.Context, name, how string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.apps[name]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	a.Deleting = how
+	s.apps[name] = a
+	return nil
+}
+
+// Q83: deleting an Application on an Agent Host goes through its Agent; offline, it waits (recorded) and finishes
+// when the Host resyncs; --cascade=false only has the Agent forget it. Q92: forgetting asks no Agent.
+func TestDeleteThroughAgent(t *testing.T) {
+	r, ag := agentRig(t)
+	ctx := t.Context()
+	for _, name := range []string{"web", "db", "cache", "old"} {
+		a := app(name)
+		a.Host, a.AutoSync = "edge", true
+		if _, err := r.c.CreateApp(ctx, a); err != nil {
+			t.Fatal(err)
+		}
+		r.waitIdle(t, name)
+	}
+	if err := r.c.DeleteApp(ctx, "web", true, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.c.DeleteApp(ctx, "cache", false, false); err != nil {
+		t.Fatal(err)
+	}
+	ag.mu.Lock()
+	if !slices.Equal(ag.removed, []string{"web true false", "cache false true"}) {
+		t.Fatalf("removed %v", ag.removed)
+	}
+	ag.err = fmt.Errorf("host edge: %w", agents.ErrOffline)
+	ag.mu.Unlock()
+	if r.e.syncCount() != 0 {
+		t.Fatal("the Control Plane's engine was used")
+	}
+
+	err := r.c.DeleteApp(ctx, "db", true, false)
+	if !errors.Is(err, domain.ErrWaitingForHost) {
+		t.Fatalf("offline: %v", err)
+	}
+	a, _ := r.st.GetApp(ctx, "db")
+	if a.Deleting != "containers" {
+		t.Fatalf("not recorded as being deleted: %+v", a)
+	}
+	ops, _ := r.st.ListOps(ctx, "db")
+	r.c.Refresh(ctx, "db")
+	r.waitIdle(t, "db")
+	if now, _ := r.st.ListOps(ctx, "db"); len(now) != len(ops) {
+		t.Fatal("Auto-Sync synced an Application being deleted")
+	}
+
+	ag.mu.Lock()
+	ag.err = nil
+	ag.mu.Unlock()
+	r.c.Resynced(ctx, "edge")
+	for deadline := time.Now().Add(2 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		if _, err := r.st.GetApp(ctx, "db"); errors.Is(err, domain.ErrNotFound) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the waiting delete didn't finish on resync")
+		}
+	}
+
+	if err := r.c.ForgetApp(ctx, "old"); err != nil {
+		t.Fatal(err)
+	}
+	ag.mu.Lock()
+	defer ag.mu.Unlock()
+	if _, err := r.st.GetApp(ctx, "old"); !errors.Is(err, domain.ErrNotFound) || slices.Contains(ag.removed, "old false false") {
+		t.Fatalf("forget: %v, removed %v", err, ag.removed)
+	}
+}
+
+// awaitEvent returns the first event of typ for app, failing after a while.
+func awaitEvent(t *testing.T, events <-chan domain.Event, typ, app string) domain.Event {
+	t.Helper()
+	for deadline := time.After(2 * time.Second); ; {
+		select {
+		case e := <-events:
+			if e.Type == typ && e.App == app {
+				return e
+			}
+		case <-deadline:
+			t.Fatalf("no %s event for %s", typ, app)
+		}
+	}
+}
+
+// The hub's callbacks (M3-06, M4-08): a report shows the Sync Operation and the status, progress goes to the UI as
+// it comes, a removal from the outbox shows the app gone.
+func TestAgentCallbacks(t *testing.T) {
+	r, _ := agentRig(t)
+	ctx := t.Context()
+	a := app("web")
+	a.Host = "edge"
+	r.c.CreateApp(ctx, a)
+	r.waitIdle(t, "web")
+	events, unsub := r.c.Subscribe()
+	defer unsub()
+
+	id, _ := r.st.CreateOp(ctx, domain.SyncOperation{App: "web", Revision: "r1", Trigger: "self-heal"})
+	r.st.FinishOp(ctx, id, domain.OpSucceeded, "")
+	r.c.AgentReported(ctx, "web")
+	if op := awaitEvent(t, events, "op", "web").Data.(domain.SyncOperation); op.ID != id || op.Trigger != "self-heal" {
+		t.Fatalf("op event %+v", op)
+	}
+	awaitEvent(t, events, "app", "web")
+
+	r.c.AgentProgress(ctx, "web", domain.ProgressEvent{OpID: id, Resource: "Image busybox", Status: "Pulling"})
+	if p := awaitEvent(t, events, "progress", "web").Data.(domain.ProgressEvent); p.OpID != id || p.Status != "Pulling" {
+		t.Fatalf("progress %+v", p)
+	}
+
+	r.st.DeleteApp(ctx, "web") // the store dropped it when it applied the Agent's removal
+	r.c.AgentRemoved(ctx, "edge", "web")
+	awaitEvent(t, events, "app-deleted", "web")
+	r.c.mu.Lock()
+	_, kept := r.c.apps["web"]
+	r.c.mu.Unlock()
+	if kept {
+		t.Fatal("the controller still holds the removed app")
+	}
+}
+
+// Q83: an App of Apps deleted with a child on an offline Host waits for it, and goes once that child is gone.
+func TestAppOfAppsDeleteWaitsForChild(t *testing.T) {
+	r, ag := agentRig(t)
+	ctx := t.Context()
+	parent := app("platform")
+	parent.Kind = domain.KindApps
+	r.st.CreateApp(ctx, parent)
+	for _, name := range []string{"local-child", "edge-child"} {
+		ch := app(name)
+		ch.Parent, ch.Kind = "platform", domain.KindCompose
+		if name == "edge-child" {
+			ch.Host = "edge"
+		}
+		r.st.CreateApp(ctx, ch)
+	}
+	ag.err = fmt.Errorf("host edge: %w", agents.ErrOffline)
+
+	err := r.c.DeleteApp(ctx, "platform", true, false)
+	if !errors.Is(err, domain.ErrWaitingForHost) || !strings.Contains(err.Error(), "edge-child") {
+		t.Fatalf("delete: %v", err)
+	}
+	if _, err := r.st.GetApp(ctx, "local-child"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("the child on a reachable Host should be gone: %v", err)
+	}
+	p, _ := r.st.GetApp(ctx, "platform")
+	ch, _ := r.st.GetApp(ctx, "edge-child")
+	if p.Deleting != "containers" || ch.Deleting != "containers" {
+		t.Fatalf("recorded as being deleted: parent %q, child %q", p.Deleting, ch.Deleting)
+	}
+
+	ag.mu.Lock()
+	ag.err = nil
+	ag.mu.Unlock()
+	r.c.Resynced(ctx, "edge")
+	for deadline := time.Now().Add(2 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		_, cerr := r.st.GetApp(ctx, "edge-child")
+		_, perr := r.st.GetApp(ctx, "platform")
+		if errors.Is(cerr, domain.ErrNotFound) && errors.Is(perr, domain.ErrNotFound) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("child %v, App of Apps %v: want both gone once the Host is back", cerr, perr)
+		}
+	}
+}
+
+// The rest of deleting through Agents: what forget refuses, an Agent's own error, a retry that fails, a delete that
+// keeps containers waiting, Auto-Sync leaving an Application being deleted alone, and a removal from the outbox
+// finishing its App of Apps.
+func TestDeleteThroughAgentEdges(t *testing.T) {
+	r, ag := agentRig(t)
+	ctx := t.Context()
+	parent := app("platform")
+	parent.Kind = domain.KindApps
+	r.st.CreateApp(ctx, parent)
+	if err := r.c.ForgetApp(ctx, "platform"); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("forget an App of Apps: %v", err)
+	}
+	if err := r.c.ForgetApp(ctx, "nope"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("forget an unknown app: %v", err)
+	}
+	for _, name := range []string{"web", "keep", "child"} {
+		a := app(name)
+		a.Host, a.Kind = "edge", domain.KindCompose
+		if name == "child" {
+			a.Parent = "platform"
+		}
+		r.st.CreateApp(ctx, a)
+	}
+	r.c.mu.Lock()
+	r.c.state("web").syncing = true
+	r.c.mu.Unlock()
+	if err := r.c.ForgetApp(ctx, "web"); !errors.Is(err, domain.ErrBusy) {
+		t.Fatalf("forget while syncing: %v", err)
+	}
+	r.c.setSyncing("web", false)
+
+	ag.mu.Lock()
+	ag.err = errors.New("permission denied")
+	ag.mu.Unlock()
+	if err := r.c.DeleteApp(ctx, "web", true, false); err == nil || err.Error() != "permission denied" {
+		t.Fatalf("the Agent's error: %v", err)
+	}
+	r.st.SetAppDeleting(ctx, "web", "containers")
+	r.c.finishDeleting(ctx, "web") // a retry that fails again: logged, the app stays
+	if a, err := r.st.GetApp(ctx, "web"); err != nil || a.Deleting != "containers" {
+		t.Fatalf("after a failed retry: %+v %v", a, err)
+	}
+
+	ag.mu.Lock()
+	ag.err = fmt.Errorf("host edge: %w", agents.ErrOffline)
+	ag.mu.Unlock()
+	if err := r.c.DeleteApp(ctx, "keep", false, false); !errors.Is(err, domain.ErrWaitingForHost) {
+		t.Fatal(err)
+	}
+	k, _ := r.st.GetApp(ctx, "keep")
+	if k.Deleting != "keep" {
+		t.Fatalf("keep-containers recorded as %q", k.Deleting)
+	}
+	v := app("vols")
+	v.Host, v.Kind = "edge", domain.KindCompose
+	r.st.CreateApp(ctx, v)
+	if err := r.c.DeleteApp(ctx, "vols", true, true); !errors.Is(err, domain.ErrWaitingForHost) {
+		t.Fatal(err)
+	}
+	if v, _ := r.st.GetApp(ctx, "vols"); v.Deleting != "volumes" {
+		t.Fatalf("with volumes recorded as %q", v.Deleting)
+	}
+	k.AutoSync = true
+	r.st.UpdateApp(ctx, k)
+	r.c.reconcile(ctx, k) // never synced: OutOfSync, Auto-Sync on, but being deleted
+	r.waitIdle(t, "keep")
+	if ops, _ := r.st.ListOps(ctx, "keep"); len(ops) != 0 {
+		t.Fatalf("Auto-Sync synced an app being deleted: %+v", ops)
+	}
+
+	if err := r.c.DeleteApp(ctx, "platform", true, false); !errors.Is(err, domain.ErrWaitingForHost) {
+		t.Fatal(err)
+	}
+	r.c.reconcile(ctx, func() domain.Application { a, _ := r.st.GetApp(ctx, "child"); return a }())
+	ag.mu.Lock()
+	ag.err = nil
+	ag.mu.Unlock()
+	r.st.DeleteApp(ctx, "child") // the store applied the Agent's removal from its outbox
+	r.c.AgentRemoved(ctx, "edge", "child")
+	if _, err := r.st.GetApp(ctx, "platform"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("the App of Apps stays after its last child: %v", err)
+	}
+}
+
+// Forgetting an App of Apps' last child, while the App of Apps waits to be deleted, finishes it.
+func TestForgetLastChildFinishesParent(t *testing.T) {
+	r, ag := agentRig(t)
+	ctx := t.Context()
+	parent := app("platform")
+	parent.Kind = domain.KindApps
+	r.st.CreateApp(ctx, parent)
+	ch := app("child")
+	ch.Host, ch.Kind, ch.Parent = "edge", domain.KindCompose, "platform"
+	r.st.CreateApp(ctx, ch)
+	ag.err = fmt.Errorf("host edge: %w", agents.ErrOffline)
+	if err := r.c.DeleteApp(ctx, "platform", true, false); !errors.Is(err, domain.ErrWaitingForHost) {
+		t.Fatal(err)
+	}
+	if err := r.c.ForgetApp(ctx, "child"); err != nil { // its Host is gone for good
+		t.Fatal(err)
+	}
+	if _, err := r.st.GetApp(ctx, "platform"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("the App of Apps stays: %v", err)
 	}
 }

@@ -28,6 +28,11 @@ message Envelope {
     RotateKey rotate_key = 25;
     KeyRotation key_rotation = 26;
     OutboxAck outbox_ack = 27;
+    RemoveApp remove_app = 28;
+    AppRemoved app_removed = 29;
+    RegistryAuthRequest registry_auth_request = 30;
+    RegistryAuth registry_auth = 31;
+    SyncProgress sync_progress = 32;
   }
 }
 
@@ -165,7 +170,48 @@ message OutboxEntry {
   oneof event {
     StatusReport status_report = 3;
     SyncOperationReport sync_operation_report = 4;
+    AppRemoved app_removed = 5;
   }
+}
+
+// RemoveApp has the Agent remove an Application (Q83): its containers and networks, with volumes only when asked; with
+// keep_containers it only forgets the Application (no Self-Heal, no restore) and leaves its containers and folder.
+// Answered by AppRemoved (reply_to).
+message RemoveApp {
+  string app = 1;
+  bool volumes = 2;
+  bool keep_containers = 3;
+}
+
+// AppRemoved answers a RemoveApp; error empty when it was removed. One whose answer couldn't be sent goes to the outbox.
+message AppRemoved {
+  string app = 1;
+  string error = 2;
+}
+
+// RegistryAuthRequest asks for the credentials of the registries a Sync's images come from (Q85), before pulling.
+message RegistryAuthRequest {
+  repeated string registries = 1;
+}
+
+// RegistryAuth answers it (reply_to) with the credentials the Control Plane has for those registries, each
+// age-encrypted to the Host's Host Key: only that Agent decrypts them, in memory, for that Sync (Q86).
+message RegistryAuth {
+  repeated SealedCredential credentials = 1;
+}
+
+message SealedCredential {
+  string registry = 1;
+  bytes sealed = 2; // age ciphertext of {"username": ..., "password": ...}
+}
+
+// SyncProgress is a Sync's progress as the Agent runs it (Q87): pulling, creating, started, …
+message SyncProgress {
+  string app = 1;
+  uint64 op = 2;
+  string resource = 3;
+  string status = 4;
+  string text = 5;
 }
 
 // OutboxAck tells the Agent the Control Plane has its entries up to seq: it deletes them. An entry sent again (no ack

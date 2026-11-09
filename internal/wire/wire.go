@@ -87,6 +87,11 @@ func (c *Conn) Send(ctx context.Context, e *agentv1.Envelope) error {
 	if e.GetBlobChunk() != nil {
 		q = c.bulk
 	}
+	select { // first: with room in the queue, the select below may take either way on a closed connection
+	case <-c.done:
+		return c.Err()
+	default:
+	}
 	select {
 	case q <- e:
 		return nil

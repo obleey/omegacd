@@ -148,7 +148,7 @@ func (ag *Agent) restore(ctx context.Context, a App) error {
 				return err
 			}
 		}
-		return ag.apply(ctx, a, r, missing, nil) // recreate: bind mounts re-attach to the restored files
+		return ag.apply(ctx, a, r, missing, domain.SyncOptions{}) // recreate: bind mounts re-attach to the restored files
 	})
 }
 
@@ -210,7 +210,11 @@ func reclaim(ctx context.Context, root, dir, image string) error {
 
 // record puts a report in the outbox and has a live connection send it (M3-06).
 func (ag *Agent) record(ctx context.Context, rep *agentv1.SyncOperationReport) error {
-	if _, err := ag.db.Record(ctx, &agentv1.OutboxEntry{Event: &agentv1.OutboxEntry_SyncOperationReport{SyncOperationReport: rep}}); err != nil {
+	return ag.recordEntry(ctx, &agentv1.OutboxEntry{Event: &agentv1.OutboxEntry_SyncOperationReport{SyncOperationReport: rep}})
+}
+
+func (ag *Agent) recordEntry(ctx context.Context, e *agentv1.OutboxEntry) error {
+	if _, err := ag.db.Record(ctx, e); err != nil {
 		return err
 	}
 	select {
@@ -261,7 +265,7 @@ func (ag *Agent) selfHeal(ctx context.Context, name string) error {
 		why = fmt.Sprintf("drifted: %d services", len(d))
 	}
 	ag.log.InfoContext(ctx, "self-healing", "why", why)
-	return ag.report(ctx, a, r, triggerSelfHeal, func() error { return ag.apply(ctx, a, r, false, nil) })
+	return ag.report(ctx, a, r, triggerSelfHeal, func() error { return ag.apply(ctx, a, r, false, domain.SyncOptions{}) })
 }
 
 // running reports whether an Application's containers are up: Healthy, or still starting (Progressing). Anything

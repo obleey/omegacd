@@ -70,6 +70,11 @@ func application(a App, r Revision) domain.Application {
 // decrypted, and the project is rendered (with the decrypted .env) and brought up. Only then is r recorded as
 // deployed: a failed Deploy leaves the previous Revision as the one to restore.
 func (ag *Agent) Deploy(ctx context.Context, a App, r Revision, fetch func(hash string) ([]byte, error), progress func(domain.ProgressEvent)) error {
+	return ag.deploy(ctx, a, r, fetch, domain.SyncOptions{Progress: progress})
+}
+
+// deploy is Deploy with the engine's options: progress and, from a Control Plane, registry credentials (Q85).
+func (ag *Agent) deploy(ctx context.Context, a App, r Revision, fetch func(hash string) ([]byte, error), opts domain.SyncOptions) error {
 	unlock, err := ag.lock()
 	if err != nil {
 		return err
@@ -80,12 +85,12 @@ func (ag *Agent) Deploy(ctx context.Context, a App, r Revision, fetch func(hash 
 	if err := ag.cache.Add(ctx, r, fetch); err != nil {
 		return err
 	}
-	return ag.apply(ctx, a, r, false, progress)
+	return ag.apply(ctx, a, r, false, opts)
 }
 
 // apply writes a cached Revision into a's folder, decrypts it and brings the project up; recreate re-attaches every
 // container's bind mounts (after a restore the files are new). It records r as deployed. Caller holds the lock.
-func (ag *Agent) apply(ctx context.Context, a App, r Revision, recreate bool, progress func(domain.ProgressEvent)) error {
+func (ag *Agent) apply(ctx context.Context, a App, r Revision, recreate bool, opts domain.SyncOptions) error {
 	if err := ag.work.Write(ctx, a, r); err != nil {
 		return err
 	}
@@ -106,8 +111,8 @@ func (ag *Agent) apply(ctx context.Context, a App, r Revision, recreate bool, pr
 	if err := ag.engine.Validate(ctx, app, dir); err != nil {
 		return err
 	}
-	err = ag.engine.Sync(ctx, app, dir, domain.SyncOptions{Prune: app.Prune, PruneVolumes: app.PruneVolumes,
-		ForceRecreate: recreate, Progress: progress})
+	opts.Prune, opts.PruneVolumes, opts.ForceRecreate = app.Prune, app.PruneVolumes, recreate
+	err = ag.engine.Sync(ctx, app, dir, opts)
 	if err != nil {
 		return err
 	}
@@ -187,6 +192,20 @@ func (ag *Agent) Watch(ctx context.Context, changed func(app string)) error {
 			changed(a.Name)
 		}
 	})
+}
+
+// Forget drops an Application from the Agent without touching its containers or folder (app delete --cascade=false):
+// no Self-Heal or restore of it any more.
+func (ag *Agent) Forget(ctx context.Context, name string) error {
+	unlock, err := ag.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if _, err := ag.db.GetApp(ctx, name); err != nil {
+		return err
+	}
+	return ag.db.DeleteApp(ctx, name)
 }
 
 // Remove deletes an Application from the Host: its containers and networks (with volumes only when asked), its

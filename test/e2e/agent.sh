@@ -9,7 +9,7 @@ check() { if eval "$2"; then echo "PASS  $1"; else echo "FAIL  $1"; fail=1; fi; 
 # agent runs the Agent with the given settings until it says it runs (then stops it: exit 0) or exits on its own (its
 # exit code); its log is the output
 agent() {
-  env -i PATH="$PATH" HOME="$T/home" ${DOCKER_HOST:+DOCKER_HOST=$DOCKER_HOST} ${OMEGACD_LOG_LEVEL:+OMEGACD_LOG_LEVEL=$OMEGACD_LOG_LEVEL} \
+  env -i PATH="$PATH" ${GOCOVERDIR:+GOCOVERDIR=$GOCOVERDIR} HOME="$T/home" ${DOCKER_HOST:+DOCKER_HOST=$DOCKER_HOST} ${OMEGACD_LOG_LEVEL:+OMEGACD_LOG_LEVEL=$OMEGACD_LOG_LEVEL} \
     "$@" "$BIN" agent > "$T/agent.log" 2>&1 &
   local pid=$! rc
   for _ in $(seq 100); do
@@ -49,9 +49,9 @@ case $(stat -f -c %T "$T/run/omegacd" 2>/dev/null || echo disk) in
 tmpfs | ramfs) check "a work dir in RAM isn't warned about (M2-07)" '! echo "$out" | grep -q "a work dir is not in RAM"' ;;
 *) check "a work dir on disk is warned about: decrypted secrets would stay there (M2-07)" 'echo "$out" | grep -q "a work dir is not in RAM"' ;;
 esac
-out=$(env -i PATH="$PATH" HOME="$T/home" XDG_RUNTIME_DIR="$T/run" "$BIN" agent restore --files 2>&1); rc=$?
+out=$(env -i PATH="$PATH" ${GOCOVERDIR:+GOCOVERDIR=$GOCOVERDIR} HOME="$T/home" XDG_RUNTIME_DIR="$T/run" "$BIN" agent restore --files 2>&1); rc=$?
 check "omegacd agent restore --files runs without an engine and exits" '[ $rc -eq 0 ]'
-out=$(env -i PATH="$PATH" HOME="$T/home" "$BIN" agent restore 2>&1); rc=$?
+out=$(env -i PATH="$PATH" ${GOCOVERDIR:+GOCOVERDIR=$GOCOVERDIR} HOME="$T/home" "$BIN" agent restore 2>&1); rc=$?
 check "an unknown agent command is refused with its usage" '[ $rc -ne 0 ] && echo "$out" | grep -q "usage: omegacd agent"'
 # per-Application work dirs (M2-09): the roots the Agent allows besides its own; deploying into them is in the
 # Agent's integration tests on every engine (the binary has no Control Plane to deploy from until M4-01)
@@ -65,7 +65,7 @@ tmpfs | ramfs) check "an allowed root in RAM starts without a warning" '[ $rc -e
 esac
 # offline rollback (M2-08): what the binary reaches without a Control Plane to deploy from (that comes with M4-01); the
 # rollback itself, beside a running Agent with Self-Heal, is in the Agent's integration tests on every engine
-ra() { env -i PATH="$PATH" HOME="$T/home" XDG_RUNTIME_DIR="$T/run" ${DOCKER_HOST:+DOCKER_HOST=$DOCKER_HOST} "$BIN" agent rollback "$@" 2>&1; }
+ra() { env -i PATH="$PATH" ${GOCOVERDIR:+GOCOVERDIR=$GOCOVERDIR} HOME="$T/home" XDG_RUNTIME_DIR="$T/run" ${DOCKER_HOST:+DOCKER_HOST=$DOCKER_HOST} "$BIN" agent rollback "$@" 2>&1; }
 out=$(ra); rc=$?
 check "omegacd agent rollback lists the cached Revisions: none yet" '[ $rc -eq 0 ] && echo "$out" | grep -q "no Applications deployed on this Host"'
 out=$(ra web); rc=$?

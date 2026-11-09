@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"filippo.io/age"
+
 	"github.com/obleey/omegacd/internal/agents"
 	"github.com/obleey/omegacd/internal/domain"
 	agentv1 "github.com/obleey/omegacd/internal/proto/agent/v1"
@@ -101,13 +103,14 @@ func TrustCA(file string) (*http.Client, error) {
 
 // Connection is how the Agent reaches its Control Plane.
 type Connection struct {
-	URL          string             // the Control Plane's, e.g. https://omegacd.example.com
-	Invite       string             // sent until the Agent is enrolled; the Control Plane ignores it after
-	Key          ed25519.PrivateKey // a rotation replaces it
-	KeyPath      string             // where Key is kept: a rotation writes the new one next to it, then replaces it
-	AgeRecipient string             // of the Host Key, registered at enrollment
-	Engine       EngineInfo         // reported in Hello; empty when none was reachable at start
-	HTTPClient   *http.Client       // trusts OMEGACD_AGENT_CA_FILE's CAs; nil: the system's (Q95)
+	URL          string              // the Control Plane's, e.g. https://omegacd.example.com
+	Invite       string              // sent until the Agent is enrolled; the Control Plane ignores it after
+	Key          ed25519.PrivateKey  // a rotation replaces it
+	KeyPath      string              // where Key is kept: a rotation writes the new one next to it, then replaces it
+	AgeRecipient string              // of the Host Key, registered at enrollment
+	Engine       EngineInfo          // reported in Hello; empty when none was reachable at start
+	HTTPClient   *http.Client        // trusts OMEGACD_AGENT_CA_FILE's CAs; nil: the system's (Q95)
+	HostKey      *age.X25519Identity // decrypts the registry credentials the Control Plane sends (Q86)
 }
 
 // Connect holds the connection to the Control Plane until ctx ends, reconnecting with backoff (Q20, Q51).
@@ -125,6 +128,7 @@ func (ag *Agent) serve(ctx context.Context, conn *wire.Conn, c *Connection) erro
 	var rotation uint64 // the KeyRotation waiting for its answer
 	var next ed25519.PrivateKey
 	b := newBlobs(conn)
+	q := newRequests(conn)
 	for {
 		e, err := conn.Recv(ctx)
 		if err != nil {
@@ -194,8 +198,11 @@ func (ag *Agent) serve(ctx context.Context, conn *wire.Conn, c *Connection) erro
 				ag.log.Warn("enrolled, waiting for an admin to approve this Agent: the fingerprint the Control Plane shows "+
 					"must be this one", "host", s.Host, "fingerprint", s.Fingerprint)
 			}
+		case e.ReplyTo != 0 && e.ReplyTo != rotation && q.answer(e):
 		case e.GetDesiredState() != nil:
-			go ag.desired(ctx, conn, b, e.GetDesiredState())
+			go ag.desired(ctx, conn, b, q, c.HostKey, e.GetDesiredState())
+		case e.GetRemoveApp() != nil:
+			go ag.removeApp(ctx, conn, e.Id, e.GetRemoveApp())
 		case e.GetBlobChunk() != nil:
 			b.chunk(e.GetBlobChunk())
 		case e.GetError() != nil && e.ReplyTo != 0 && b.refused(e.ReplyTo, e.GetError().Message):

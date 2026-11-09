@@ -22,6 +22,7 @@ import (
 	"github.com/compose-spec/compose-go/v2/loader"
 	"github.com/compose-spec/compose-go/v2/types"
 	cerrdefs "github.com/containerd/errdefs"
+	"github.com/distribution/reference"
 	"github.com/docker/cli/cli/command"
 	"github.com/docker/cli/cli/config/configfile"
 	"github.com/docker/cli/cli/config/credentials"
@@ -458,6 +459,13 @@ func (e *Engine) Sync(ctx context.Context, app domain.Application, dir string, o
 			}
 		}
 	}
+	if opts.Auth != nil {
+		creds, err := opts.Auth(ctx, registries(p))
+		if err != nil {
+			return fmt.Errorf("registry credentials: %w", err)
+		}
+		opts.Registries = append(slices.Clip(opts.Registries), creds...)
+	}
 	svc, err := newCompose(authCLI{Cli: hc.cli, cf: registryConfig(opts.Registries)}, opts.Progress)
 	if err != nil {
 		return err
@@ -891,6 +899,23 @@ type authCLI struct {
 }
 
 func (c authCLI) ConfigFile() *configfile.ConfigFile { return c.cf }
+
+// registries are the registries the project's images come from, as the docker CLI names them (docker.io for Docker
+// Hub), each once.
+func registries(p *types.Project) []string {
+	var out []string
+	for _, svc := range p.Services {
+		ref, err := reference.ParseNormalizedNamed(svc.Image)
+		if err != nil {
+			continue // Validate refused it already, or the engine will say why
+		}
+		if d := reference.Domain(ref); !slices.Contains(out, d) {
+			out = append(out, d)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
 
 // registryConfig keys credentials the way the docker CLI config looks them up per image domain.
 func registryConfig(regs []domain.RegistryCredential) *configfile.ConfigFile {

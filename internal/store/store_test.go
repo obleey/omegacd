@@ -540,3 +540,50 @@ func TestApplyAgentReport(t *testing.T) {
 	_, err = s.ApplyAgentReport(ctx, "nope", 1, domain.AgentReport{App: "web"})
 	wantErr(t, err, domain.ErrNotFound)
 }
+
+// M4-08: a delete waiting for its Host is recorded on the app; the Agent's removal from its outbox drops it, once,
+// only for an app on that Host that is being deleted.
+func TestAgentRemoval(t *testing.T) {
+	s, _ := open(t)
+	for _, h := range []string{"edge", "other"} {
+		inv, _ := s.CreateInvite(ctx, h, time.Now().Add(time.Hour))
+		_, err := s.Enroll(ctx, inv, []byte("key-"+h), "age1"+h, time.Now())
+		must(t, err)
+	}
+	must(t, s.CreateApp(ctx, domain.Application{Name: "web", Host: "edge"}))
+	must(t, s.CreateApp(ctx, domain.Application{Name: "db", Host: "edge"}))
+	must(t, s.CreateApp(ctx, domain.Application{Name: "api", Host: "other"}))
+	wantErr(t, s.SetAppDeleting(ctx, "nope", "volumes"), domain.ErrNotFound)
+	must(t, s.SetAppDeleting(ctx, "web", "volumes"))
+	must(t, s.SetAppDeleting(ctx, "api", "containers"))
+	if a, _ := s.GetApp(ctx, "web"); a.Deleting != "volumes" {
+		t.Fatalf("deleting %q", a.Deleting)
+	}
+	must(t, s.UpdateApp(ctx, domain.Application{Name: "web", Host: "edge", AutoSync: true}))
+	if a, _ := s.GetApp(ctx, "web"); a.Deleting != "volumes" {
+		t.Fatalf("UpdateApp cleared deleting: %q", a.Deleting)
+	}
+
+	for i, app := range []string{"db", "api"} { // not being deleted; another Host's (in seq order: a later seq goes first)
+		applied, err := s.ApplyAgentRemoval(ctx, "edge", uint64(i+1), app)
+		must(t, err)
+		if _, gerr := s.GetApp(ctx, app); !applied || gerr != nil {
+			t.Fatalf("%s: applied %v, then %v", app, applied, gerr)
+		}
+	}
+	applied, err := s.ApplyAgentRemoval(ctx, "edge", 3, "web")
+	must(t, err)
+	if _, gerr := s.GetApp(ctx, "web"); !applied || !errors.Is(gerr, domain.ErrNotFound) {
+		t.Fatalf("applied %v, app %v", applied, gerr)
+	}
+	must(t, s.CreateApp(ctx, domain.Application{Name: "web", Host: "edge"}))
+	must(t, s.SetAppDeleting(ctx, "web", "keep"))
+	if applied, err := s.ApplyAgentRemoval(ctx, "edge", 3, "web"); err != nil || applied {
+		t.Fatalf("an entry sent again applied again: %v %v", applied, err)
+	}
+	if _, err := s.GetApp(ctx, "web"); err != nil {
+		t.Fatal("the new app of the same name went with the old entry")
+	}
+	_, err = s.ApplyAgentRemoval(ctx, "nope", 1, "web")
+	wantErr(t, err, domain.ErrNotFound)
+}
