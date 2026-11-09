@@ -60,7 +60,9 @@ Plane's user, root included, with a warning (Q89).
 
 Remove (Q9, Q18): SSH/TLS Hosts and their settings, the remote file helper, `OMEGACD_LOCAL_HOST`, central decryption
 and stored private Host Keys (the Control Plane keeps Agents' public keys only), the old layouts and their fallbacks,
-`import --ssh`. A fresh v0.2 database schema; no migration.
+`import --ssh`, and with them the image's `openssh-client` (the Dockerfile installs it only for the Docker client's
+`ssh://` Hosts; Git over SSH is go-git) and `OMEGACD_SSH_KNOWN_HOSTS` with its known_hosts handling. A fresh v0.2
+database schema; no migration.
 
 A v0.1 database is refused with a message (export with v0.1's `app export`, then reinstall) and left untouched (Q90).
 
