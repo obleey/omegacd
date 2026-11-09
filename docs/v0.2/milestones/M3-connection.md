@@ -62,9 +62,13 @@ Optional CIDR list per Host (Q28); the client address comes through `OMEGACD_TRU
 
 ### M3-06 · Resync and fallback poll
 **Status:** todo
-**Depends on:** M3-01, M2-02
+**Depends on:** M3-01, M2-02, M4-01 (Q79: done after it, to heal real Syncs)
 
 On connect and every 5 minutes (Q78) the Agent sends per-app checksums; the Control Plane answers with what differs (Q16):
 the safety net for missed signals, and how the outbox gets drained after offline time.
 
-**Done when:** a signal dropped on purpose is healed by the next resync, and outbox entries arrive exactly once.
+It also delivers Syncs waiting for an offline Host (Q81) and never deletes: Applications the Control Plane doesn't
+know are "on the Host, not managed" (Q91).
+
+**Done when:** a signal dropped on purpose is healed by the next resync, a Sync waiting for an offline Host runs on
+its reconnect, and outbox entries arrive exactly once.

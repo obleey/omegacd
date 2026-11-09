@@ -143,6 +143,11 @@ only the Control Plane, never Agents or users. A reverse proxy in between must p
   (none: refused); newer Agents than the Control Plane are refused too (upgrade the Control Plane first); development
   builds without a semver are let through. Each Hello (version, hostname, OS/arch, engine, rootless) is recorded on the
   Host, a refused one with the reason.
+- **Trust both ways**: the Agent's signature proves the Agent; TLS proves the Control Plane, so the Agent refuses
+  `http://` except on loopback (`OMEGACD_AGENT_CA_FILE` for a private CA, Q95).
+- **Registry credentials** on request: the Agent asks for a registry's when it pulls from it, and gets them
+  age-encrypted to its Host Key, decrypted in memory for that pull only (Q84–Q86).
+- **Deletes** go through the Agent (`RemoveApp`) and wait for an offline Host; resync never deletes (Q83, Q91).
 - **Logs** stream over the same connection. The web terminal is v0.3 and paid (Q42, Q44).
 
 ### Enrollment and authentication (Q22, Q28, Q43, Q53)

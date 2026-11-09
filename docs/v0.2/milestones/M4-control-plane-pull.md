@@ -7,18 +7,24 @@ See [architecture](../architecture.md#control-plane-q9-q23-q26-q30-q31-q35-q36-q
 **Status:** todo
 **Depends on:** M1-03, M3-03
 
-Sync = Source Server Render → blobs stored (kept, Q31) → desired state sent to the Host's Agent → Sync Operation
-from the Agent's reports. Queued Syncs for offline Hosts ("waiting for Host"); a newer Sync replaces a queued one
-(Q38). Auto-Sync, Self-Heal, retries, Prune and Rollback keep today's semantics. The Desired State carries the
-Application's work dir (Q57, M2-09), and the Sync Operation's ID: the Agent's log entries for it carry the same `op`
-(Q62, M2-10).
+Sync = Source Server Render → blobs stored (kept, Q31) → desired state sent to the Host's Agent, which asks for the
+blobs it lacks → Sync Operation from the Agent's reports. Agents sit behind the controller's engine seam; push Hosts
+and `local` keep working until M4-05 and M4-04 (Q80). A Sync to an offline Host is a Sync Operation "Waiting for
+Host", kept in the database; a newer Sync supersedes it (Q38, Q81); delivering it on reconnect is M3-06's resync.
+Auto-Sync, retries, Prune and Rollback keep today's semantics; Self-Heal runs on the Agent, online too, its runs
+recorded as Sync Operations with trigger `self-heal` (Q82). A Sync whose connection drops finishes on the Agent and
+shows "Running, Host disconnected" until its result arrives (Q93). The Desired State carries the Application's work
+dir (Q57, M2-09), and the Sync Operation's ID: the Agent's log entries for it carry the same `op` (Q62, M2-10). The
+Agent trusts the Control Plane only over TLS (loopback http allowed), `OMEGACD_AGENT_CA_FILE` for a private CA (Q95).
 
-**Done when:** the controller unit tests pass with a fake Agent, and an integration test syncs, rolls back and queues
-against a real Agent; the e2e follows one Sync by its `op` from the Control Plane's log into the Agent's.
+**Done when:** the controller unit tests pass with a fake Agent, and an integration test syncs, rolls back and waits
+for an offline Host against a real Agent; the e2e deploys an Application from Git through an enrolled Agent and
+follows one Sync by its `op` from the Control Plane's log into the Agent's; an Agent refuses an `http://` Control
+Plane that isn't on loopback.
 
 ### M4-02 · Status from Agents, last-known state offline
 **Status:** todo
-**Depends on:** M4-01
+**Depends on:** M4-01, M4-08
 
 Sync Status from target vs deployed Revision plus the Agent's drift report; Live State, Diff, Health, resources and
 logs from the Agent (Q23). Offline: the last known values with their time, "Host offline since …" (Q38). Disconnected
@@ -43,6 +49,9 @@ come from Render (Q46). Every child names its Host (already so since rc.5).
 is reachable and `KUBERNETES_SERVICE_HOST` is unset), enrolled automatically, otherwise a normal Agent; the startup log
 says on or off and why (Q26, Q35).
 
+Its Host is `local`, its state dir in the data dir, its work dir `OMEGACD_WORKDIR` (Q88); it may run as the Control
+Plane's user, root included, with a warning (Q89).
+
 **Done when:** a full install on a Docker host manages its own machine with no enrollment step; in Kubernetes it's off.
 
 ### M4-05 · Delete push and legacy
@@ -53,7 +62,10 @@ Remove (Q9, Q18): SSH/TLS Hosts and their settings, the remote file helper, `OME
 and stored private Host Keys (the Control Plane keeps Agents' public keys only), the old layouts and their fallbacks,
 `import --ssh`. A fresh v0.2 database schema; no migration.
 
-**Done when:** none of it is left (grep), all tests pass, and the binary is smaller.
+A v0.1 database is refused with a message (export with v0.1's `app export`, then reinstall) and left untouched (Q90).
+
+**Done when:** none of it is left (grep), all tests pass, the binary is smaller, and a v0.1 database is refused
+without being changed.
 
 ### M4-06 · History retention and disaster recovery
 **Status:** todo
@@ -73,3 +85,20 @@ With the Source Server down (Q31): reinstalled Agents and Rollbacks to rendered 
 Control Plane's blob store; new Revisions wait with the reason shown.
 
 **Done when:** tested with the Source Server stopped.
+
+### M4-08 · Deletes, registry credentials and live progress through Agents
+**Status:** todo
+**Depends on:** M4-01, M3-06
+
+Split from M4-01 (Q94). Deleting goes through the Agent (`RemoveApp`: delete volumes, keep containers), so `app
+delete`, `--volumes` and `--cascade=false` keep their meaning; to an offline Host it waits, the Application showing
+"Deleting, waiting for Host" until its Agent confirms (Q83). `app delete --forget` (and the UI's dialog) drops an
+Application whose Host is gone for good, after a confirmation (Q92). Registry credentials stay on the Control Plane;
+the Agent asks for a registry's when it pulls from it and gets them age-encrypted to its Host Key, decrypted in memory
+for that pull only: no plaintext on the wire, on a disk or in a log (Q84–Q86). Live Sync progress is streamed by the
+Agent, so the UI's progress view keeps working (Q87).
+
+**Done when:** e2e through an Agent: delete with and without volumes, keep-containers, a delete waiting for an offline
+Host and done on reconnect, `--forget`; an image from a private registry pulled with credentials that appear in no
+log, on no disk of the Agent and never in plaintext on the wire (checked by capturing it); the UI's live progress fed
+by an Agent.
