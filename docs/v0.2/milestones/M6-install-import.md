@@ -37,7 +37,8 @@ dedicated docker-group user (Q10). With the system unit, `omegacd-agent-restore.
 Docker restarts any container (Q59).
 
 For a Podman Host the Agent's user gets `events_logger = "file"` (Self-Heal reads events from it) and
-`log_driver = "k8s-file"` (Podman can't follow journald logs with events in a file) in its `containers.conf.d`.
+`log_driver = "k8s-file"` (Podman can't follow journald logs with events in a file) in its `containers.conf.d`, with
+`log_size_max` set (k8s-file logs grow without limit otherwise; journald rotated them).
 
 **Done when:** both survive a reboot with apps restored offline, including services with a restart policy on rootful
 Docker.

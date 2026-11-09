@@ -49,7 +49,7 @@ run() {
   on "$t" true 2>/dev/null || { echo "can't reach omegacd-test-$t: make ip in $infra (this Mac's address changed?)" >&2; return 1; }
   stop "$t"
   # the repository as it is here, built web UI included; not node_modules, binaries, or what tests left
-  rsync -a --delete --exclude /web/node_modules/ --exclude /bin/ -e "ssh -F $infra/ssh_config" "$repo/" "omegacd-test-$t:omegacd/"
+  rsync -a --delete --exclude /web/node_modules/ --exclude /bin/ --exclude /cover/ -e "ssh -F $infra/ssh_config" "$repo/" "omegacd-test-$t:omegacd/"
   local cmd="make test-all ENGINES='$engines'"
   [ -n "$only" ] && cmd=$only
   echo "=== $t: $cmd"

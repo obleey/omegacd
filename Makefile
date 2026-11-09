@@ -1,4 +1,4 @@
-.PHONY: build web proto test test-integration test-engines test-all test-linux cover e2e docker run stop up down clean
+.PHONY: build web proto test test-integration test-engines test-all test-linux cover cover-profiles gate e2e docker run stop up down clean
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/obleey/omegacd/internal/version.Version=$(VERSION)
@@ -56,10 +56,16 @@ test-all:
 COVERPKG = $(shell go list ./cmd/... ./internal/... | grep -v /internal/proto/ | paste -sd, -)
 cov = $(if $(COVER_DIR),-coverpkg=$(COVERPKG) -coverprofile=$(COVER_DIR)/$(1).out)
 COVER_BASE ?= origin/main
-cover:
+cover: cover-profiles
+	go run ./test/coverage -base $(COVER_BASE) -floor test/coverage-floor cover/*.out
+cover-profiles:
 	rm -rf cover && mkdir -p cover
 	$(MAKE) test-all COVER_DIR=$(CURDIR)/cover
-	go run ./test/coverage -base $(COVER_BASE) -floor test/coverage-floor cover/*.out
+
+# the gate before a push: cover-profiles on every supported Linux Host at once, their coverage merged and checked, one
+# short summary (cover/gate-summary.txt); see test/gate.sh
+gate: web
+	test/gate.sh
 
 # test-all on the supported Linux Hosts: Ubuntu 24.04 and Debian 13, amd64 and arm64, the same tests on each
 # (test/linux.sh: Hetzner servers from ../omegacd-testinfra)

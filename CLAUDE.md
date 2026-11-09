@@ -76,6 +76,7 @@ make test-integration   # against the local Docker engine (docker:dind for remot
 make test-engines       # the Agent against rootful Docker, rootless Docker and rootless Podman (test/engines.sh)
 make test-all           # the whole suite: vet, unit -race, integration, test-engines, e2e with Forgejo
 make test-linux         # test-all on Ubuntu 24.04 and Debian 13, amd64 and arm64: Hetzner servers (test/linux.sh, ../omegacd-testinfra)
+make gate               # the gate before a push: test-linux with coverage, merged and checked; summary in cover/gate-summary.txt
 make e2e                # end-to-end: throwaway OmegaCDs driven through the CLI (needs age-keygen, sops)
 make run                # run locally with data in ./data (OMEGACD_WORKDIR=… to move the work dir)
 make stop               # stop it (only the listener)

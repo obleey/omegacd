@@ -19,7 +19,8 @@ Every kind of test counts: unit, integration, the Agent on every engine, and the
 with `go build -cover` so every OmegaCD process they start records what it ran. Generated protobuf code is left out.
 
 ```sh
-make cover          # the whole suite with coverage on (needs what make test-all needs), then the check
+make gate           # before a push: the whole suite with coverage on every Linux Host, merged and checked, one summary
+make cover          # the same on this machine alone (needs what make test-all needs), then the check
 go run ./test/coverage -base origin/main -floor test/coverage-floor cover/*.out   # the check alone
 ```
 
