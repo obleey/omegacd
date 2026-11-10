@@ -26,6 +26,10 @@ https://github.com/obleey/omegacd.
 - **Before each milestone starts**: walk its tickets against decisions.md, architecture.md and ROADMAP.md (later items
   too: they can change what's built now) and settle what's open, recorded as decisions. Between M2 and M3 that was the
   roadmap's later features, decided as [Q63–Q72](docs/v0.2/decisions.md#later-features-design-check-before-m3-2026-11-08).
+- **Before each ticket**: a short grilling (the `mattpocock-skills:grilling` skill): read the ticket with the code it
+  will touch and its decisions, list what is open (what the docs don't settle, where the code contradicts the plan),
+  and ask it all in one round with recommendations before writing code; or say "nothing open" and start. Decisions
+  found mid-ticket cost a stop and rework (M4: Q99–Q103 all came up while coding).
 - **When a ticket shows a decision is wrong** (step 5): a focused grilling on that question before going on.
 - **Before building something hard to reverse** (the protocol, a database schema, the install path): a full grilling.
 

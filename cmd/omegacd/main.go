@@ -211,7 +211,7 @@ func run(log *slog.Logger) error {
 		srv.Shutdown(shutdown)
 	}()
 	log.Info("omegacd listening", "addr", addr, "data", dataDir, "workdir", workDir, "poll", poll)
-	if err := srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
+	if err := srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) { // coverage: unreachable, a taken port fails at net.Listen; Serve ends only by Shutdown
 		return err
 	}
 	return nil

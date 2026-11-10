@@ -77,5 +77,20 @@ DOCKER_HOST=http://localhost:2375 OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/d
   OMEGACD_AGE_KEY_FILE=$T/age.key "$BIN" > "$T/bad.log" 2>&1; rc=$?
 check "a DOCKER_HOST that isn't an engine address stops it with OmegaCD's own message" '[ $rc -ne 0 ] && grep -q "isn.t a container engine address" "$T/bad.log"'
 
+# settings that stop omegacd at start, each saying why (M4-04)
+stops() { # what it must say, then env for omegacd; runs it with the rest of the settings
+  want=$1; shift
+  env OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_WORKDIR=$T/work OMEGACD_AGE_KEY_FILE=$T/age.key "$@" > "$T/bad.log" 2>&1
+  [ $? -ne 0 ] && grep -q "$want" "$T/bad.log"
+}
+check "a relative OMEGACD_WORKDIR" 'stops "OMEGACD_WORKDIR must be an absolute path" OMEGACD_WORKDIR=./work "$BIN"'
+check "a built-in Agent that can't keep its state" 'mv "$T/data/agent" "$T/agent.kept" && touch "$T/data/agent" &&
+  stops "agent" OMEGACD_BUILTIN_AGENT=true "$BIN"; ok=$?; rm "$T/data/agent"; mv "$T/agent.kept" "$T/data/agent"; [ $ok -eq 0 ]'
+server; sleep 1
+check "a port already taken" 'stops "address already in use" "$BIN"'
+kill $SRV; wait $SRV 2>/dev/null
+check "omegacd agent with a DOCKER_HOST that isn't an engine address" \
+  'stops "isn.t a container engine address" DOCKER_HOST=http://x:2375 HOME=$T/edge "$BIN" agent'
+
 [ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- server log"; tail -25 "$T/server.log"; }
 exit $fail
