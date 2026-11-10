@@ -15,7 +15,7 @@ OmegaCD is early. This is the plan, most important first — it changes as real 
 - [x] Diff tab with Live (compose files on the Host), Desired (in Git) and a Compose diff; syntax colors for ~240 config formats
 - [x] Relative bind mounts not in Git are refused (every Sync would delete their data); warning for secrets written in plain text in compose files
 - [x] Work dir holds only what containers read (no `*.sops.*` copies)
-- [x] Webhooks (GitHub, GitLab, Gitea/Forgejo); polling as the safety net, `OMEGACD_POLL_INTERVAL=0` for webhooks only
+- [x] Webhooks (GitHub, GitLab, Gitea/Forgejo, and a generic one for any other caller); polling as the safety net, `OMEGACD_POLL_INTERVAL=0` for webhooks only
 - [x] The reason an Application is Unknown shown on its tile (e.g. a Git token that stopped working)
 - [x] Install script for Docker Compose and Kubernetes (`deploy/install.sh`), `deploy/compose.yaml`, `deploy/kubernetes.yaml`, `omegacd keygen`
 - [x] Kubernetes: `OMEGACD_LOCAL_HOST=false` hides the `local` Host where no Docker engine runs

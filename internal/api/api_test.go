@@ -329,6 +329,9 @@ func newEnv(t *testing.T, mustChange bool) *env {
 			if h.Get("X-Sig") != secret {
 				return nil, errors.New("bad signature")
 			}
+			if string(body) == "not its format" {
+				return nil, fmt.Errorf("%w: not its format", domain.ErrInvalid)
+			}
 			return []string{"https://example.com/r.git"}, nil
 		},
 		UI: fstest.MapFS{
@@ -543,6 +546,8 @@ func TestWebhook(t *testing.T) {
 		t.Fatal("RepoChanged not called")
 	}
 	e.expect("POST", "/api/webhooks/bitbucket", "{}", 404)
+	e.expect("POST", "/api/webhooks/generic", "not its format", 400, "X-Sig", "s3")
+	e.expect("POST", "/api/webhooks/generic", "{}", 202, "X-Sig", "s3")
 }
 
 func TestSPAFallback(t *testing.T) {

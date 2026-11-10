@@ -276,3 +276,11 @@ is declared. Their details (syntax, UI, messages) are decided when each is built
   Control Plane keeping the latest report for the last-known state offline, and logs on demand; new M4-11 has the
   Agent compute the Diff of a Revision not yet deployed, staged in its work dir (RAM, Q19) and never deployed. Order:
   M4-02, M4-11, then M4-03.
+
+## Webhook providers (2026-11-10)
+
+- **Q99** Webhooks keep their native formats (GitHub, GitLab, Gitea/Forgejo) and add one **generic** endpoint,
+  `POST /api/webhooks/generic` with `Authorization: Bearer <OMEGACD_WEBHOOK_SECRET>` and `{"repoURL": "…"}`, for any
+  other caller: a CI step after a push, a script, a Git host without a format here. Bitbucket, Azure DevOps and Gogs
+  get no native parser: their payloads are fixed, so they use polling or a CI step calling the generic endpoint. A
+  body that isn't the provider's format answers 400 (before: 401, like a wrong signature). Part of M4-03.
