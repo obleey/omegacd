@@ -62,7 +62,9 @@ says on or off and why (Q26, Q35).
 Its Host is `local`, its state dir in the data dir, its work dir `OMEGACD_WORKDIR` (Q88); it may run as the Control
 Plane's user, root included, with a warning (Q89).
 
-**Done when:** a full install on a Docker host manages its own machine with no enrollment step; in Kubernetes it's off.
+**Done when:** a full install on a Docker host manages its own machine with no enrollment step; in Kubernetes it's off;
+and the e2e scripts that deploy to `local` (mounts, secrets, webhook, adopt, migrations, …) deploy through the built-in
+Agent, which each checks in its Agent's log, updated where they look at the old path (the Control Plane's work dir).
 
 ### M4-05 · Delete push and legacy
 **Status:** todo

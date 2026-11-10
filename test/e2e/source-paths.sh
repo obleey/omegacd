@@ -65,8 +65,15 @@ waitfor "$T/agent.log" "waiting for an admin to approve"
 waitfor "$T/agent.log" "connected to the Control Plane, approved"
 
 conf() { cat "$T/edge/run/omegacd/$PARENT/$1/conf.txt" 2>/dev/null; } # children's folders are in their parent's
-# until the Agent's copy of the child's conf.txt says $2 (or 30 s)
-deployed() { for _ in $(seq 60); do [ "$(conf "$1")" = "$2" ] && return 0; sleep 0.5; done; return 1; }
+# until the Agent's copy of the child's conf.txt says $2 (or 30 s), then its Sync has finished: the Agent writes the
+# files before compose starts the containers
+deployed() {
+  for _ in $(seq 60); do
+    [ "$(conf "$1")" = "$2" ] && { "$BIN" app wait "$1" --sync --timeout 1m >/dev/null 2>&1; return; }
+    sleep 0.5
+  done
+  return 1
+}
 
 "$BIN" app create $PARENT --repo "$REPO" --path apps --kind apps --auto-sync >/dev/null
 check "the App of Apps' child, defined in Git, is deployed by the Agent" 'deployed $CHILD "conf v1"'
