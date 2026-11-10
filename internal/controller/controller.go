@@ -657,7 +657,8 @@ func (c *Controller) syncPendingChildren(ctx context.Context, parent string) {
 
 // apply materialises the Revision into the Application's working dir and brings the project up.
 func (c *Controller) apply(ctx context.Context, a domain.Application, op domain.SyncOperation) error {
-	if a.Kind == domain.KindCompose && !c.agentHost(ctx, a.Host) { // an Agent's Host isn't OmegaCD's own
+	// another Agent's Host isn't OmegaCD's own; the built-in Agent's is (M4-05 moves this check into the Agent)
+	if a.Kind == domain.KindCompose && (cmp.Or(a.Host, domain.LocalHost) == domain.LocalHost || !c.agentHost(ctx, a.Host)) {
 		if err := c.refuseSelf(ctx, a); err != nil {
 			return err
 		}
@@ -878,12 +879,13 @@ func (c *Controller) UpdateApp(ctx context.Context, a domain.Application) (domai
 	return c.reconcile(ctx, a), nil
 }
 
-// checkUpdate carries over what an update may not change.
+// checkUpdate carries over what an update may not change. Adopt may: an Agent checks it only before its first deploy
+// of the Application, so it is set where its first Sync was refused (Q102).
 func checkUpdate(old domain.Application, a *domain.Application) error {
 	if a.Kind == domain.KindCompose && a.Host != old.Host {
 		return fmt.Errorf("%w: delete and recreate the Application %q to move it to another Host", domain.ErrInvalid, a.Name)
 	}
-	a.CreatedAt, a.Adopt = old.CreatedAt, old.Adopt
+	a.CreatedAt = old.CreatedAt
 	a.RolledBack = old.RolledBack && !a.AutoSync
 	return nil
 }
@@ -1152,6 +1154,7 @@ func (c *Controller) Diff(ctx context.Context, name string) (domain.DiffView, er
 		return dv, err
 	}
 	if c.agentHost(ctx, a.Host) {
+		dv.Warnings = r.Warnings // the Source Server's (plain-text secrets), then the Agent's
 		return c.agentDiff(ctx, a, dv, r)
 	}
 	stage, done, err := c.stage(ctx, a, r)
@@ -1779,7 +1782,10 @@ func (c *Controller) ListHosts(ctx context.Context) ([]domain.HostView, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !c.cfg.NoLocalHost {
+	if i := slices.IndexFunc(hosts, func(h domain.Host) bool { return h.Name == domain.LocalHost }); i >= 0 {
+		local := hosts[i] // the built-in Agent's (M4-04): first
+		hosts = append([]domain.Host{local}, slices.Delete(hosts, i, i+1)...)
+	} else if !c.cfg.NoLocalHost {
 		hosts = append([]domain.Host{{Name: domain.LocalHost, WorkDir: c.cfg.WorkDir}}, hosts...)
 	}
 	views := make([]domain.HostView, len(hosts))
@@ -1797,7 +1803,7 @@ func (c *Controller) hostView(ctx context.Context, h domain.Host, apps []string)
 	}
 	v := domain.HostView{Host: h, Status: domain.HostStatus{Name: h.Name}, Apps: apps}
 	switch {
-	case h.URL != "" || h.Name == domain.LocalHost:
+	case h.URL != "" || (h.Name == domain.LocalHost && h.Fingerprint == ""):
 		v.Status = c.cfg.Engine.HostStatus(ctx, h.Name)
 	case c.cfg.Agents != nil && h.Agent != nil: // a Host with an Agent: as its Agent reported (M4-02)
 		v.Status.Connected = c.cfg.Agents.Online(h.Name)
@@ -1927,9 +1933,10 @@ func (c *Controller) CheckRepo(ctx context.Context, repoURL string) (domain.Repo
 
 // ---- Host Keys ----
 
-// hostKeys returns a Host's keys with their private keys, current first: the Master Key for LocalHost.
+// hostKeys returns a Host's keys with their private keys, current first: the Master Key for LocalHost without the
+// built-in Agent.
 func (c *Controller) hostKeys(ctx context.Context, host string) ([]domain.HostKey, error) {
-	if host == "" || host == domain.LocalHost {
+	if (host == "" || host == domain.LocalHost) && !c.agentHost(ctx, domain.LocalHost) { // the built-in Agent has its own
 		return []domain.HostKey{{Host: domain.LocalHost, Recipient: c.cfg.MasterKey.Recipient().String(),
 			PrivateKey: c.cfg.MasterKey.String(), Current: true, Master: true}}, nil
 	}

@@ -10,19 +10,6 @@ check() { if eval "$2"; then echo "PASS  $1"; else echo "FAIL  $1"; fail=1; fi; 
 gitc() { git -C "$REPO" -c user.name=e2e -c user.email=e2e@local "$@"; }
 
 age-keygen -o "$T/age.key" 2>/dev/null
-RCPT=$(age-keygen -y "$T/age.key")
-cat > "$REPO/sec/compose.yaml" <<'EOF'
-services:
-  web:
-    image: busybox:1.36
-    command: ["sh", "-c", "echo $$PW_LEN; sleep 3600"]
-    environment:
-      DB_PASSWORD: ${DB_PASSWORD}
-EOF
-printf 'DB_PASSWORD=sup3r-s3cret-value\n' > "$T/plain.env"
-SOPS_AGE_RECIPIENTS=$RCPT sops --encrypt --input-type dotenv --output-type dotenv "$T/plain.env" > "$REPO/sec/.sops.env"
-check "secret is encrypted in Git" '! grep -q sup3r "$REPO/sec/.sops.env"'
-gitc init -q -b main && gitc add -A && gitc commit -qm init
 
 OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_WORKDIR=$T/work OMEGACD_AGE_KEY_FILE=$T/age.key \
   OMEGACD_ADMIN_PASSWORD=e2e-password-123 OMEGACD_POLL_INTERVAL=1h "$BIN" > "$T/server.log" 2>&1 &
@@ -36,6 +23,21 @@ export OMEGACD_TOKEN=$(curl -sf -b "$T/j" -H 'Content-Type: application/json' -H
   -d '{"name":"e2e"}' $API/settings/tokens | python3 -c 'import json,sys; print(json.load(sys.stdin)["plaintext"])')
 diffjson() { curl -sf -H "Authorization: Bearer $OMEGACD_TOKEN" $API/apps/e2e-sec/diff; }
 field() { python3 -c "import json,sys; print(json.load(sys.stdin)['$1'])"; }
+
+# encrypted for local's Host Key: the built-in Agent's own, not the Master Key (Q100)
+RCPT=$("$BIN" host list -o json | python3 -c 'import json,sys; print([h for h in json.load(sys.stdin) if h["name"]=="local"][0]["ageRecipient"])')
+cat > "$REPO/sec/compose.yaml" <<'EOF'
+services:
+  web:
+    image: busybox:1.36
+    command: ["sh", "-c", "echo $$PW_LEN; sleep 3600"]
+    environment:
+      DB_PASSWORD: ${DB_PASSWORD}
+EOF
+printf 'DB_PASSWORD=sup3r-s3cret-value\n' > "$T/plain.env"
+SOPS_AGE_RECIPIENTS=$RCPT sops --encrypt --input-type dotenv --output-type dotenv "$T/plain.env" > "$REPO/sec/.sops.env"
+check "secret is encrypted in Git" '! grep -q sup3r "$REPO/sec/.sops.env"'
+gitc init -q -b main && gitc add -A && gitc commit -qm init
 
 "$BIN" app create e2e-sec --repo "$REPO" --path sec >/dev/null
 D=$(diffjson)
@@ -63,6 +65,8 @@ D=$(diffjson)
 check "a literal API_TOKEN is warned about" 'echo "$D" | python3 -c "import json,sys; w=json.load(sys.stdin).get(\"warnings\") or []; sys.exit(0 if len(w)==1 and w[0].startswith(\"web: API_TOKEN is in plain text in compose.yaml\") else 1)"'
 
 check "the log is at debug and holds no secret (Q62)" 'grep -q level=DEBUG "$T/server.log" && ! grep -qF -e sup3r-s3cret-value -e e2e-password-123 -e "$OMEGACD_TOKEN" "$T/server.log"'
+
+check "deployed by the built-in Agent, as its log says (M4-04)" 'grep "component=agent" "$T/server.log" | grep -q "msg=deploy"'
 
 [ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- server log"; tail -15 "$T/server.log"; echo "$D" | head -c 2000; }
 exit $fail

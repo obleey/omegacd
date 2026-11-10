@@ -654,3 +654,23 @@ func TestAgentDiff(t *testing.T) {
 	_, err = s.AgentDiff(ctx, "web")
 	wantErr(t, err, domain.ErrNotFound)
 }
+
+// M4-04: the built-in Agent's Host local is enrolled and approved without an invite; a later start with other keys
+// (a lost state dir) replaces them, still approved; and its key finds it, as the hub looks it up.
+func TestEnrollLocal(t *testing.T) {
+	s, _ := open(t)
+	ctx := t.Context()
+	if err := s.EnrollLocal(ctx, "/run/omegacd", []byte("key-1"), "age1first"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.EnrollLocal(ctx, "/run/omegacd", []byte("key-2"), "age1second"); err != nil {
+		t.Fatal(err)
+	}
+	h, err := s.HostBySigningKey(ctx, []byte("key-2"))
+	if err != nil || h.Name != domain.LocalHost || !h.Approved || h.AgeRecipient != "age1second" || h.URL != "" || h.WorkDir != "/run/omegacd" {
+		t.Fatalf("%+v %v", h, err)
+	}
+	if _, err := s.HostBySigningKey(ctx, []byte("key-1")); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("the lost key still works: %v", err)
+	}
+}

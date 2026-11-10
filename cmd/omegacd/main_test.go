@@ -30,3 +30,14 @@ func TestPollInterval(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkDirSetting(t *testing.T) {
+	for v, want := range map[string]string{"": "/run/omegacd", "/tmp//omegacd-e2e/work/": "/tmp/omegacd-e2e/work", " /srv/x ": "/srv/x"} {
+		if got, err := workDirSetting(v); err != nil || got != want {
+			t.Errorf("%q: %q, %v", v, got, err)
+		}
+	}
+	if _, err := workDirSetting("./work"); err == nil {
+		t.Error("a relative work dir accepted")
+	}
+}

@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"cmp"
 	"context"
 	"encoding/hex"
 	"errors"
@@ -17,10 +18,10 @@ import (
 // agentHost reports whether the Host is reached through an enrolled Agent (Q80): it has no URL, and an Agent's key.
 // The built-in Host and push Hosts (SSH/TLS) are not, until M4-04 and M4-05.
 func (c *Controller) agentHost(ctx context.Context, host string) bool {
-	if c.cfg.Agents == nil || host == "" || host == domain.LocalHost {
+	if c.cfg.Agents == nil {
 		return false
 	}
-	h, err := c.cfg.Store.GetHost(ctx, host)
+	h, err := c.cfg.Store.GetHost(ctx, cmp.Or(host, domain.LocalHost)) // local: when the built-in Agent enrolled it (M4-04)
 	return err == nil && h.URL == "" && h.Fingerprint != ""
 }
 

@@ -812,6 +812,17 @@ func (s *Store) Enroll(ctx context.Context, invite string, signingKey []byte, ag
 	return s.GetHost(ctx, host)
 }
 
+// EnrollLocal makes the Host local the built-in Agent's (M4-04, Q88): its signing key and Host Key's recipient,
+// approved at once (the Control Plane made both keys itself: there is nothing to compare). Run at every start; a lost
+// state dir brings new keys, which replace the old ones.
+func (s *Store) EnrollLocal(ctx context.Context, workDir string, signingKey []byte, ageRecipient string) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO hosts (`+hostCols+`, signing_key, age_recipient, approved)
+		VALUES (?, '', ?, '', '', '', '', ?, ?, ?, 1)
+		ON CONFLICT (name) DO UPDATE SET work_dir = excluded.work_dir, signing_key = excluded.signing_key,
+		age_recipient = excluded.age_recipient, approved = 1`, domain.LocalHost, workDir, toUnix(time.Now()), signingKey, ageRecipient)
+	return mapErr(err)
+}
+
 func (s *Store) ApproveHost(ctx context.Context, host, fingerprint string) error {
 	h, err := s.GetHost(ctx, host)
 	if err != nil {

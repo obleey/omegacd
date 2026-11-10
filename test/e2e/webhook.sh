@@ -86,5 +86,7 @@ grep -i "webhook\|sync finished" "$T/server.log" | cut -c1-200 | tail -4
 
 check "the log is at debug and holds no secret (Q62)" 'grep -q level=DEBUG "$T/server.log" && ! grep -qF -e "$SECRET" -e "$FTOK" -e "$PW" -e e2e-password-123 -e "$OMEGACD_TOKEN" "$T/server.log"'
 
+check "deployed by the built-in Agent, as its log says (M4-04)" 'grep "component=agent" "$T/server.log" | grep -q "msg=deploy"'
+
 [ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- server log"; tail -15 "$T/server.log"; }
 exit $fail

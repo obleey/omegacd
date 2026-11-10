@@ -117,8 +117,11 @@ func fromDesired(ds *agentv1.DesiredState) (App, Revision) {
 // adoptable refuses a first deploy over a Compose project of the same name that OmegaCD didn't start, unless the
 // Application adopts it: a hand-started stack is never taken over by accident.
 func (ag *Agent) adoptable(ctx context.Context, ds *agentv1.DesiredState) error {
-	if _, err := ag.db.GetApp(ctx, ds.App); err == nil || ds.Adopt {
-		return err
+	if ds.Adopt {
+		return nil
+	}
+	if _, err := ag.db.GetApp(ctx, ds.App); !errors.Is(err, domain.ErrNotFound) {
+		return err // nil: deployed here before, OmegaCD's own
 	}
 	exists, managed, err := ag.engine.ProjectExists(ctx, domain.LocalHost, ds.App)
 	if err != nil {

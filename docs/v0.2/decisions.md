@@ -284,3 +284,18 @@ is declared. Their details (syntax, UI, messages) are decided when each is built
   other caller: a CI step after a push, a script, a Git host without a format here. Bitbucket, Azure DevOps and Gogs
   get no native parser: their payloads are fixed, so they use polling or a CI step calling the generic endpoint. A
   body that isn't the provider's format answers 400 (before: 401, like a wrong signature). Part of M4-03.
+
+## Built-in Agent (2026-11-10)
+
+- **Q100** The built-in Agent has its own Host Key, generated in its state dir (`<data>/agent`) like any Agent's, and
+  is enrolled and approved as the Host `local` at every start, without an invite (the Control Plane made both keys
+  itself). The Master Key then only seals the database and decrypts no Application's secret (Q19); secrets for
+  `local` are encrypted to the built-in Agent's recipient, shown with the Host. Nothing carries over: v0.2 starts
+  fresh (Q90, Q97). Part of M4-04.
+- **Q101** With the built-in Agent off (`OMEGACD_BUILTIN_AGENT=false`, or auto without an engine or in Kubernetes),
+  `local` deploys from the Control Plane as before until M4-05 deletes that path and `OMEGACD_LOCAL_HOST` with it;
+  from then on, off means there is no `local` Host. M4-04 only adds.
+- **Q102** `adopt` may be changed on an existing Application. An Agent checks for a hand-started project of the same
+  name at its first deploy of the Application, not at create (the Control Plane can't look at the Host), so a refused
+  first Sync is answered by setting adopt and syncing again; once the Agent has deployed it, adopt changes nothing.
+  Before: create-only, the old path refusing at create.

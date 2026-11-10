@@ -10,20 +10,6 @@ check() { if eval "$2"; then echo "PASS  $1"; else echo "FAIL  $1"; fail=1; fi; 
 gitc() { git -C "$REPO" -c user.name=e2e -c user.email=e2e@local "$@"; }
 
 age-keygen -o "$T/age.key" 2>/dev/null
-RCPT=$(age-keygen -y "$T/age.key")
-enc() { printf '%s\n' "$1" > "$T/plain"; SOPS_AGE_RECIPIENTS=$RCPT sops --encrypt --input-type dotenv --output-type dotenv "$T/plain" > "$2"; }
-cat > "$REPO/sec/compose.yaml" <<'EOF'
-services:
-  web:
-    image: busybox:1.36
-    command: ["sleep", "3600"]
-    env_file: app.env
-    environment:
-      DB_PASSWORD: ${DB_PASSWORD}
-EOF
-enc 'DB_PASSWORD=first-db-pw' "$REPO/sec/.sops.env"
-enc 'API_TOKEN=first-token' "$REPO/sec/app.sops.env"
-gitc init -q -b main && gitc add -A && gitc commit -qm init
 
 OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_WORKDIR=$T/work OMEGACD_AGE_KEY_FILE=$T/age.key \
   OMEGACD_ADMIN_PASSWORD=e2e-password-123 OMEGACD_POLL_INTERVAL=1h "$BIN" > "$T/server.log" 2>&1 &
@@ -38,16 +24,32 @@ export OMEGACD_TOKEN=$(curl -sf -b "$T/j" -H 'Content-Type: application/json' -H
 api() { curl -sf -H "Authorization: Bearer $OMEGACD_TOKEN" "$API/apps/e2e-sec/$1"; }
 ctr() { docker ps -q --filter label=dev.omegacd.application=e2e-sec; }
 
+# encrypted for local's Host Key: the built-in Agent's own, not the Master Key (Q100)
+RCPT=$("$BIN" host list -o json | python3 -c 'import json,sys; print([h for h in json.load(sys.stdin) if h["name"]=="local"][0]["ageRecipient"])')
+enc() { printf '%s\n' "$1" > "$T/plain"; SOPS_AGE_RECIPIENTS=$RCPT sops --encrypt --input-type dotenv --output-type dotenv "$T/plain" > "$2"; }
+cat > "$REPO/sec/compose.yaml" <<'EOF'
+services:
+  web:
+    image: busybox:1.36
+    command: ["sleep", "3600"]
+    env_file: app.env
+    environment:
+      DB_PASSWORD: ${DB_PASSWORD}
+EOF
+enc 'DB_PASSWORD=first-db-pw' "$REPO/sec/.sops.env"
+enc 'API_TOKEN=first-token' "$REPO/sec/app.sops.env"
+gitc init -q -b main && gitc add -A && gitc commit -qm init
+
 "$BIN" app create e2e-sec --repo "$REPO" --path sec >/dev/null
 "$BIN" app sync e2e-sec --wait --timeout 2m >/dev/null 2>&1
 check "work dir has the decrypted files" '[ -f "$W/.env" ] && [ -f "$W/app.env" ]'
 check "and no *.sops.* copies" '[ -z "$(ls -A "$W" | grep "\.sops\.")" ]'
-check "decrypted list in the work dir" '[ "$(LC_ALL=C sort "$T/work/.decrypted/e2e-sec" | tr "\n" " ")" = ".env app.env " ]'
 check "container got both secrets" '[ "$(docker exec $(ctr) printenv DB_PASSWORD)" = first-db-pw ] && [ "$(docker exec $(ctr) printenv API_TOKEN)" = first-token ]'
 R=$(api resources)
 check "Resources marks app.env as secret" 'echo "$R" | python3 -c "import json,sys; r=[x for x in json.load(sys.stdin)[\"resources\"] if x[\"name\"]==\"app.env\"]; sys.exit(0 if r and r[0].get(\"secret\") else 1)"'
 D=$(api "resource?kind=env_file&name=app.env")
-check "its content is masked" 'echo "$D" | grep -q "API_TOKEN=••••" && ! echo "$D" | grep -q first-token'
+# through an Agent the Control Plane never has the decrypted file: nothing of it is shown (M5-06 adds its key names, masked)
+check "its content is not shown" '! echo "$D" | grep -q first-token'
 check "no secret anywhere in the API" '! echo "$R$D$(api diff)" | grep -q "first-"'
 
 first=$(ctr)
@@ -61,11 +63,14 @@ check "still no *.sops.* copies" '[ -z "$(ls -A "$W" | grep "\.sops\.")" ]'
 check "app is Synced again" '"$BIN" app get e2e-sec -o json | grep -q "\"Synced\""'
 
 "$BIN" app delete e2e-sec --yes >/dev/null 2>&1
-check "delete removes the list" '[ ! -e "$T/work/.decrypted/e2e-sec" ] && [ ! -e "$W" ]'
+check "delete removes its folder, decrypted files and all" '[ ! -e "$W" ]'
 
 op=$(grep -o 'msg="sync started" .* op=[0-9]*' "$T/server.log" | head -1 | grep -o '[0-9]*$')
-check "a Sync is followed by its op from the controller into the engine (Q62)" '[ -n "$op" ] && grep -q "msg=\"compose up\" component=engine .* app=e2e-sec op=$op " "$T/server.log"'
+check "a Sync is followed by its op from the controller through the built-in Agent into the engine (Q62)" \
+  '[ -n "$op" ] && grep "msg=\"compose up\" component=engine" "$T/server.log" | grep "app=e2e-sec" | grep -q "op=$op "'
 check "the log is at debug and holds no secret (Q62)" 'grep -q level=DEBUG "$T/server.log" && ! grep -qF -e first-db-pw -e first-token -e second-token -e e2e-password-123 -e "$OMEGACD_TOKEN" -e "$(grep AGE-SECRET-KEY "$T/age.key")" -e AGE-SECRET-KEY "$T/server.log"'
+
+check "deployed by the built-in Agent, as its log says (M4-04)" 'grep "component=agent" "$T/server.log" | grep -q "msg=deploy"'
 
 [ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- server log"; tail -15 "$T/server.log"; }
 exit $fail

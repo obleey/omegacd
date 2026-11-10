@@ -79,5 +79,7 @@ git -C "$REPO" -c user.name=e2e -c user.email=e2e@local commit -qam fix
 check "after the fix in Git it syncs" '"$BIN" app get e2e-bad -o json | grep -q "\"Synced\""'
 check "and its container runs" '[ -n "$(docker ps -q --filter label=dev.omegacd.application=e2e-bad)" ]'
 
+check "deployed by the built-in Agent, as its log says (M4-04)" 'grep "component=agent" "$T/server.log" | grep -q "msg=deploy"'
+
 [ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- server log"; tail -20 "$T/server.log"; echo "--- last sync output"; echo "$syncout"; echo "$diffout"; }
 exit $fail

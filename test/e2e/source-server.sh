@@ -85,5 +85,7 @@ check "a client with the certificate gets in" 'curl -s --http2 --cacert "$T/tls/
 
 check "the log is at debug and holds no secret (Q62)" 'grep -q level=DEBUG "$T/source.log" && ! grep -qF -e "$GITPW" -e e2e-password-123 "$T/server.log" "$T/source.log"'
 
+check "deployed by the built-in Agent, as its log says (M4-04)" 'grep "component=agent" "$T/server.log" | grep -q "msg=deploy"'
+
 [ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- server log"; tail -15 "$T/server.log"; echo "--- source server log"; tail -15 "$T/source.log"; }
 exit $fail

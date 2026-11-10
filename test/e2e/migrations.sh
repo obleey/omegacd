@@ -71,5 +71,7 @@ compose 2; printf 'THIS IS NOT SQL;\n' >> "$REPO/mig/schema.sql"; gitc commit -q
 check "a failing migration fails the Sync, saying which" '[ "$(field "v[\"lastOperation\"][\"phase\"]")" = Failed ] && field "v[\"lastOperation\"][\"message\"]" | grep -q "migrate exited"'
 check "and leaves the running app as it was" '[ "$(ctr web)" = "$web" ] && [ "$(docker inspect -f "{{.State.Running}}" "$web")" = true ]'
 
+check "deployed by the built-in Agent, as its log says (M4-04)" 'grep "component=agent" "$T/server.log" | grep -q "msg=deploy"'
+
 [ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- server log"; tail -15 "$T/server.log"; }
 exit $fail

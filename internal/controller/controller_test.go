@@ -205,6 +205,7 @@ type fakeSource struct {
 	renderErrRev  string            // and only Renders of this Revision fail with it, when set
 	blobErr       error             // Blob fails with it
 	badHash       bool              // Render names files by a hash that isn't hex
+	warnings      []string          // Render's
 }
 
 func (g *fakeSource) Invalidate(string) {}
@@ -217,7 +218,7 @@ func (g *fakeSource) Resolve(context.Context, string, string) (string, error) {
 func (g *fakeSource) Render(_ context.Context, spec domain.RenderSpec) (domain.Rendered, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	r := domain.Rendered{Checksum: "tree-" + spec.Revision}
+	r := domain.Rendered{Checksum: "tree-" + spec.Revision, Warnings: g.warnings}
 	if g.renderErr != nil && (g.renderErrRev == "" || g.renderErrRev == spec.Revision) {
 		return r, g.renderErr
 	}
@@ -2303,11 +2304,18 @@ func TestAgentDiff(t *testing.T) {
 	r.g.set("bbbbbbbb")
 	ag.diff = []domain.ServiceDiff{{Service: "web", Change: "changed", Fields: []string{"image"}}}
 
+	r.g.mu.Lock()
+	r.g.warnings = []string{"web: API_TOKEN is in plain text in compose.yaml"}
+	r.g.mu.Unlock()
 	dv, err := r.c.Diff(ctx, "web")
 	if err != nil || len(dv.Services) != 1 || dv.FromSHA != "aaaaaaaa" || dv.ToSHA != "bbbbbbbb" ||
-		!strings.Contains(dv.Desired, "services") || !strings.Contains(dv.Live, "services") {
+		!strings.Contains(dv.Desired, "services") || !strings.Contains(dv.Live, "services") ||
+		len(dv.Warnings) != 1 || !strings.Contains(dv.Warnings[0], "plain text") {
 		t.Fatalf("online: %+v %v", dv, err)
 	}
+	r.g.mu.Lock()
+	r.g.warnings = nil
+	r.g.mu.Unlock()
 	if slices.Contains(ag.asked, "") || ag.asked[len(ag.asked)-1] != "bbbbbbbb" {
 		t.Fatalf("asked about %v", ag.asked)
 	}
@@ -2391,5 +2399,58 @@ func TestAgentDiffFails(t *testing.T) {
 	r.g.mu.Unlock()
 	if _, err := r.c.Diff(ctx, "web"); err == nil || !strings.Contains(err.Error(), "source server unreachable") {
 		t.Fatalf("compose files not served: %v", err)
+	}
+}
+
+// M4-04: with the built-in Agent enrolled as Host local, an Application on local (named or not) deploys through it;
+// local is listed once, first, as its Agent reported it, with no Master Key; and OmegaCD still refuses to Sync its
+// own project there.
+func TestLocalThroughBuiltinAgent(t *testing.T) {
+	r, ag := agentRig(t)
+	ctx := t.Context()
+	r.st.mu.Lock()
+	r.st.hosts[domain.LocalHost] = domain.Host{Name: domain.LocalHost, Fingerprint: "SHA256:builtin", Approved: true,
+		AgeRecipient: "age1builtin", Agent: &domain.AgentInfo{EngineVersion: "29.0"}}
+	r.st.mu.Unlock()
+	a := app("web")
+	a.Host = ""
+	r.c.CreateApp(ctx, a)
+	r.waitIdle(t, "web")
+	r.c.Sync(ctx, "web", domain.SyncRequest{})
+	r.waitIdle(t, "web")
+	if sent := ag.sent(); len(sent) == 0 || sent[len(sent)-1].App != "web" || r.e.syncCount() != 0 {
+		t.Fatalf("not through the Agent: %d sent, %d engine syncs", len(sent), r.e.syncCount())
+	}
+
+	hosts, err := r.c.ListHosts(ctx)
+	if err != nil || len(hosts) != 2 || hosts[0].Name != domain.LocalHost || hosts[1].Name != "edge" {
+		t.Fatalf("hosts %+v %v", hosts, err)
+	}
+	if l := hosts[0]; l.Status.ServerVersion != "29.0" || l.KeyRecipient != "" || l.AgeRecipient != "age1builtin" {
+		t.Fatalf("local as its Agent reported it, its own key: %+v", l)
+	}
+
+	r.c.cfg.SelfID = "abc123"
+	r.e.live.Containers = []domain.Container{{ID: "abc123def456"}}
+	r.c.CreateApp(ctx, app("omegacd"))
+	r.c.Sync(ctx, "omegacd", domain.SyncRequest{})
+	r.waitIdle(t, "omegacd")
+	if ops, _ := r.st.ListOps(ctx, "omegacd"); ops[0].Phase != domain.OpFailed {
+		t.Fatalf("its own project synced through the built-in Agent: %+v", ops[0])
+	}
+}
+
+// Q102: adopt may be set on an existing Application, where an Agent refused its first Sync over a hand-started project.
+func TestUpdateSetsAdopt(t *testing.T) {
+	r := newRig(t)
+	ctx := t.Context()
+	a := app("web")
+	r.c.CreateApp(ctx, a)
+	a.Adopt = true
+	if _, err := r.c.UpdateApp(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := r.st.GetApp(ctx, "web"); !got.Adopt {
+		t.Fatal("adopt not kept")
 	}
 }

@@ -25,6 +25,9 @@ found by the test servers; the docs say so.
 (socket, state volume, work dir at the same path both sides, rootless variant with the user socket) (Q21). The image
 runs as a non-root user in the Docker socket's group (`group_add`), not root (Q89).
 
+From M4-04: the built-in Agent in the full image checks path parity of `OMEGACD_WORKDIR` at start, as `omegacd agent`
+does (`CheckPathParity`), refusing to start without it.
+
 **Done when:** `docker compose up -d` brings each up, as a non-root user; the Agent refuses a mount without path parity.
 
 ### M6-03 · systemd units
