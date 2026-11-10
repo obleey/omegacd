@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -181,6 +182,10 @@ func TestParseWebhook(t *testing.T) {
 		{"gitea ok", "gitea", gh, h("X-Gitea-Event", "push", "X-Gitea-Signature", sign(gh, "s")), 3, false},
 		{"forgejo ok", "gitea", gh, h("X-Forgejo-Event", "push", "X-Forgejo-Signature", sign(gh, "s")), 3, false},
 		{"gitea bad sig", "gitea", gh, h("X-Gitea-Event", "push", "X-Gitea-Signature", "zz"), 0, true},
+		{"gitlab pipeline", "gitlab", gl, h("X-Gitlab-Event", "Pipeline Hook", "X-Gitlab-Token", "s"), 0, false},
+		{"gitea issue", "gitea", gh, h("X-Gitea-Event", "issues", "X-Gitea-Signature", sign(gh, "s")), 0, false},
+		{"generic ok", "generic", `{"repoURL":"https://git.example.com/o/r.git"}`, h("Authorization", "Bearer s"), 1, false},
+		{"generic bad token", "generic", `{"repoURL":"x"}`, h("Authorization", "Bearer x"), 0, true},
 	}
 	for _, c := range cases {
 		urls, err := ParseWebhook(c.provider, c.header, []byte(c.body), "s")
@@ -190,5 +195,33 @@ func TestParseWebhook(t *testing.T) {
 	}
 	if urls, err := ParseWebhook("github", h("X-GitHub-Event", "push"), []byte(gh), ""); err != nil || len(urls) != 3 {
 		t.Errorf("no secret: %v %v", urls, err)
+	}
+	if _, err := ParseWebhook("svn", nil, nil, "s"); err == nil {
+		t.Error("an unknown provider")
+	}
+	for provider, body := range map[string]string{"generic": `{"repo":"x"}`, "github": "not json"} {
+		hd := h("Authorization", "Bearer s", "X-GitHub-Event", "push", "X-Hub-Signature-256", "sha256="+sign(body, "s"))
+		if _, err := ParseWebhook(provider, hd, []byte(body), "s"); !errors.Is(err, domain.ErrInvalid) {
+			t.Errorf("%s, a body not its own: %v", provider, err)
+		}
+	}
+}
+
+// M4-03: the Source Server is the only part of OmegaCD that reads Git (Q46): polling, webhooks and App of Apps
+// definitions all go through it, so no other package imports a Git library.
+func TestOnlyTheSourceServerReadsGit(t *testing.T) {
+	out, err := exec.Command("go", "list", "-f", `{{.ImportPath}}{{range .Imports}} {{.}}{{end}}`, "github.com/obleey/omegacd/...").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkgs := strings.Split(strings.TrimSpace(string(out)), "\n")
+	for _, line := range pkgs {
+		pkg, imports, _ := strings.Cut(line, " ")
+		if pkg != "github.com/obleey/omegacd/internal/source" && strings.Contains(" "+imports, " github.com/go-git/") {
+			t.Errorf("%s imports a Git library", pkg)
+		}
+	}
+	if len(pkgs) < 10 {
+		t.Fatalf("listed only %d packages", len(pkgs))
 	}
 }

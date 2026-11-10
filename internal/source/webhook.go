@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+
+	"github.com/obleey/omegacd/internal/domain"
 )
 
 var ErrSignature = errors.New("invalid webhook signature")
@@ -28,8 +30,9 @@ type hookRepo struct {
 	Homepage   string `json:"homepage"`
 }
 
-// ParseWebhook verifies a push webhook from provider ("github", "gitlab", "gitea") and returns every
-// clone URL of the pushed Repository. Non-push events return nil, nil. An empty secret skips verification.
+// ParseWebhook verifies a push webhook from provider ("github", "gitlab", "gitea", "generic") and returns every
+// clone URL of the pushed Repository. Non-push events return nil, nil. An empty secret skips verification; a body
+// that isn't the provider's is ErrInvalid.
 func ParseWebhook(provider string, header http.Header, body []byte, secret string) ([]string, error) {
 	switch provider {
 	case "github":
@@ -54,6 +57,17 @@ func ParseWebhook(provider string, header http.Header, body []byte, secret strin
 		if ev := cmp.Or(header.Get("X-Gitea-Event"), header.Get("X-Forgejo-Event")); ev != "" && ev != "push" {
 			return nil, nil
 		}
+	case "generic": // any other caller (a CI step, a script, a Git host without a format here): the secret as a bearer token (Q99)
+		if secret != "" && subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(header.Get("Authorization"), "Bearer ")), []byte(secret)) != 1 {
+			return nil, ErrSignature
+		}
+		var g struct {
+			RepoURL string `json:"repoURL"`
+		}
+		if err := json.Unmarshal(body, &g); err != nil || g.RepoURL == "" {
+			return nil, fmt.Errorf(`%w: a generic webhook's body is {"repoURL": "<the Repository's URL>"}`, domain.ErrInvalid)
+		}
+		return []string{g.RepoURL}, nil
 	default:
 		return nil, fmt.Errorf("unknown webhook provider %q", provider)
 	}
@@ -62,7 +76,7 @@ func ParseWebhook(provider string, header http.Header, body []byte, secret strin
 		Project    hookRepo `json:"project"`
 	}
 	if err := json.Unmarshal(body, &p); err != nil {
-		return nil, fmt.Errorf("parse %s webhook: %w", provider, err)
+		return nil, fmt.Errorf("%w: parse %s webhook: %v", domain.ErrInvalid, provider, err)
 	}
 	var urls []string
 	for _, r := range []hookRepo{p.Repository, p.Project} {

@@ -233,7 +233,7 @@ func (s *server) logs(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) webhook(w http.ResponseWriter, r *http.Request) {
 	provider := r.PathValue("provider")
-	if provider != "github" && provider != "gitlab" && provider != "gitea" {
+	if provider != "github" && provider != "gitlab" && provider != "gitea" && provider != "generic" {
 		writeError(w, fmt.Errorf("webhook provider %q: %w", provider, domain.ErrNotFound))
 		return
 	}
@@ -247,6 +247,10 @@ func (s *server) webhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	urls, err := s.WebhookParse(provider, r.Header, body, s.WebhookSecret)
+	if errors.Is(err, domain.ErrInvalid) {
+		writeError(w, err)
+		return
+	}
 	if err != nil {
 		writeStatus(w, http.StatusUnauthorized, err.Error())
 		return

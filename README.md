@@ -44,7 +44,7 @@ It stays small: one binary in one container, no database server, no agents on yo
 - **App of Apps** — declare Applications in Git; one parent Application creates, updates and deletes its children
 - **Remote Hosts** — Docker engines over `ssh://` (host keys verified) or `tcp://` with TLS
 - **Secrets** — SOPS + age encrypted files in Git, decrypted only at Sync time
-- **Change detection** — Git polling plus GitHub, GitLab and Gitea/Forgejo webhooks
+- **Change detection** — Git polling plus GitHub, GitLab and Gitea/Forgejo webhooks, and a generic one for anything else
 - **Web UI** — resource tree, diffs, colored live container logs, syntax colors for compose and config files (YAML, .env, nginx, Apache, Caddyfile, TOML, Markdown… ~240 formats via Shiki), repository access check while creating an Application, links to the Git host, light/dark/system theme, works on phones
 - **CLI and API** — REST API with API tokens; a CLI for scripts and CI (`omegacd app sync myapp --wait`)
 - **Prometheus metrics** at `/metrics`
@@ -446,6 +446,14 @@ Polling (`OMEGACD_POLL_INTERVAL`, default 3m) always works; webhooks make Syncs 
 | GitHub | `https://omegacd.example.com/api/webhooks/github` | "Secret" field, checked via `X-Hub-Signature-256` |
 | GitLab | `https://omegacd.example.com/api/webhooks/gitlab` | "Secret token", checked via `X-Gitlab-Token` |
 | Gitea / Forgejo | `https://omegacd.example.com/api/webhooks/gitea` | "Secret", checked via the HMAC signature header |
+| Anything else | `https://omegacd.example.com/api/webhooks/generic` | `Authorization: Bearer <secret>`; the body is `{"repoURL": "<the repository's URL>"}` |
+
+**Other Git hosts** (Bitbucket, Azure DevOps, …) send payloads of their own, which OmegaCD doesn't parse: let polling find their pushes, or call the generic endpoint from a CI step after a push:
+
+```sh
+curl -fsS -H "Authorization: Bearer $OMEGACD_WEBHOOK_SECRET" -d '{"repoURL":"https://bitbucket.org/acme/deploy.git"}' \
+  https://omegacd.example.com/api/webhooks/generic
+```
 
 Set the same value in `OMEGACD_WEBHOOK_SECRET`. A webhook only triggers a refresh of the Applications using that repository; without a secret anyone who can reach the URL can trigger refreshes, so set one.
 

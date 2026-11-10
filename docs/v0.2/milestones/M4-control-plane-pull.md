@@ -38,13 +38,18 @@ Host shows the last-known state with its time; logs stream from an Agent; `--wai
 binary for each.
 
 ### M4-03 · Polling, webhooks and App of Apps through the Source Server
-**Status:** todo
+**Status:** done (2026-11-10, PR #122)
 **Depends on:** M1-03
 
 Polling asks the Source Server to Resolve; webhooks are forwarded as "repository changed"; App of Apps definitions
 come from Render (Q46). Every child names its Host (already so since rc.5).
 
-**Done when:** the Control Plane has no Git code path left (test: no import of the git library outside the Source Server).
+A generic webhook endpoint takes any other caller (Q99): `POST /api/webhooks/generic`, the secret as a bearer token,
+`{"repoURL": "…"}`.
+
+**Done when:** the Control Plane has no Git code path left (test: no import of the git library outside the Source
+Server), and end to end, with a standalone Source Server, an App of Apps' children reach an Agent, a push reaches it
+through a provider's webhook and through the generic one, and through polling.
 
 ### M4-04 · Built-in Agent
 **Status:** todo
