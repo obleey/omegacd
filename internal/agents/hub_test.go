@@ -10,9 +10,11 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -35,8 +37,15 @@ func newHub(t *testing.T) (*Hub, *store.Store, string) {
 	}
 	t.Cleanup(func() { st.Close() })
 	h := New(st, nil)
-	srv := httptest.NewServer(h)
-	t.Cleanup(srv.Close)
+	// a session outlives srv.Close (its connection is hijacked) and records the Agent leaving: the store and its
+	// folder go only after every session ended
+	var sessions sync.WaitGroup
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sessions.Add(1)
+		defer sessions.Done()
+		h.ServeHTTP(w, r)
+	}))
+	t.Cleanup(func() { srv.Close(); sessions.Wait() })
 	return h, st, "ws" + strings.TrimPrefix(srv.URL, "http")
 }
 
