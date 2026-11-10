@@ -97,6 +97,9 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	defer st.Close()
+	if err := useDockerHost(log, os.Getenv, isSocket); err != nil {
+		return err
+	}
 	knownHosts := cmp.Or(os.Getenv("OMEGACD_SSH_KNOWN_HOSTS"), "/etc/omegacd/known_hosts")
 	noLocal, err := localHostDisabled(os.Getenv("OMEGACD_LOCAL_HOST"))
 	if err != nil {
@@ -282,6 +285,9 @@ func runAgent(log *slog.Logger) error {
 	rollback := len(args) >= 1 && len(args) <= 3 && args[0] == "rollback"
 	if len(args) > 0 && !filesOnly && !rollback {
 		return fmt.Errorf("usage: omegacd agent [restore --files | rollback [APP [REVISION]]] (omegacd agent --help: its settings)")
+	}
+	if err := useDockerHost(log, os.Getenv, isSocket); err != nil {
+		return err
 	}
 	cfg, err := agent.LoadConfig(os.Getenv, os.Geteuid())
 	if err != nil {

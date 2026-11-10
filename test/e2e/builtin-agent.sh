@@ -34,6 +34,7 @@ export OMEGACD_SERVER=http://127.0.0.1:18080
 export OMEGACD_TOKEN=$(curl -sf -b "$T/j" -H 'Content-Type: application/json' -H 'X-Requested-With: omegacd' \
   -d '{"name":"e2e"}' $API/settings/tokens | python3 -c 'import json,sys; print(json.load(sys.stdin)["plaintext"])')
 
+check "the startup log names the container engine it uses" 'grep -q "msg=\"container engine" "$T/server.log"'
 check "the startup log says it is on, and why" 'grep "msg=\"built-in agent\"" "$T/server.log" | grep -q "on=true why=\"a container engine is reachable\""'
 check "it connects to its own Control Plane, approved, with no enrollment step" 'waitfor "$T/server.log" "connected to the Control Plane, approved"'
 check "local is listed once, connected, with the Agent's key" '[ "$(local_host connected)" = True ] && [ -n "$(local_host fingerprint)" ] && [ "$("$BIN" host list -o json | python3 -c "import json,sys; print(sum(h[\"name\"]==\"local\" for h in json.load(sys.stdin)))")" = 1 ]'
@@ -72,6 +73,9 @@ kill $SRV; wait $SRV 2>/dev/null
 OMEGACD_BUILTIN_AGENT=maybe OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_WORKDIR=$T/work OMEGACD_AGE_KEY_FILE=$T/age.key \
   "$BIN" > "$T/bad.log" 2>&1; rc=$?
 check "a setting that isn't auto, true or false stops the server" '[ $rc -ne 0 ] && grep -q "OMEGACD_BUILTIN_AGENT must be auto, true or false" "$T/bad.log"'
+DOCKER_HOST=http://localhost:2375 OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_WORKDIR=$T/work \
+  OMEGACD_AGE_KEY_FILE=$T/age.key "$BIN" > "$T/bad.log" 2>&1; rc=$?
+check "a DOCKER_HOST that isn't an engine address stops it with OmegaCD's own message" '[ $rc -ne 0 ] && grep -q "isn.t a container engine address" "$T/bad.log"'
 
 [ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- server log"; tail -25 "$T/server.log"; }
 exit $fail

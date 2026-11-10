@@ -39,7 +39,9 @@ var settings = []struct{ name, def, help string }{
 			"disk and are restored from the cache after a reboot; on a disk path they stay there across reboots (the Agent warns)"},
 	{"OMEGACD_AGENT_WORKDIR_ALLOW", "", "comma-separated absolute paths an Application may name as its own work dir " +
 		"(workDir:), besides the work dir above; the Agent refuses any other, so Git can't aim it at /etc"},
-	{"DOCKER_HOST", "the engine's default socket", "Docker or Podman socket, e.g. unix:///run/user/1000/docker.sock for rootless Docker"},
+	{"DOCKER_HOST", "the first socket found of rootful Docker, rootless Docker, rootless Podman, rootful Podman",
+		"Docker or Podman socket, e.g. unix:///run/user/1000/docker.sock for rootless Docker; one Agent, one engine: the log " +
+			"names the one it uses and any others found"},
 	{"OMEGACD_AGENT_CACHE_REVISIONS", "10", "Revisions kept per Application for offline restore and rollback"},
 	{"OMEGACD_AGENT_SECRET_GROUP", "", "a group (name or gid) decrypted files belong to, mode 0640, for containers that read them " +
 		"as a non-root user and join it with group_add: (the gid; with rootless Docker or Podman \"0\"); without it they are 0600, readable by containers running as root " +

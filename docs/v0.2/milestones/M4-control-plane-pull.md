@@ -63,7 +63,8 @@ Its Host is `local`, its state dir in the data dir, its work dir `OMEGACD_WORKDI
 Plane's user, root included, with a warning (Q89).
 
 It has its own Host Key, and is enrolled and approved as `local` at every start (Q100); off, `local` deploys as before
-until M4-05 (Q101).
+until M4-05 (Q101). Like every Agent it finds its engine's socket when `DOCKER_HOST` is unset, and checks it when
+set, before the Docker client (which exits on an address it can't use) sees it (Q103).
 
 **Done when:** a full install on a Docker host manages its own machine with no enrollment step; in Kubernetes it's off;
 and the e2e scripts that deploy to `local` (mounts, secrets, webhook, adopt, migrations, …) deploy through the built-in

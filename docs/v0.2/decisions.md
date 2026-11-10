@@ -299,3 +299,7 @@ is declared. Their details (syntax, UI, messages) are decided when each is built
   name at its first deploy of the Application, not at create (the Control Plane can't look at the Host), so a refused
   first Sync is answered by setting adopt and syncing again; once the Agent has deployed it, adopt changes nothing.
   Before: create-only, the old path refusing at create.
+- **Q103** One machine, one Agent, one Host. The machine is provisioned with its engine (rootful Docker, rootless
+  Docker or Podman) and its Agent uses that one: `DOCKER_HOST` when set (checked at start), otherwise the first socket
+  found of rootful Docker, rootless Docker, rootless Podman and rootful Podman, the log naming it and any others. Several
+  Agents on one machine are not supported.
