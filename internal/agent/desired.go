@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"strings"
 	"sync"
 	"time"
 
@@ -114,6 +115,26 @@ func fromDesired(ds *agentv1.DesiredState) (App, Revision) {
 	return a, r
 }
 
+// refuseSelf refuses an Application whose Compose project holds the Agent's own container (Q109): deploying it would
+// restart the Agent mid-deploy. The Control Plane's project is an Application like any other (Q104); an Agent outside
+// a container (systemd) has nothing to refuse.
+func (ag *Agent) refuseSelf(ctx context.Context, app string) error {
+	if ag.self == "" {
+		return nil
+	}
+	live, err := ag.engine.Status(ctx, domain.Application{Name: app, Kind: domain.KindCompose})
+	if err != nil {
+		return err
+	}
+	for _, c := range live.Containers {
+		if strings.HasPrefix(c.ID, ag.self) || c.Name == ag.self {
+			return fmt.Errorf("%w: Application %s is the Compose project this Agent runs in (container %s): an Agent can't "+
+				"deploy itself; run it outside OmegaCD, or from another Host's Agent", domain.ErrInvalid, app, ag.self)
+		}
+	}
+	return nil
+}
+
 // adoptable refuses a first deploy over a Compose project of the same name that OmegaCD didn't start, unless the
 // Application adopts it: a hand-started stack is never taken over by accident.
 func (ag *Agent) adoptable(ctx context.Context, ds *agentv1.DesiredState) error {
@@ -217,7 +238,10 @@ func (ag *Agent) desired(ctx context.Context, conn *wire.Conn, b *blobs, q *requ
 	}
 	defer ag.deploying.Delete(ds.Op)
 	a, r := fromDesired(ds)
-	err := ag.adoptable(ctx, ds)
+	err := ag.refuseSelf(ctx, ds.App)
+	if err == nil {
+		err = ag.adoptable(ctx, ds)
+	}
 	if err == nil {
 		progress := func(p domain.ProgressEvent) {
 			conn.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_SyncProgress{SyncProgress: &agentv1.SyncProgress{
