@@ -41,18 +41,19 @@ age-keygen -o "$T/age.key" 2>/dev/null
 OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_WORKDIR=$T/work OMEGACD_AGE_KEY_FILE=$T/age.key \
   OMEGACD_ADMIN_PASSWORD=e2e-password-123 OMEGACD_POLL_INTERVAL=1h "$BIN" > "$T/server.log" 2>&1 &
 SRV=$!
-cleanup() { "$BIN" app delete $APP --volumes --yes >/dev/null 2>&1; kill $SRV 2>/dev/null; wait $SRV 2>/dev/null; rm -rf "$T"; }
+cleanup() { "$BIN" app delete $APP --volumes --yes >/dev/null 2>&1; kill $SRV ${AGENT:-} 2>/dev/null; wait $SRV ${AGENT:-} 2>/dev/null; rm -rf "$T"; }
 trap cleanup EXIT
 for _ in $(seq 50); do curl -sf $API/version >/dev/null && break; sleep 0.2; done
 curl -sf -c "$T/j" -H 'Content-Type: application/json' -d '{"username":"admin","password":"e2e-password-123"}' $API/auth/login >/dev/null
 export OMEGACD_SERVER=http://127.0.0.1:18080
 export OMEGACD_TOKEN=$(curl -sf -b "$T/j" -H 'Content-Type: application/json' -H 'X-Requested-With: omegacd' \
   -d '{"name":"e2e"}' $API/settings/tokens | python3 -c 'import json,sys; print(json.load(sys.stdin)["plaintext"])')
+. "$(dirname "$0")/enroll.sh"; enroll box # the Control Plane's machine, a Host like any other (Q104)
 ctr() { docker ps -aq --filter label=com.docker.compose.project=$APP --filter label=com.docker.compose.service=$1; }
 runs() { docker exec "$(ctr db)" psql -U postgres -d app -tAc 'select count(*) from runs' 2>/dev/null; }
 field() { "$BIN" app get $APP -o json | python3 -c "import json,sys; v=json.load(sys.stdin); print($1)"; }
 
-"$BIN" app create $APP --repo "$REPO" --path mig >/dev/null
+"$BIN" app create $APP --repo "$REPO" --path mig --host box >/dev/null
 "$BIN" app sync $APP --wait --timeout 4m >/dev/null 2>&1
 check "the app syncs, Healthy with its one-shot completed" '[ "$(field "v[\"syncStatus\"], v[\"health\"]")" = "Synced Healthy" ]'
 check "the migration exited 0" '[ "$(docker inspect -f "{{.State.Status}} {{.State.ExitCode}}" "$(ctr migrate)")" = "exited 0" ]'
@@ -71,5 +72,7 @@ compose 2; printf 'THIS IS NOT SQL;\n' >> "$REPO/mig/schema.sql"; gitc commit -q
 check "a failing migration fails the Sync, saying which" '[ "$(field "v[\"lastOperation\"][\"phase\"]")" = Failed ] && field "v[\"lastOperation\"][\"message\"]" | grep -q "migrate exited"'
 check "and leaves the running app as it was" '[ "$(ctr web)" = "$web" ] && [ "$(docker inspect -f "{{.State.Running}}" "$web")" = true ]'
 
-[ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- server log"; tail -15 "$T/server.log"; }
+check "deployed by the Agent of the Control Plane's machine, as its log says (Q104)" 'grep -q "msg=deploy" "$AGENT_LOG"'
+
+[ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- agent log"; tail -15 "$AGENT_LOG"; echo "--- server log"; tail -15 "$T/server.log"; }
 exit $fail

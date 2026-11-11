@@ -7,8 +7,9 @@ See [architecture](../architecture.md#install-q10-q21-q26-q33-q35-q51).
 **Status:** todo
 **Depends on:** M4-04, M3-02
 
-`install.sh` asks **full** (Control Plane, UI, Source Server, built-in Agent when Docker is there) or **agent**
-(Control Plane URL + invite; container or systemd; rootless detected) (Q33). Unattended via environment variables,
+`install.sh` asks **full** (Control Plane, UI, Source Server) or **agent** (Control Plane URL + invite; container or
+systemd; rootless detected) (Q33). An Agent on the Control Plane's machine is installed in agent mode and enrolled by
+hand like any other (Q104). Unattended via environment variables,
 as today; Kubernetes context always confirmed.
 
 On Debian it installs with recommended packages, as apt does by default: a minimal image without them (Hetzner's
@@ -23,7 +24,8 @@ found by the test servers; the docs say so.
 
 `deploy/compose.yaml` (full: Control Plane + optional standalone Source Server service) and `deploy/agent.yaml`
 (socket, state volume, work dir at the same path both sides, rootless variant with the user socket) (Q21). The image
-runs as a non-root user in the Docker socket's group (`group_add`), not root (Q89).
+runs as a non-root user; only the Agent's service gets the Docker socket, in its group (`group_add`); the Control
+Plane's gets none (Q104).
 
 **Done when:** `docker compose up -d` brings each up, as a non-root user; the Agent refuses a mount without path parity.
 
@@ -47,7 +49,7 @@ Docker.
 **Status:** todo
 **Depends on:** M1-05
 
-`deploy/kubernetes.yaml`: Control Plane + Source Server (separate pods, mTLS between), no built-in Agent (Q33, Q35).
+`deploy/kubernetes.yaml`: Control Plane + Source Server (separate pods, mTLS between), no Agent (Q33, Q104).
 
 **Done when:** installs in OrbStack's Kubernetes and manages a remote Agent.
 

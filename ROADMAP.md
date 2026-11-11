@@ -44,7 +44,7 @@ The plan: [docs/v0.2](docs/v0.2/README.md) (architecture, decisions, 8 milestone
 - **No data loss**: Agents keep, restore and self-heal their apps with the Control Plane or Source Server gone; offline rollback on the Host
 - **Enrollment** with single-use invites, Agent key pairs, fingerprint approval and signed challenges
 - **Rootless** Docker, docker-group users and rootless **Podman** (tested); Agent as a container or a systemd service
-- Built-in Agent in a full install; install script with full and agent modes; Kubernetes; reverse proxies everywhere
+- Install script with full and agent modes; Kubernetes; reverse proxies everywhere
 - UI: Add Host flow, Host cards, engine badges everywhere, offline and queued states; then a polish milestone
 - **Hosts**: Debian 13 and Ubuntu 24.04 on amd64 and arm64, every push tested on all four with the same tests (`make test-linux`, real servers); macOS for development only
 - **Packages**: `.deb` for amd64 and arm64 on every release, with the systemd units; `install.sh` installs it (`.rpm` comes with the RHEL family, after v0.2)

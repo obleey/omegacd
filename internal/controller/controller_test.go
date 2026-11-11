@@ -205,6 +205,7 @@ type fakeSource struct {
 	renderErrRev  string            // and only Renders of this Revision fail with it, when set
 	blobErr       error             // Blob fails with it
 	badHash       bool              // Render names files by a hash that isn't hex
+	warnings      []string          // Render's
 }
 
 func (g *fakeSource) Invalidate(string) {}
@@ -217,7 +218,7 @@ func (g *fakeSource) Resolve(context.Context, string, string) (string, error) {
 func (g *fakeSource) Render(_ context.Context, spec domain.RenderSpec) (domain.Rendered, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	r := domain.Rendered{Checksum: "tree-" + spec.Revision}
+	r := domain.Rendered{Checksum: "tree-" + spec.Revision, Warnings: g.warnings}
 	if g.renderErr != nil && (g.renderErrRev == "" || g.renderErrRev == spec.Revision) {
 		return r, g.renderErr
 	}
@@ -2303,11 +2304,18 @@ func TestAgentDiff(t *testing.T) {
 	r.g.set("bbbbbbbb")
 	ag.diff = []domain.ServiceDiff{{Service: "web", Change: "changed", Fields: []string{"image"}}}
 
+	r.g.mu.Lock()
+	r.g.warnings = []string{"web: API_TOKEN is in plain text in compose.yaml"}
+	r.g.mu.Unlock()
 	dv, err := r.c.Diff(ctx, "web")
 	if err != nil || len(dv.Services) != 1 || dv.FromSHA != "aaaaaaaa" || dv.ToSHA != "bbbbbbbb" ||
-		!strings.Contains(dv.Desired, "services") || !strings.Contains(dv.Live, "services") {
+		!strings.Contains(dv.Desired, "services") || !strings.Contains(dv.Live, "services") ||
+		len(dv.Warnings) != 1 || !strings.Contains(dv.Warnings[0], "plain text") {
 		t.Fatalf("online: %+v %v", dv, err)
 	}
+	r.g.mu.Lock()
+	r.g.warnings = nil
+	r.g.mu.Unlock()
 	if slices.Contains(ag.asked, "") || ag.asked[len(ag.asked)-1] != "bbbbbbbb" {
 		t.Fatalf("asked about %v", ag.asked)
 	}
@@ -2391,5 +2399,20 @@ func TestAgentDiffFails(t *testing.T) {
 	r.g.mu.Unlock()
 	if _, err := r.c.Diff(ctx, "web"); err == nil || !strings.Contains(err.Error(), "source server unreachable") {
 		t.Fatalf("compose files not served: %v", err)
+	}
+}
+
+// Q102: adopt may be set on an existing Application, where an Agent refused its first Sync over a hand-started project.
+func TestUpdateSetsAdopt(t *testing.T) {
+	r := newRig(t)
+	ctx := t.Context()
+	a := app("web")
+	r.c.CreateApp(ctx, a)
+	a.Adopt = true
+	if _, err := r.c.UpdateApp(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := r.st.GetApp(ctx, "web"); !got.Adopt {
+		t.Fatal("adopt not kept")
 	}
 }

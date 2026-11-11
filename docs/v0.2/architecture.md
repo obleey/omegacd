@@ -23,7 +23,7 @@ All personas are one binary (Q5, Q15):
 
 | Command | Persona | Runs where |
 | --- | --- | --- |
-| `omegacd server` | **Control Plane**: UI, API, database, sync history, Agent connections; with an in-process Source Server and, when Docker is present, a built-in Agent | the ops machine, a container, or Kubernetes |
+| `omegacd server` | **Control Plane**: UI, API, database, sync history, Agent connections; with an in-process Source Server; never a container engine (Q104) | the ops machine, a container, or Kubernetes |
 | `omegacd source-server` | **Source Server**, standalone (recommended for production) | next to the Control Plane, internal network only |
 | `omegacd agent` | **Agent** | every Host: native (systemd) or a container |
 | `omegacd <anything else>` | CLI client (`app sync`, `import`, `keygen`, …) | laptops, CI |
@@ -86,9 +86,8 @@ only the Control Plane, never Agents or users. A reverse proxy in between must p
   on reconnect; a newer Sync replaces a queued one.
 - **Keeps every payload it delivered** (content-addressed, cheap): reinstalled Agents and Rollbacks to rendered
   Revisions work without the Source Server; only new Revisions wait for it, with the reason shown.
-- **Built-in Agent**: `OMEGACD_BUILTIN_AGENT=auto|true|false` (default auto: on when a Docker-compatible socket
-  is reachable and `KUBERNETES_SERVICE_HOST` is unset), enrolled automatically, otherwise a normal Agent. Only in
-  a full install (Q26, Q35).
+- **No built-in Agent** (Q104): the Control Plane's own machine is a Host like any other, with an Agent installed
+  beside it and enrolled. Every Application names its Host; there is no default Host.
 - **Disaster recovery** (Q30): from a backup (database + Master Key) Agents just reconnect; from nothing, Agents
   are re-enrolled, report what they run as "on the Host, not managed", and the App of Apps from Git takes those
   over by name without redeploying unchanged ones.
@@ -190,10 +189,11 @@ only the Control Plane, never Agents or users. A reverse proxy in between must p
 
 ## Install (Q10, Q21, Q26, Q33, Q35, Q51)
 
-- `install.sh` asks **full** (Control Plane, UI, Source Server, built-in Agent when Docker is there) or **agent**
+- `install.sh` asks **full** (Control Plane, UI, Source Server; Q104) or **agent**
   (Control Plane URL + invite; container or systemd, rootless detected).
 - `deploy/compose.yaml` (full), `deploy/agent.yaml` (Agent; rootful and rootless variants), systemd units,
-  `deploy/kubernetes.yaml` (full, no built-in Agent).
+  `deploy/kubernetes.yaml` (full).
+- An Agent on the Control Plane's machine is installed in **agent** mode and enrolled like any other (Q104).
 - Reverse proxy examples for Caddy, Traefik and nginx.
 
 ## Removed in v0.2 (Q9, Q18, Q47)

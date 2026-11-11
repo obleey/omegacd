@@ -15,7 +15,8 @@ change it here first.
 ## Model
 
 - **Q2** Pull-based like Argo; rootless Docker and non-root docker-group users must work.
-- **Q9** One model: every Host runs an Agent; push (SSH/TLS) goes away; the Control Plane's machine gets a built-in Agent.
+- **Q9** One model: every Host runs an Agent; push (SSH/TLS) goes away; the Control Plane's machine runs one too,
+  enrolled like any Host (Q104).
 - **Q3** The Agent runs Compose itself; the Control Plane never talks to a Host's engine.
 - **Q23** The Agent computes Live State, Diff, Health and drift and streams them; the Control Plane derives Sync Status and keeps History.
 - **Q6** The Control Plane is reachable by Agents (public behind a proxy, or a private network); Agents only dial out.
@@ -61,8 +62,8 @@ change it here first.
   30 s pings, Source Server mTLS needs TLS passthrough, WebSocket stays as the fallback once gRPC exists, IP
   allowlist via trusted proxies, docs with Caddy/Traefik/nginx examples.
 - **Q73** (2026-11-08, design check before M3) An invite is valid for one hour and once; a new one is a click away.
-- **Q74** Every new Host is approved by the admin comparing the fingerprint; no auto-approve. Only the built-in Agent on
-  the Control Plane's own machine (M4-04) doesn't enroll.
+- **Q74** Every new Host is approved by the admin comparing the fingerprint; no auto-approve, the Control Plane's own
+  machine included (Q104).
 - **Q75** A Host locked by a second connection with its key shows both connections (address, time) with two actions:
   unlock (a harmless cause, such as a cloned VM now gone) or revoke and add again (a key that may be stolen). Its
   Applications keep running meanwhile.
@@ -134,7 +135,7 @@ change it here first.
 
 ## Control Plane
 
-- **Q26/Q35** Built-in Agent only in a full install; `OMEGACD_BUILTIN_AGENT=auto|true|false`, auto = on when a
+- **Q26/Q35** (superseded by Q104: no built-in Agent) Built-in Agent only in a full install; `OMEGACD_BUILTIN_AGENT=auto|true|false`, auto = on when a
   Docker-compatible socket is reachable and not in Kubernetes (`KUBERNETES_SERVICE_HOST`).
 - **Q30** Disaster recovery: from backup, Agents reconnect; from nothing, re-enroll, apps show as "on the Host, not
   managed" and the App of Apps takes them over by name without redeploying unchanged ones.
@@ -210,7 +211,7 @@ is declared. Their details (syntax, UI, messages) are decided when each is built
   Operations, end to end through the binary, instead of stand-ins.
 - **Q80** Agents sit behind the controller's existing engine seam (`domain.Engine`): the controller and its tests stay.
   Push Hosts (SSH/TLS) and Agent Hosts coexist, chosen per Host, until M4-05 deletes push; `local` uses the Docker
-  socket until the built-in Agent (M4-04). M4-01 refined it: a Sync to an Agent Host branches right after Render, since
+  socket until M4-05 deletes it (Q104). M4-01 refined it: a Sync to an Agent Host branches right after Render, since
   the engine seam works on a folder the Control Plane writes and decrypts; the files go to the Agent as rendered,
   secrets still encrypted. Diff, Live State, logs and resources stay behind the seam until M4-02 moves them.
 - **Q81** A Sync to an offline Host is a Sync Operation "Waiting for Host", kept in the database (it survives a Control
@@ -230,9 +231,9 @@ is declared. Their details (syntax, UI, messages) are decided when each is built
   decrypted in memory for that pull only, never written; never in any log.
 - **Q87** Live Sync progress (pulling, creating, started, …) is streamed by the Agent in a new message, so the UI's
   live progress view keeps working.
-- **Q88** The built-in Agent's Host is `local` (the Control Plane's machine, today's name and default); its state dir
+- **Q88** (superseded by Q104) The built-in Agent's Host is `local` (the Control Plane's machine, today's name and default); its state dir
   is in the Control Plane's data dir, its work dir `OMEGACD_WORKDIR`.
-- **Q89** The built-in Agent may run as the Control Plane's user, root included (the image runs as root today), with a
+- **Q89** (superseded by Q104) The built-in Agent may run as the Control Plane's user, root included (the image runs as root today), with a
   warning: it holds the Docker socket anyway. M6-02 makes the image run as a non-root user in the socket's group.
 - **Q90** After M4-05's fresh schema, the Control Plane refuses a v0.1 database with a message (export the Application
   definitions with v0.1's `app export`, then reinstall) and leaves the file untouched (Q18).
@@ -284,3 +285,38 @@ is declared. Their details (syntax, UI, messages) are decided when each is built
   other caller: a CI step after a push, a script, a Git host without a format here. Bitbucket, Azure DevOps and Gogs
   get no native parser: their payloads are fixed, so they use polling or a CI step calling the generic endpoint. A
   body that isn't the provider's format answers 400 (before: 401, like a wrong signature). Part of M4-03.
+
+## Built-in Agent (2026-11-10)
+
+- **Q100** (superseded by Q104) The built-in Agent has its own Host Key, generated in its state dir (`<data>/agent`) like any Agent's, and
+  is enrolled and approved as the Host `local` at every start, without an invite (the Control Plane made both keys
+  itself). The Master Key then only seals the database and decrypts no Application's secret (Q19); secrets for
+  `local` are encrypted to the built-in Agent's recipient, shown with the Host. Nothing carries over: v0.2 starts
+  fresh (Q90, Q97). Part of M4-04.
+- **Q101** (superseded by Q104) With the built-in Agent off (`OMEGACD_BUILTIN_AGENT=false`, or auto without an engine or in Kubernetes),
+  `local` deploys from the Control Plane as before until M4-05 deletes that path and `OMEGACD_LOCAL_HOST` with it;
+  from then on, off means there is no `local` Host. M4-04 only adds.
+- **Q102** `adopt` may be changed on an existing Application. An Agent checks for a hand-started project of the same
+  name at its first deploy of the Application, not at create (the Control Plane can't look at the Host), so a refused
+  first Sync is answered by setting adopt and syncing again; once the Agent has deployed it, adopt changes nothing.
+  Before: create-only, the old path refusing at create.
+- **Q103** One machine, one Agent, one Host. The machine is provisioned with its engine (rootful Docker, rootless
+  Docker or Podman) and its Agent uses that one: `DOCKER_HOST` when set (checked at start), otherwise the first socket
+  found of rootful Docker, rootless Docker, rootless Podman and rootful Podman, the log naming it and any others. Several
+  Agents on one machine are not supported.
+
+## No built-in Agent (2026-11-11)
+
+- **Q104** No built-in Agent: the Control Plane's machine is a Host like any other, with an `omegacd agent` installed
+  beside the Control Plane and enrolled with an invite under the name the admin gives it; `omegacd server` never talks
+  to a container engine. Every Application names its Host (`host:`): there is no default Host and no Host `local`
+  (M4-05 deletes them with `OMEGACD_LOCAL_HOST` and the Control Plane's own deploy path). `install.sh full` installs
+  the Control Plane and Source Server only; an Agent on the same machine is installed and enrolled with `install.sh
+  agent`, as on any Host. Why: the Control Plane serves the UI and API and should not hold the engine's socket, which
+  is root on the machine (Q89 only warned); one enrollment and one code path, without `local`'s special cases (M4-04
+  found one: the built-in Agent turned off left `local` waiting for it); nothing to switch off in Kubernetes; and
+  OmegaCD manages its own Control Plane as an Application on that Agent, which an Agent inside the server could not
+  (a Sync of its own project would restart it mid-deploy). If the Control Plane restarts during that Sync, the Agent
+  finishes it and reports it on reconnect (M3-06). An Agent refuses only its own Compose project (M4-05).
+  Supersedes the built-in Agent of Q9, Q26/Q35, Q74, Q88, Q89, Q100 and Q101, and ADR 0003's consequence. M4-04 keeps
+  what every Agent needs (Q102, Q103) and runs the e2e scripts through an enrolled Agent.

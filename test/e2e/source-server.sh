@@ -45,15 +45,16 @@ start_control_plane() {
 stop() { kill "$@" 2>/dev/null; wait "$@" 2>/dev/null; }
 cleanup() {
   "$BIN" app delete e2e-src --volumes --yes >/dev/null 2>&1
-  stop $SRV $SRC; rm -rf "$T"
+  stop $SRV $SRC ${AGENT:-}; rm -rf "$T"
 }
 trap cleanup EXIT
 start_source
 start_control_plane
+. "$(dirname "$0")/enroll.sh"; enroll box # the Control Plane's machine, a Host like any other (Q104)
 check "got an API token" '[ -n "$OMEGACD_TOKEN" ]'
 check "the Control Plane uses the standalone Source Server" 'grep -q "using the standalone source server" "$T/server.log"'
 
-"$BIN" app create e2e-src --repo "$REPO" --path web >/dev/null
+"$BIN" app create e2e-src --repo "$REPO" --path web --host box >/dev/null
 out=$("$BIN" app sync e2e-src --wait --timeout 2m 2>&1); rc=$?
 check "app syncs through the Source Server" '[ $rc -eq 0 ]'
 check "the file from Git is mounted" 'docker logs $(docker ps -q --filter label=dev.omegacd.application=e2e-src) 2>&1 | grep -q "from the source server"'
@@ -83,7 +84,9 @@ check "losing the Control Plane's data loses no credential" 'listed'
 check "a client without the certificate is refused" '! curl -s --http2 --cacert "$T/tls/ca.pem" -o /dev/null https://127.0.0.1:19090/'
 check "a client with the certificate gets in" 'curl -s --http2 --cacert "$T/tls/ca.pem" --cert "$T/tls/client.pem" --key "$T/tls/client.key" -o /dev/null -w "%{http_code}" https://127.0.0.1:19090/ | grep -q "^[0-9]"'
 
-check "the log is at debug and holds no secret (Q62)" 'grep -q level=DEBUG "$T/source.log" && ! grep -qF -e "$GITPW" -e e2e-password-123 "$T/server.log" "$T/source.log"'
+check "the logs are at debug and hold no secret (Q62)" 'grep -q level=DEBUG "$T/source.log" && ! grep -qF -e "$GITPW" -e e2e-password-123 "$T/server.log" "$T/source.log" "$AGENT_LOG"'
 
-[ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- server log"; tail -15 "$T/server.log"; echo "--- source server log"; tail -15 "$T/source.log"; }
+check "deployed by the Agent of the Control Plane's machine, as its log says (Q104)" 'grep -q "msg=deploy" "$AGENT_LOG"'
+
+[ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- agent log"; tail -15 "$AGENT_LOG"; echo "--- server log"; tail -15 "$T/server.log"; echo "--- source server log"; tail -15 "$T/source.log"; }
 exit $fail

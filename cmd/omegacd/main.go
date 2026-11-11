@@ -260,6 +260,9 @@ func runAgent(log *slog.Logger) error {
 	if len(args) > 0 && !filesOnly && !rollback {
 		return fmt.Errorf("usage: omegacd agent [restore --files | rollback [APP [REVISION]]] (omegacd agent --help: its settings)")
 	}
+	if err := useDockerHost(log, os.Getenv, isSocket); err != nil {
+		return err
+	}
 	cfg, err := agent.LoadConfig(os.Getenv, os.Geteuid())
 	if err != nil {
 		return err
@@ -413,4 +416,31 @@ func listCached(ctx context.Context, ag *agent.Agent, db *agent.DB, names []stri
 		}
 	}
 	return nil
+}
+
+// useDockerHost settles the container engine before anything talks to it (M4-04): DOCKER_HOST checked, or the engine's
+// socket found and set, the choice logged.
+func useDockerHost(log *slog.Logger, getenv func(string) string, isSocket func(string) bool) error {
+	host, others, err := engine.DockerHost(getenv, isSocket)
+	switch {
+	case err != nil:
+		return err
+	case getenv("DOCKER_HOST") != "":
+		log.Info("container engine", "dockerHost", host, "from", "DOCKER_HOST")
+		return nil
+	case host == "":
+		log.Warn("no container engine socket found (rootful or rootless Docker, Podman): trying the default; set DOCKER_HOST if the engine listens elsewhere")
+		return nil
+	}
+	if len(others) > 0 {
+		log.Info("container engine socket found, others too: set DOCKER_HOST to use another", "dockerHost", host, "others", others)
+	} else {
+		log.Info("container engine socket found", "dockerHost", host)
+	}
+	return os.Setenv("DOCKER_HOST", host)
+}
+
+func isSocket(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.Mode()&fs.ModeSocket != 0
 }

@@ -59,6 +59,8 @@ through to it; the access check in the app form asks it (Q40).
 **Depends on:** M2-05, M4-02
 
 The file viewer shows `KEY=••••` from the key names the Agent reports; content of secret files is never shown.
+From M4-04: `test/e2e/secrets.sh` checks only that a decrypted file's content isn't shown; it checks `API_TOKEN=••••`
+again with this ticket.
 
 **Done when:** no code path can send a decrypted value from Agent to Control Plane (test).
 

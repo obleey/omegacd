@@ -878,12 +878,13 @@ func (c *Controller) UpdateApp(ctx context.Context, a domain.Application) (domai
 	return c.reconcile(ctx, a), nil
 }
 
-// checkUpdate carries over what an update may not change.
+// checkUpdate carries over what an update may not change. Adopt may: an Agent checks it only before its first deploy
+// of the Application, so it is set where its first Sync was refused (Q102).
 func checkUpdate(old domain.Application, a *domain.Application) error {
 	if a.Kind == domain.KindCompose && a.Host != old.Host {
 		return fmt.Errorf("%w: delete and recreate the Application %q to move it to another Host", domain.ErrInvalid, a.Name)
 	}
-	a.CreatedAt, a.Adopt = old.CreatedAt, old.Adopt
+	a.CreatedAt = old.CreatedAt
 	a.RolledBack = old.RolledBack && !a.AutoSync
 	return nil
 }
@@ -1152,6 +1153,7 @@ func (c *Controller) Diff(ctx context.Context, name string) (domain.DiffView, er
 		return dv, err
 	}
 	if c.agentHost(ctx, a.Host) {
+		dv.Warnings = r.Warnings // the Source Server's (plain-text secrets), then the Agent's
 		return c.agentDiff(ctx, a, dv, r)
 	}
 	stage, done, err := c.stage(ctx, a, r)
