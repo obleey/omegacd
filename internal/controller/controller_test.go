@@ -2402,44 +2402,6 @@ func TestAgentDiffFails(t *testing.T) {
 	}
 }
 
-// M4-04: with the built-in Agent enrolled as Host local, an Application on local (named or not) deploys through it;
-// local is listed once, first, as its Agent reported it, with no Master Key; and OmegaCD still refuses to Sync its
-// own project there.
-func TestLocalThroughBuiltinAgent(t *testing.T) {
-	r, ag := agentRig(t)
-	ctx := t.Context()
-	r.st.mu.Lock()
-	r.st.hosts[domain.LocalHost] = domain.Host{Name: domain.LocalHost, Fingerprint: "SHA256:builtin", Approved: true,
-		AgeRecipient: "age1builtin", Agent: &domain.AgentInfo{EngineVersion: "29.0"}}
-	r.st.mu.Unlock()
-	a := app("web")
-	a.Host = ""
-	r.c.CreateApp(ctx, a)
-	r.waitIdle(t, "web")
-	r.c.Sync(ctx, "web", domain.SyncRequest{})
-	r.waitIdle(t, "web")
-	if sent := ag.sent(); len(sent) == 0 || sent[len(sent)-1].App != "web" || r.e.syncCount() != 0 {
-		t.Fatalf("not through the Agent: %d sent, %d engine syncs", len(sent), r.e.syncCount())
-	}
-
-	hosts, err := r.c.ListHosts(ctx)
-	if err != nil || len(hosts) != 2 || hosts[0].Name != domain.LocalHost || hosts[1].Name != "edge" {
-		t.Fatalf("hosts %+v %v", hosts, err)
-	}
-	if l := hosts[0]; l.Status.ServerVersion != "29.0" || l.KeyRecipient != "" || l.AgeRecipient != "age1builtin" {
-		t.Fatalf("local as its Agent reported it, its own key: %+v", l)
-	}
-
-	r.c.cfg.SelfID = "abc123"
-	r.e.live.Containers = []domain.Container{{ID: "abc123def456"}}
-	r.c.CreateApp(ctx, app("omegacd"))
-	r.c.Sync(ctx, "omegacd", domain.SyncRequest{})
-	r.waitIdle(t, "omegacd")
-	if ops, _ := r.st.ListOps(ctx, "omegacd"); ops[0].Phase != domain.OpFailed {
-		t.Fatalf("its own project synced through the built-in Agent: %+v", ops[0])
-	}
-}
-
 // Q102: adopt may be set on an existing Application, where an Agent refused its first Sync over a hand-started project.
 func TestUpdateSetsAdopt(t *testing.T) {
 	r := newRig(t)

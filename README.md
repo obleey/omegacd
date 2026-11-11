@@ -588,8 +588,6 @@ All server settings are environment variables:
 | `OMEGACD_WORKDIR` | `/run/omegacd` | Where Application files are written on Sync; same path on host and container |
 | `OMEGACD_AGE_KEY_FILE` | `/etc/omegacd/age.key` | age identity: seals stored credentials and decrypts SOPS files. Required |
 | `OMEGACD_SSH_KNOWN_HOSTS` | `/etc/omegacd/known_hosts` | Host keys for Git over SSH and `ssh://` Hosts |
-| `DOCKER_HOST` | found | The container engine. Unset, OmegaCD and its Agents use the first socket that exists of rootful Docker (`/var/run/docker.sock`), rootless Docker (`$XDG_RUNTIME_DIR/docker.sock`), rootless Podman (`$XDG_RUNTIME_DIR/podman/podman.sock`) and rootful Podman (`/run/podman/podman.sock`), logging which, and any others found; set, it is checked at start (an address that isn't one stops OmegaCD, saying so) |
-| `OMEGACD_BUILTIN_AGENT` | `auto` | `auto`, `true` or `false`: an Agent for OmegaCD's own machine (the Host `local`), running in the server, enrolled on its own; `auto` turns it on when a Docker-compatible engine is reachable, never in Kubernetes. Its keys and cache are in `<data>/agent`, its work dir is `OMEGACD_WORKDIR`; secrets for `local` are encrypted to its Host Key (Settings → Hosts) |
 | `OMEGACD_LOCAL_HOST` | `true` | `false` where no Docker engine runs next to OmegaCD (Kubernetes): the built-in `local` Host is hidden and refused, Applications go to remote Hosts |
 | `OMEGACD_POLL_INTERVAL` | `3m` | How often Git is polled (Go duration); `0` turns polling off (webhooks only, see [Webhooks](#webhooks)) |
 | `OMEGACD_ADMIN_PASSWORD` | *(generated)* | Initial `admin` password, used only on first start. If unset, a random one is logged and must be changed on first login |

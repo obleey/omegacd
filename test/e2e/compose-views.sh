@@ -14,18 +14,18 @@ age-keygen -o "$T/age.key" 2>/dev/null
 OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_WORKDIR=$T/work OMEGACD_AGE_KEY_FILE=$T/age.key \
   OMEGACD_ADMIN_PASSWORD=e2e-password-123 OMEGACD_POLL_INTERVAL=1h "$BIN" > "$T/server.log" 2>&1 &
 SRV=$!
-cleanup() { "$BIN" app delete e2e-sec --volumes --yes >/dev/null 2>&1; kill $SRV 2>/dev/null; wait $SRV 2>/dev/null; rm -rf "$T"; }
+cleanup() { "$BIN" app delete e2e-sec --volumes --yes >/dev/null 2>&1; kill $SRV ${AGENT:-} 2>/dev/null; wait $SRV ${AGENT:-} 2>/dev/null; rm -rf "$T"; }
 trap cleanup EXIT
 for _ in $(seq 50); do curl -sf $API/version >/dev/null && break; sleep 0.2; done
 curl -sf -c "$T/j" -H 'Content-Type: application/json' -d '{"username":"admin","password":"e2e-password-123"}' $API/auth/login >/dev/null
 export OMEGACD_SERVER=http://127.0.0.1:18080
 export OMEGACD_TOKEN=$(curl -sf -b "$T/j" -H 'Content-Type: application/json' -H 'X-Requested-With: omegacd' \
   -d '{"name":"e2e"}' $API/settings/tokens | python3 -c 'import json,sys; print(json.load(sys.stdin)["plaintext"])')
+. "$(dirname "$0")/enroll.sh"; enroll box # the Control Plane's machine, a Host like any other (Q104)
 diffjson() { curl -sf -H "Authorization: Bearer $OMEGACD_TOKEN" $API/apps/e2e-sec/diff; }
 field() { python3 -c "import json,sys; print(json.load(sys.stdin)['$1'])"; }
 
-# encrypted for local's Host Key: the built-in Agent's own, not the Master Key (Q100)
-RCPT=$("$BIN" host list -o json | python3 -c 'import json,sys; print([h for h in json.load(sys.stdin) if h["name"]=="local"][0]["ageRecipient"])')
+# encrypted for the Agent's Host Key (RCPT, from enroll), not the Master Key
 cat > "$REPO/sec/compose.yaml" <<'EOF'
 services:
   web:
@@ -39,7 +39,7 @@ SOPS_AGE_RECIPIENTS=$RCPT sops --encrypt --input-type dotenv --output-type doten
 check "secret is encrypted in Git" '! grep -q sup3r "$REPO/sec/.sops.env"'
 gitc init -q -b main && gitc add -A && gitc commit -qm init
 
-"$BIN" app create e2e-sec --repo "$REPO" --path sec >/dev/null
+"$BIN" app create e2e-sec --repo "$REPO" --path sec --host box >/dev/null
 D=$(diffjson)
 check "before the first Sync: Desired shown, Live empty" '[ -n "$(echo "$D" | field desired)" ] && [ -z "$(echo "$D" | field live)" ]'
 check "Desired is the compose file exactly as in Git" '[ "$(echo "$D" | field desired)" = "$(cat "$REPO/sec/compose.yaml")" ]'
@@ -64,9 +64,9 @@ printf '      API_TOKEN: abc123\n' >> "$REPO/sec/compose.yaml"; gitc commit -qam
 D=$(diffjson)
 check "a literal API_TOKEN is warned about" 'echo "$D" | python3 -c "import json,sys; w=json.load(sys.stdin).get(\"warnings\") or []; sys.exit(0 if len(w)==1 and w[0].startswith(\"web: API_TOKEN is in plain text in compose.yaml\") else 1)"'
 
-check "the log is at debug and holds no secret (Q62)" 'grep -q level=DEBUG "$T/server.log" && ! grep -qF -e sup3r-s3cret-value -e e2e-password-123 -e "$OMEGACD_TOKEN" "$T/server.log"'
+check "the logs are at debug and hold no secret (Q62)" 'grep -q level=DEBUG "$T/server.log" && ! grep -qF -e sup3r-s3cret-value -e e2e-password-123 -e "$OMEGACD_TOKEN" "$T/server.log" "$AGENT_LOG"'
 
-check "deployed by the built-in Agent, as its log says (M4-04)" 'grep "component=agent" "$T/server.log" | grep -q "msg=deploy"'
+check "deployed by the Agent of the Control Plane's machine, as its log says (Q104)" 'grep -q "msg=deploy" "$AGENT_LOG"'
 
-[ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- server log"; tail -15 "$T/server.log"; echo "$D" | head -c 2000; }
+[ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- agent log"; tail -15 "$AGENT_LOG"; echo "--- server log"; tail -15 "$T/server.log"; echo "$D" | head -c 2000; }
 exit $fail

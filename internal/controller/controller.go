@@ -657,8 +657,7 @@ func (c *Controller) syncPendingChildren(ctx context.Context, parent string) {
 
 // apply materialises the Revision into the Application's working dir and brings the project up.
 func (c *Controller) apply(ctx context.Context, a domain.Application, op domain.SyncOperation) error {
-	// another Agent's Host isn't OmegaCD's own; the built-in Agent's is (M4-05 moves this check into the Agent)
-	if a.Kind == domain.KindCompose && (cmp.Or(a.Host, domain.LocalHost) == domain.LocalHost || !c.agentHost(ctx, a.Host)) {
+	if a.Kind == domain.KindCompose && !c.agentHost(ctx, a.Host) { // an Agent's Host isn't OmegaCD's own
 		if err := c.refuseSelf(ctx, a); err != nil {
 			return err
 		}
@@ -1782,10 +1781,7 @@ func (c *Controller) ListHosts(ctx context.Context) ([]domain.HostView, error) {
 	if err != nil {
 		return nil, err
 	}
-	if i := slices.IndexFunc(hosts, func(h domain.Host) bool { return h.Name == domain.LocalHost }); i >= 0 {
-		local := hosts[i] // the built-in Agent's (M4-04): first
-		hosts = append([]domain.Host{local}, slices.Delete(hosts, i, i+1)...)
-	} else if !c.cfg.NoLocalHost {
+	if !c.cfg.NoLocalHost {
 		hosts = append([]domain.Host{{Name: domain.LocalHost, WorkDir: c.cfg.WorkDir}}, hosts...)
 	}
 	views := make([]domain.HostView, len(hosts))
@@ -1803,7 +1799,7 @@ func (c *Controller) hostView(ctx context.Context, h domain.Host, apps []string)
 	}
 	v := domain.HostView{Host: h, Status: domain.HostStatus{Name: h.Name}, Apps: apps}
 	switch {
-	case h.URL != "" || (h.Name == domain.LocalHost && h.Fingerprint == ""):
+	case h.URL != "" || h.Name == domain.LocalHost:
 		v.Status = c.cfg.Engine.HostStatus(ctx, h.Name)
 	case c.cfg.Agents != nil && h.Agent != nil: // a Host with an Agent: as its Agent reported (M4-02)
 		v.Status.Connected = c.cfg.Agents.Online(h.Name)
@@ -1933,10 +1929,9 @@ func (c *Controller) CheckRepo(ctx context.Context, repoURL string) (domain.Repo
 
 // ---- Host Keys ----
 
-// hostKeys returns a Host's keys with their private keys, current first: the Master Key for LocalHost without the
-// built-in Agent.
+// hostKeys returns a Host's keys with their private keys, current first: the Master Key for LocalHost.
 func (c *Controller) hostKeys(ctx context.Context, host string) ([]domain.HostKey, error) {
-	if (host == "" || host == domain.LocalHost) && !c.agentHost(ctx, domain.LocalHost) { // the built-in Agent has its own
+	if host == "" || host == domain.LocalHost {
 		return []domain.HostKey{{Host: domain.LocalHost, Recipient: c.cfg.MasterKey.Recipient().String(),
 			PrivateKey: c.cfg.MasterKey.String(), Current: true, Master: true}}, nil
 	}

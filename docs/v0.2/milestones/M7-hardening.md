@@ -17,7 +17,7 @@ driving the Agent.
 **Depends on:** M6-02
 
 Port `test/e2e` (mounts, compose views, secrets, adopt, README walkthrough, webhook) to a Control Plane with an Agent,
-and add: enrollment, offline Host, queued Sync, offline rollback, built-in Agent.
+and add: enrollment, offline Host, queued Sync, offline rollback, OmegaCD managing its own Control Plane through its machine's Agent (Q104).
 
 Open: CI could run this whole gate on the Hetzner test servers too (the API token as a GitHub secret; up, test, down
 per run), so Debian is tested in CI and pull requests from people who don't run the gate are covered: today GitHub's

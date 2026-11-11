@@ -3,7 +3,7 @@
 set -u  # no pipefail: grep -q closing the pipe early must not fail a check
 BIN=${OMEGACD_BIN:-$(cd "$(dirname "$0")/../.." && pwd)/bin/omegacd}
 T=$(mktemp -d "${TMPDIR:-/tmp}/omegacd-e2es.XXXX")
-REPO=$T/repo; API=http://127.0.0.1:18080/api; W=$T/work/e2e-sec
+REPO=$T/repo; API=http://127.0.0.1:18080/api; W=
 mkdir -p "$REPO/sec" "$T/data" "$T/work"
 fail=0
 check() { if eval "$2"; then echo "PASS  $1"; else echo "FAIL  $1"; fail=1; fi; }
@@ -14,18 +14,19 @@ age-keygen -o "$T/age.key" 2>/dev/null
 OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_WORKDIR=$T/work OMEGACD_AGE_KEY_FILE=$T/age.key \
   OMEGACD_ADMIN_PASSWORD=e2e-password-123 OMEGACD_POLL_INTERVAL=1h "$BIN" > "$T/server.log" 2>&1 &
 SRV=$!
-cleanup() { "$BIN" app delete e2e-sec --volumes --yes >/dev/null 2>&1; kill $SRV 2>/dev/null; wait $SRV 2>/dev/null; rm -rf "$T"; }
+cleanup() { "$BIN" app delete e2e-sec --volumes --yes >/dev/null 2>&1; kill $SRV ${AGENT:-} 2>/dev/null; wait $SRV ${AGENT:-} 2>/dev/null; rm -rf "$T"; }
 trap cleanup EXIT
 for _ in $(seq 50); do curl -sf $API/version >/dev/null && break; sleep 0.2; done
 curl -sf -c "$T/j" -H 'Content-Type: application/json' -d '{"username":"admin","password":"e2e-password-123"}' $API/auth/login >/dev/null
 export OMEGACD_SERVER=http://127.0.0.1:18080
 export OMEGACD_TOKEN=$(curl -sf -b "$T/j" -H 'Content-Type: application/json' -H 'X-Requested-With: omegacd' \
   -d '{"name":"e2e"}' $API/settings/tokens | python3 -c 'import json,sys; print(json.load(sys.stdin)["plaintext"])')
+. "$(dirname "$0")/enroll.sh"; enroll box # the Control Plane's machine, a Host like any other (Q104)
+W=$AGENT_WORK/e2e-sec
 api() { curl -sf -H "Authorization: Bearer $OMEGACD_TOKEN" "$API/apps/e2e-sec/$1"; }
 ctr() { docker ps -q --filter label=dev.omegacd.application=e2e-sec; }
 
-# encrypted for local's Host Key: the built-in Agent's own, not the Master Key (Q100)
-RCPT=$("$BIN" host list -o json | python3 -c 'import json,sys; print([h for h in json.load(sys.stdin) if h["name"]=="local"][0]["ageRecipient"])')
+# encrypted for the Agent's Host Key (RCPT, from enroll), not the Master Key
 enc() { printf '%s\n' "$1" > "$T/plain"; SOPS_AGE_RECIPIENTS=$RCPT sops --encrypt --input-type dotenv --output-type dotenv "$T/plain" > "$2"; }
 cat > "$REPO/sec/compose.yaml" <<'EOF'
 services:
@@ -40,7 +41,7 @@ enc 'DB_PASSWORD=first-db-pw' "$REPO/sec/.sops.env"
 enc 'API_TOKEN=first-token' "$REPO/sec/app.sops.env"
 gitc init -q -b main && gitc add -A && gitc commit -qm init
 
-"$BIN" app create e2e-sec --repo "$REPO" --path sec >/dev/null
+"$BIN" app create e2e-sec --repo "$REPO" --path sec --host box >/dev/null
 "$BIN" app sync e2e-sec --wait --timeout 2m >/dev/null 2>&1
 check "work dir has the decrypted files" '[ -f "$W/.env" ] && [ -f "$W/app.env" ]'
 check "and no *.sops.* copies" '[ -z "$(ls -A "$W" | grep "\.sops\.")" ]'
@@ -66,11 +67,11 @@ check "app is Synced again" '"$BIN" app get e2e-sec -o json | grep -q "\"Synced\
 check "delete removes its folder, decrypted files and all" '[ ! -e "$W" ]'
 
 op=$(grep -o 'msg="sync started" .* op=[0-9]*' "$T/server.log" | head -1 | grep -o '[0-9]*$')
-check "a Sync is followed by its op from the controller through the built-in Agent into the engine (Q62)" \
-  '[ -n "$op" ] && grep "msg=\"compose up\" component=engine" "$T/server.log" | grep "app=e2e-sec" | grep -q "op=$op "'
-check "the log is at debug and holds no secret (Q62)" 'grep -q level=DEBUG "$T/server.log" && ! grep -qF -e first-db-pw -e first-token -e second-token -e e2e-password-123 -e "$OMEGACD_TOKEN" -e "$(grep AGE-SECRET-KEY "$T/age.key")" -e AGE-SECRET-KEY "$T/server.log"'
+check "a Sync is followed by its op from the controller through the Agent into the engine (Q62)" \
+  '[ -n "$op" ] && grep "msg=\"compose up\"" "$AGENT_LOG" | grep "app=e2e-sec" | grep -q "op=$op "'
+check "the logs are at debug and hold no secret (Q62)" 'grep -q level=DEBUG "$T/server.log" && ! grep -qF -e first-db-pw -e first-token -e second-token -e e2e-password-123 -e "$OMEGACD_TOKEN" -e "$(grep AGE-SECRET-KEY "$T/age.key")" -e AGE-SECRET-KEY "$T/server.log" "$AGENT_LOG"'
 
-check "deployed by the built-in Agent, as its log says (M4-04)" 'grep "component=agent" "$T/server.log" | grep -q "msg=deploy"'
+check "deployed by the Agent of the Control Plane's machine, as its log says (Q104)" 'grep -q "msg=deploy" "$AGENT_LOG"'
 
-[ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- server log"; tail -15 "$T/server.log"; }
+[ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- agent log"; tail -15 "$AGENT_LOG"; echo "--- server log"; tail -15 "$T/server.log"; }
 exit $fail

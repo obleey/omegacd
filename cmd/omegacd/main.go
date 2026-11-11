@@ -69,12 +69,9 @@ func run(log *slog.Logger) error {
 	var (
 		addr       = cmp.Or(os.Getenv("OMEGACD_ADDR"), ":8080")
 		dataDir    = cmp.Or(os.Getenv("OMEGACD_DATA"), "/data")
+		workDir    = cmp.Or(os.Getenv("OMEGACD_WORKDIR"), "/run/omegacd")
 		ageKeyFile = cmp.Or(os.Getenv("OMEGACD_AGE_KEY_FILE"), "/etc/omegacd/age.key")
 	)
-	workDir, err := workDirSetting(os.Getenv("OMEGACD_WORKDIR"))
-	if err != nil {
-		return err
-	}
 	poll, err := pollInterval(os.Getenv("OMEGACD_POLL_INTERVAL"))
 	if err != nil {
 		return err
@@ -97,9 +94,6 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	defer st.Close()
-	if err := useDockerHost(log, os.Getenv, isSocket); err != nil {
-		return err
-	}
 	knownHosts := cmp.Or(os.Getenv("OMEGACD_SSH_KNOWN_HOSTS"), "/etc/omegacd/known_hosts")
 	noLocal, err := localHostDisabled(os.Getenv("OMEGACD_LOCAL_HOST"))
 	if err != nil {
@@ -183,26 +177,6 @@ func run(log *slog.Logger) error {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		return err
-	}
-	detected, derr := agent.DetectEngine(ctx)
-	on, why, err := builtinAgent(os.Getenv("OMEGACD_BUILTIN_AGENT"), derr, os.Getenv("KUBERNETES_SERVICE_HOST") != "")
-	if err != nil {
-		ln.Close()
-		return err
-	}
-	log.Info("built-in agent", "on", on, "why", why)
-	if on {
-		closeAgent, err := startBuiltinAgent(ctx, log, st, dataDir, workDir, "http://"+loopback(ln.Addr()), detected, os.Geteuid())
-		if err != nil {
-			ln.Close()
-			return err
-		}
-		defer closeAgent()
-	}
-
 	go ctl.Run(ctx)
 	go func() {
 		<-ctx.Done()
@@ -211,7 +185,7 @@ func run(log *slog.Logger) error {
 		srv.Shutdown(shutdown)
 	}()
 	log.Info("omegacd listening", "addr", addr, "data", dataDir, "workdir", workDir, "poll", poll)
-	if err := srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) { // coverage: unreachable, a taken port fails at net.Listen; Serve ends only by Shutdown
+	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil
@@ -403,16 +377,6 @@ func localHostDisabled(v string) (bool, error) {
 	return false, fmt.Errorf("OMEGACD_LOCAL_HOST must be true or false, not %q", v)
 }
 
-// workDirSetting reads OMEGACD_WORKDIR (default /run/omegacd): an absolute path, cleaned ("/tmp//w/" is /tmp/w), as
-// the built-in Agent's work dir must be (M4-04).
-func workDirSetting(v string) (string, error) {
-	d := filepath.Clean(cmp.Or(strings.TrimSpace(v), "/run/omegacd"))
-	if !filepath.IsAbs(d) {
-		return "", fmt.Errorf("OMEGACD_WORKDIR must be an absolute path, not %q", v)
-	}
-	return d, nil
-}
-
 // pollInterval reads OMEGACD_POLL_INTERVAL (default 3m); 0 turns polling off, leaving webhooks and Refresh.
 func pollInterval(v string) (time.Duration, error) {
 	d, err := time.ParseDuration(cmp.Or(strings.TrimSpace(v), "3m"))
@@ -452,4 +416,31 @@ func listCached(ctx context.Context, ag *agent.Agent, db *agent.DB, names []stri
 		}
 	}
 	return nil
+}
+
+// useDockerHost settles the container engine before anything talks to it (M4-04): DOCKER_HOST checked, or the engine's
+// socket found and set, the choice logged.
+func useDockerHost(log *slog.Logger, getenv func(string) string, isSocket func(string) bool) error {
+	host, others, err := engine.DockerHost(getenv, isSocket)
+	switch {
+	case err != nil:
+		return err
+	case getenv("DOCKER_HOST") != "":
+		log.Info("container engine", "dockerHost", host, "from", "DOCKER_HOST")
+		return nil
+	case host == "":
+		log.Warn("no container engine socket found (rootful or rootless Docker, Podman): trying the default; set DOCKER_HOST if the engine listens elsewhere")
+		return nil
+	}
+	if len(others) > 0 {
+		log.Info("container engine socket found, others too: set DOCKER_HOST to use another", "dockerHost", host, "others", others)
+	} else {
+		log.Info("container engine socket found", "dockerHost", host)
+	}
+	return os.Setenv("DOCKER_HOST", host)
+}
+
+func isSocket(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.Mode()&fs.ModeSocket != 0
 }

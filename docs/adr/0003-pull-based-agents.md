@@ -5,7 +5,9 @@ From v0.2 every Host runs an Agent that dials out to the Control Plane and runs 
 ## Consequences
 
 - Every Host needs an Agent installed (container or systemd); `import` reads stacks through the Agent, there is no SSH path.
-- The Control Plane's own machine gets a built-in Agent in a full install, replacing the `local` Host.
+- The Control Plane's own machine is a Host like any other: an Agent installed beside it and enrolled, replacing the
+  `local` Host. (Amended 2026-11-11, [Q104](../v0.2/decisions.md#no-built-in-agent-2026-11-11): first a built-in Agent
+  in the server; dropped so the Control Plane holds no engine socket.)
 - v0.2 breaks with v0.1: no migration, v0.1 continues on the `release-0.1` branch for fixes.
 - Agents must work without the Control Plane: they keep, restore and self-heal their apps offline (no data loss).
 

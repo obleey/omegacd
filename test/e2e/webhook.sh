@@ -41,7 +41,7 @@ OMEGACD_ADDR=:18080 OMEGACD_DATA=$T/data OMEGACD_WORKDIR=$T/work OMEGACD_AGE_KEY
 SRV=$!
 cleanup() {
   "$BIN" app delete hook-test --volumes --yes >/dev/null 2>&1
-  kill $SRV 2>/dev/null; wait $SRV 2>/dev/null
+  kill $SRV ${AGENT:-} 2>/dev/null; wait $SRV ${AGENT:-} 2>/dev/null
   fj admin user delete --username $U --purge >/dev/null 2>&1
   rm -rf "$T"
 }
@@ -51,11 +51,12 @@ curl -sf -c "$T/j" -H 'Content-Type: application/json' -d '{"username":"admin","
 export OMEGACD_SERVER=http://127.0.0.1:18080
 export OMEGACD_TOKEN=$(curl -sf -b "$T/j" -H 'Content-Type: application/json' -H 'X-Requested-With: omegacd' \
   -d '{"name":"e2e"}' $API/settings/tokens | python3 -c 'import json,sys; print(json.load(sys.stdin)["plaintext"])')
+. "$(dirname "$0")/enroll.sh"; enroll box # the Control Plane's machine, a Host like any other (Q104)
 # the private repo needs a credential in OmegaCD
 code=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $OMEGACD_TOKEN" -H 'X-Requested-With: omegacd' -H 'Content-Type: application/json' \
   -d "{\"urlPrefix\":\"http://git.localhost/\",\"username\":\"$U\",\"password\":\"$FTOK\"}" $API/settings/repo-credentials)
 check "repository credential saved ($code)" '[ "$code" = 201 ] || [ "$code" = 200 ]'
-"$BIN" app create hook-test --repo http://git.localhost/$U/hook-test.git --auto-sync >/dev/null || tail -3 "$T/server.log"
+"$BIN" app create hook-test --repo http://git.localhost/$U/hook-test.git --host box --auto-sync >/dev/null || tail -3 "$T/server.log"
 # Auto-Sync deploys it right after creation: wait for that instead of starting a second Sync
 "$BIN" app wait hook-test --sync --health --timeout 2m >/dev/null 2>&1
 check "first deploy (by Auto-Sync)" '"$BIN" app get hook-test -o json | grep -q "\"Synced\""'
@@ -84,9 +85,9 @@ code=$(curl -s -o /dev/null -w '%{http_code}' -H 'X-Forgejo-Event: push' -H 'X-F
 check "a forged webhook is refused (401)" '[ "$code" = 401 ]'
 grep -i "webhook\|sync finished" "$T/server.log" | cut -c1-200 | tail -4
 
-check "the log is at debug and holds no secret (Q62)" 'grep -q level=DEBUG "$T/server.log" && ! grep -qF -e "$SECRET" -e "$FTOK" -e "$PW" -e e2e-password-123 -e "$OMEGACD_TOKEN" "$T/server.log"'
+check "the logs are at debug and hold no secret (Q62)" 'grep -q level=DEBUG "$T/server.log" && ! grep -qF -e "$SECRET" -e "$FTOK" -e "$PW" -e e2e-password-123 -e "$OMEGACD_TOKEN" "$T/server.log" "$AGENT_LOG"'
 
-check "deployed by the built-in Agent, as its log says (M4-04)" 'grep "component=agent" "$T/server.log" | grep -q "msg=deploy"'
+check "deployed by the Agent of the Control Plane's machine, as its log says (Q104)" 'grep -q "msg=deploy" "$AGENT_LOG"'
 
-[ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- server log"; tail -15 "$T/server.log"; }
+[ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- agent log"; tail -15 "$AGENT_LOG"; echo "--- server log"; tail -15 "$T/server.log"; }
 exit $fail

@@ -45,7 +45,7 @@ OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_WORKDIR=$T/work OMEGAC
 SRV=$!
 cleanup() {
   for s in adopt-a adopt-b; do "$BIN" app delete $s --volumes --yes >/dev/null 2>&1; docker compose -p $s down -v >/dev/null 2>&1; done
-  kill $SRV 2>/dev/null; wait $SRV 2>/dev/null; rm -rf "$T"
+  kill $SRV ${AGENT:-} 2>/dev/null; wait $SRV ${AGENT:-} 2>/dev/null; rm -rf "$T"
 }
 trap cleanup EXIT
 for _ in $(seq 50); do curl -sf $API/version >/dev/null && break; sleep 0.2; done
@@ -53,11 +53,12 @@ curl -sf -c "$T/j" -H 'Content-Type: application/json' -d '{"username":"admin","
 export OMEGACD_SERVER=http://127.0.0.1:18080
 export OMEGACD_TOKEN=$(curl -sf -b "$T/j" -H 'Content-Type: application/json' -H 'X-Requested-With: omegacd' \
   -d '{"name":"e2e"}' $API/settings/tokens | python3 -c 'import json,sys; print(json.load(sys.stdin)["plaintext"])')
+. "$(dirname "$0")/enroll.sh"; enroll box # the Control Plane's machine, a Host like any other (Q104)
 
 H=(-H "Authorization: Bearer $OMEGACD_TOKEN" -H 'X-Requested-With: omegacd' -H 'Content-Type: application/json')
 for s in adopt-a adopt-b; do
-  # local's Agent (the built-in one, M4-04) checks its Host at the first Sync, not at create
-  "$BIN" app create $s --repo "$T/repo" --path $s --host local >/dev/null 2>&1
+  # the Agent checks its Host at the first Sync, not at create
+  "$BIN" app create $s --repo "$T/repo" --path $s --host box >/dev/null 2>&1
   out=$("$BIN" app sync $s --wait --timeout 3m 2>&1)
   check "$s: its first Sync is refused without adopt" 'echo "$out" | grep -q "not managed by omegacd"'
   # adopt set on the existing app, as its error says (Q102), then a Sync takes the project over
@@ -72,7 +73,7 @@ check "adopt-b (mounts a file from its folder) is recreated once" '[ -n "$after_
 check "adopt-b serves the same config after the takeover" serves
 check "adopt-a's named volume is kept" '[ "$(docker volume ls -q --filter name=adopt-a_data | wc -l | tr -d " ")" = 1 ]'
 
-check "deployed by the built-in Agent, as its log says (M4-04)" 'grep "component=agent" "$T/server.log" | grep -q "msg=deploy"'
+check "deployed by the Agent of the Control Plane's machine, as its log says (Q104)" 'grep -q "msg=deploy" "$AGENT_LOG"'
 
-[ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- server log"; tail -12 "$T/server.log"; }
+[ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- agent log"; tail -15 "$AGENT_LOG"; echo "--- server log"; tail -12 "$T/server.log"; }
 exit $fail

@@ -56,7 +56,5 @@ check "whoami (Auto-Sync off) was created as a child" '"$BIN" app get whoami -o 
 "$BIN" app wait whoami --sync --health --timeout 3m >/dev/null 2>&1
 check "the App of Apps Sync also deployed whoami on :8082" 'serves http://localhost:8082/ Hostname'
 
-check "deployed by the built-in Agent, as its log says (M4-04)" 'grep "component=agent" "$T/server.log" | grep -q "msg=deploy"'
-
 [ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- server log"; tail -12 "$T/server.log"; }
 exit $fail

@@ -51,30 +51,27 @@ A generic webhook endpoint takes any other caller (Q99): `POST /api/webhooks/gen
 Server), and end to end, with a standalone Source Server, an App of Apps' children reach an Agent, a push reaches it
 through a provider's webhook and through the generic one, and through polling.
 
-### M4-04 · Built-in Agent
-**Status:** done (2026-11-10, PR #124)
+### M4-04 · The Control Plane's machine through a normal Agent
+**Status:** done (2026-11-11, PR #124)
 **Depends on:** M4-01
 
-`omegacd server` starts an Agent in-process when `OMEGACD_BUILTIN_AGENT=auto|true` (auto: a Docker-compatible socket
-is reachable and `KUBERNETES_SERVICE_HOST` is unset), enrolled automatically, otherwise a normal Agent; the startup log
-says on or off and why (Q26, Q35).
+First a built-in Agent inside `omegacd server`; dropped (Q104): the Control Plane's machine is a Host like any other,
+its Agent installed beside the Control Plane and enrolled with an invite. What every Agent needs stays: it finds its
+engine's socket when `DOCKER_HOST` is unset and checks it when set, before the Docker client (which exits on an address
+it can't use) sees it (Q103); `adopt` may be set on an existing Application, the
+Agent checking at its first deploy (Q102); a Diff through an Agent keeps the Source Server's warnings.
 
-Its Host is `local`, its state dir in the data dir, its work dir `OMEGACD_WORKDIR` (Q88); it may run as the Control
-Plane's user, root included, with a warning (Q89).
-
-It has its own Host Key, and is enrolled and approved as `local` at every start (Q100); off, `local` deploys as before
-until M4-05 (Q101). Like every Agent it finds its engine's socket when `DOCKER_HOST` is unset, and checks it when
-set, before the Docker client (which exits on an address it can't use) sees it (Q103).
-
-**Done when:** a full install on a Docker host manages its own machine with no enrollment step; in Kubernetes it's off;
-and the e2e scripts that deploy to `local` (mounts, secrets, webhook, adopt, migrations, …) deploy through the built-in
-Agent, which each checks in its Agent's log, updated where they look at the old path (the Control Plane's work dir).
+**Done when:** the e2e scripts that deploy to `local` (mounts, compose views, secrets, adopt, migrations, webhook,
+source server) enroll an Agent as any Host does (`test/e2e/enroll.sh`) and deploy through it, each checking it in the
+Agent's log, updated where they look at the old path (the Control Plane's work dir). The README walkthrough follows
+with M4-05, which rewrites the README for Hosts without `local`.
 
 ### M4-05 · Delete push and legacy
 **Status:** todo
 **Depends on:** M4-01, M4-02, M4-04
 
-Remove (Q9, Q18): SSH/TLS Hosts and their settings, the remote file helper, `OMEGACD_LOCAL_HOST`, central decryption
+Remove (Q9, Q18, Q104): SSH/TLS Hosts and their settings, the Host `local` and the default Host (every Application
+names its `host:`), the Control Plane's own deploy path and engine, `OMEGACD_LOCAL_HOST`, central decryption
 and stored private Host Keys (the Control Plane keeps Agents' public keys only), the old layouts and their fallbacks,
 `import --ssh`, and with them the image's `openssh-client` (the Dockerfile installs it only for the Docker client's
 `ssh://` Hosts; Git over SSH is go-git) and `OMEGACD_SSH_KNOWN_HOSTS` with its known_hosts handling. A fresh v0.2
@@ -82,9 +79,9 @@ database schema; no migration.
 
 A v0.1 database is refused with a message (export with v0.1's `app export`, then reinstall) and left untouched (Q90).
 
-From M4-04: the check that OmegaCD doesn't Sync its own Compose project (`refuseSelf`, today the Control Plane's, run
-for `local` even through the built-in Agent) moves into the Agent, which knows its own container; and with the
-built-in Agent off there is no `local` Host any more (Q101).
+From M4-04: the check that OmegaCD doesn't Sync its own Compose project (`refuseSelf`, today the Control Plane's)
+moves into the Agent, which refuses only its own project: the Control Plane's is an Application like any other, OmegaCD
+managing itself (Q104). The README walkthrough and its e2e script install and enroll an Agent first.
 
 **Done when:** none of it is left (grep), all tests pass, the binary is smaller, and a v0.1 database is refused
 without being changed.

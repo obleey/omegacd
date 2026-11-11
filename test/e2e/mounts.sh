@@ -33,7 +33,7 @@ OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_WORKDIR=$T/work OMEGAC
 SRV=$!
 cleanup() {
   for a in e2e-good e2e-bad; do "$BIN" app delete $a --volumes --yes >/dev/null 2>&1; done
-  kill $SRV 2>/dev/null; wait $SRV 2>/dev/null; rm -rf "$T"
+  kill $SRV ${AGENT:-} 2>/dev/null; wait $SRV ${AGENT:-} 2>/dev/null; rm -rf "$T"
 }
 trap cleanup EXIT
 for _ in $(seq 50); do curl -sf http://127.0.0.1:18080/api/version >/dev/null && break; sleep 0.2; done
@@ -43,10 +43,11 @@ curl -sf -c "$J" -H 'Content-Type: application/json' -d '{"username":"admin","pa
 export OMEGACD_SERVER=http://127.0.0.1:18080
 export OMEGACD_TOKEN=$(curl -sf -b "$J" -H 'Content-Type: application/json' -H 'X-Requested-With: omegacd' \
   -d '{"name":"e2e"}' http://127.0.0.1:18080/api/settings/tokens | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["plaintext"])')
+. "$(dirname "$0")/enroll.sh"; enroll box # the Control Plane's machine, a Host like any other (Q104)
 check "got an API token" '[ -n "$OMEGACD_TOKEN" ]'
 
 # --- good app: file from Git, named volume, absolute path
-"$BIN" app create e2e-good --repo "$REPO" --path good >/dev/null
+"$BIN" app create e2e-good --repo "$REPO" --path good --host box >/dev/null
 out=$("$BIN" app sync e2e-good --wait --timeout 2m 2>&1); check "good app syncs" '[ $? -eq 0 ] || ! echo "$out" | grep -qi error'
 check "good app Synced"  '"$BIN" app get e2e-good -o json | grep -q "\"Synced\""'
 cid=$(docker ps -q --filter label=dev.omegacd.application=e2e-good)
@@ -57,7 +58,7 @@ check "named volume kept its data across Syncs" 'docker exec $cid cat /vol/log |
 check "absolute path kept its data across Syncs" '[ -s "$ABS/log" ]'
 
 # --- bad app: ./data not in Git
-"$BIN" app create e2e-bad --repo "$REPO" --path bad >/dev/null
+"$BIN" app create e2e-bad --repo "$REPO" --path bad --host box >/dev/null
 diffout=$("$BIN" app diff e2e-bad 2>&1)
 check "Diff explains the refusal" 'echo "$diffout" | grep -q "mounts ./data, which is not in Git"'
 syncout=$("$BIN" app sync e2e-bad --wait --timeout 2m 2>&1)
@@ -79,7 +80,7 @@ git -C "$REPO" -c user.name=e2e -c user.email=e2e@local commit -qam fix
 check "after the fix in Git it syncs" '"$BIN" app get e2e-bad -o json | grep -q "\"Synced\""'
 check "and its container runs" '[ -n "$(docker ps -q --filter label=dev.omegacd.application=e2e-bad)" ]'
 
-check "deployed by the built-in Agent, as its log says (M4-04)" 'grep "component=agent" "$T/server.log" | grep -q "msg=deploy"'
+check "deployed by the Agent of the Control Plane's machine, as its log says (Q104)" 'grep -q "msg=deploy" "$AGENT_LOG"'
 
-[ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- server log"; tail -20 "$T/server.log"; echo "--- last sync output"; echo "$syncout"; echo "$diffout"; }
+[ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- agent log"; tail -15 "$AGENT_LOG"; echo "--- server log"; tail -20 "$T/server.log"; echo "--- last sync output"; echo "$syncout"; echo "$diffout"; }
 exit $fail
