@@ -85,6 +85,8 @@ check "as a systemd service: its StateDirectory" '[ $rc -eq 0 ] && [ -d "$T/var-
 
 out=$(agent OMEGACD_AGENT_CACHE_REVISIONS=none XDG_RUNTIME_DIR="$T/run"); rc=$?
 check "a bad setting fails and names it" '[ $rc -ne 0 ] && echo "$out" | grep -q OMEGACD_AGENT_CACHE_REVISIONS'
+out=$(agent DOCKER_HOST=http://x:2375 XDG_RUNTIME_DIR="$T/run"); rc=$?
+check "a DOCKER_HOST that isn't an engine address stops it, saying so (Q103)" '[ $rc -ne 0 ] && echo "$out" | grep -q "isn.t a container engine address"'
 out=$(agent OMEGACD_AGENT_CONTROL_PLANE=cp.example.com XDG_RUNTIME_DIR="$T/run"); rc=$?
 check "a Control Plane URL without scheme fails" '[ $rc -ne 0 ] && echo "$out" | grep -q "https://"'
 
