@@ -185,7 +185,7 @@ func (ag *Agent) Logs(ctx context.Context, name, service string, follow bool, ta
 // Watch calls changed with an Application's name whenever its containers change: the start of drift detection. After
 // the engine's event stream reconnects, events may have been lost, so it calls changed for every Application.
 func (ag *Agent) Watch(ctx context.Context, changed func(app string)) error {
-	return ag.engine.Watch(ctx, func(_, project string) {
+	return ag.engine.Watch(ctx, func(project string) {
 		if project != "" {
 			changed(project)
 			return

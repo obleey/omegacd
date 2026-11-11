@@ -42,21 +42,28 @@ import (
 
 var _ domain.Engine = (*Engine)(nil)
 
-type Engine struct {
-	cfg Config
-
-	mu      sync.Mutex
-	conns   map[string]*hostConn // host name -> connection, created lazily (local in New)
-	desired map[string][]string  // app name -> service names of the last loaded project
+type Config struct {
+	Log *slog.Logger // nil: nothing logged
 }
 
-// New connects to the local Docker host the way the docker CLI does (DOCKER_HOST, contexts).
-// Remote Hosts are connected on first use.
+// hostConn is a Docker CLI and Compose service bound to this machine's engine.
+type hostConn struct {
+	cli     command.Cli
+	compose api.Compose
+}
+
+// Engine is the container engine of the Agent's own Host (Q107).
+type Engine struct {
+	cfg Config
+	hc  *hostConn
+
+	mu      sync.Mutex
+	desired map[string][]string // app name -> service names of the last loaded project
+}
+
+// New connects to the engine the way the docker CLI does (DOCKER_HOST, contexts).
 func New(cfg Config) (*Engine, error) {
 	cfg.Log = cmp.Or(cfg.Log, logging.Discard)
-	if cfg.NoLocalHost {
-		return &Engine{cfg: cfg, conns: map[string]*hostConn{}, desired: map[string][]string{}}, nil
-	}
 	dcli, err := command.NewDockerCli()
 	if err != nil {
 		return nil, fmt.Errorf("docker cli: %w", err)
@@ -68,23 +75,10 @@ func New(cfg Config) (*Engine, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Engine{
-		cfg:     cfg,
-		conns:   map[string]*hostConn{domain.LocalHost: {host: domain.Host{Name: domain.LocalHost}, cli: dcli, compose: svc}},
-		desired: map[string][]string{},
-	}, nil
+	return &Engine{cfg: cfg, hc: &hostConn{cli: dcli, compose: svc}, desired: map[string][]string{}}, nil
 }
 
-func (e *Engine) Close() error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	var errs []error
-	for name, hc := range e.conns {
-		errs = append(errs, hc.cli.Client().Close())
-		delete(e.conns, name)
-	}
-	return errors.Join(errs...)
-}
+func (e *Engine) Close() error { return e.hc.cli.Client().Close() }
 
 func newCompose(c command.Cli, progress func(domain.ProgressEvent)) (api.Compose, error) {
 	return compose.NewComposeService(c,
@@ -95,9 +89,6 @@ func newCompose(c command.Cli, progress func(domain.ProgressEvent)) (api.Compose
 func (e *Engine) load(ctx context.Context, app domain.Application, dir string) (*types.Project, error) {
 	p, err := loadProject(ctx, app, dir, true)
 	if err != nil {
-		if hc, cerr := e.conn(ctx, app.Host); cerr == nil {
-			err = onHost(hc.host, app, dir, err)
-		}
 		return nil, err
 	}
 	// Same labels compose's own LoadProject sets, plus ours. CustomLabels are not hashed.
@@ -119,22 +110,6 @@ func (e *Engine) load(ctx context.Context, app domain.Application, dir string) (
 	}
 	return p, nil
 }
-
-// onHost names the app's folder on a remote Host h in err instead of dir, this machine's copy of its files.
-func onHost(h domain.Host, app domain.Application, dir string, err error) error {
-	if h.Name == domain.LocalHost {
-		return err
-	}
-	return pathErr{strings.ReplaceAll(err.Error(), dir, remoteAppDir(h, app)), err}
-}
-
-type pathErr struct {
-	msg string
-	err error
-}
-
-func (e pathErr) Error() string { return e.msg }
-func (e pathErr) Unwrap() error { return e.err }
 
 func loadProject(ctx context.Context, app domain.Application, dir string, resolvePaths bool) (*types.Project, error) {
 	files := app.ComposeFilesIn(dir)
@@ -285,17 +260,6 @@ func rebase(p *types.Project, from, to string) {
 	}
 }
 
-// placeFor rebases p, loaded from dir, to where its files are on the app's Host: asDir (if set) locally,
-// the remote app dir on any other Host. Content hashes were computed from the local files already.
-func placeFor(p *types.Project, hc *hostConn, app domain.Application, dir, asDir string) {
-	switch {
-	case hc.host.Name != domain.LocalHost:
-		rebase(p, dir, remoteAppDir(hc.host, app))
-	case asDir != "":
-		rebase(p, dir, asDir)
-	}
-}
-
 // checkNoBuild guards Sync: the Source Server's Render refuses build: already, but nothing may build on a Host.
 func checkNoBuild(p *types.Project) error {
 	for _, name := range slices.Sorted(maps.Keys(p.Services)) {
@@ -307,10 +271,7 @@ func checkNoBuild(p *types.Project) error {
 }
 
 func (e *Engine) Diff(ctx context.Context, app domain.Application, dir, asDir string) ([]domain.ServiceDiff, error) {
-	hc, err := e.conn(ctx, app.Host)
-	if err != nil {
-		return nil, err
-	}
+	hc := e.hc
 	p, err := e.load(ctx, app, dir)
 	if err != nil {
 		return nil, err
@@ -318,7 +279,9 @@ func (e *Engine) Diff(ctx context.Context, app domain.Application, dir, asDir st
 	if asDir == "" {
 		e.remember(app, p)
 	}
-	placeFor(p, hc, app, dir, asDir)
+	if asDir != "" { // content hashes were computed from the staged files already
+		rebase(p, dir, asDir)
+	}
 	ctrs, err := containers(ctx, hc.cli.Client(), app.Name)
 	if err != nil {
 		return nil, err
@@ -435,10 +398,7 @@ func canonicalName(c container.Summary) string {
 }
 
 func (e *Engine) Sync(ctx context.Context, app domain.Application, dir string, opts domain.SyncOptions) error {
-	hc, err := e.conn(ctx, app.Host)
-	if err != nil {
-		return err
-	}
+	hc := e.hc
 	p, err := e.load(ctx, app, dir)
 	if err != nil {
 		return fmt.Errorf("load compose project: %w", err)
@@ -447,18 +407,6 @@ func (e *Engine) Sync(ctx context.Context, app domain.Application, dir string, o
 		return err
 	}
 	e.remember(app, p)
-	var stale bool
-	if hc.host.Name != domain.LocalHost {
-		placeFor(p, hc, app, dir, "")
-		if stale, err = e.pushFiles(ctx, hc, app, dir, opts.Children); err != nil {
-			return fmt.Errorf("copy files to host %s: %w", hc.host.Name, err)
-		}
-		if opts.Wrote != nil {
-			if err := opts.Wrote(domain.HostDir(hc.host.Name, remoteAppDir(hc.host, app))); err != nil {
-				return err
-			}
-		}
-	}
 	if opts.Auth != nil {
 		creds, err := opts.Auth(ctx, registries(p))
 		if err != nil {
@@ -513,17 +461,11 @@ func (e *Engine) Sync(ctx context.Context, app domain.Application, dir string, o
 			}
 		}
 	}
-	e.cfg.Log.DebugContext(ctx, "compose up", "host", hc.host.Name, "dir", dir, "recreate", create.Recreate,
+	e.cfg.Log.DebugContext(ctx, "compose up", "dir", dir, "recreate", create.Recreate,
 		"services", create.Services, "dependencies", create.RecreateDependencies, "removeOrphans", create.RemoveOrphans)
 	err = svc.Up(ctx, up, api.UpOptions{Create: create})
 	if err != nil {
 		return fmt.Errorf("compose up: %w", err)
-	}
-	if stale {
-		// only now: until Up recreated the containers, they used the old folder
-		if err := e.removeFiles(ctx, hc, app, app.Dir()); err != nil {
-			e.cfg.Log.WarnContext(ctx, "remove old application files", "host", hc.host.Name, "err", err)
-		}
 	}
 	if err := settleUndeclared(ctx, e.cfg.Log, hc.cli.Client(), p, opts.Prune); err != nil {
 		return err
@@ -646,20 +588,12 @@ func pruneUndeclared(ctx context.Context, log *slog.Logger, c client.APIClient, 
 	return errors.Join(errs...)
 }
 
-// Remove also deletes the app dir on a remote Host. With volumes, compose deletes the volumes labelled
+// Remove deletes the project's containers and networks. With volumes, compose deletes the volumes labelled
 // with the project (it skips ones it did not create) and the containers' anonymous volumes.
 func (e *Engine) Remove(ctx context.Context, app domain.Application, volumes bool) error {
-	hc, err := e.conn(ctx, app.Host)
-	if err != nil {
-		return err
-	}
+	hc := e.hc
 	if err := hc.compose.Down(ctx, app.Name, api.DownOptions{RemoveOrphans: true, Volumes: volumes}); err != nil {
 		return fmt.Errorf("compose down: %w", err)
-	}
-	if hc.host.Name != domain.LocalHost {
-		if err := e.removeFiles(ctx, hc, app, ""); err != nil {
-			return fmt.Errorf("remove files on host %s: %w", hc.host.Name, err)
-		}
 	}
 	e.mu.Lock()
 	delete(e.desired, app.Name)
@@ -670,10 +604,7 @@ func (e *Engine) Remove(ctx context.Context, app domain.Application, volumes boo
 // Status derives the desired services from the project last loaded for app (Validate/Diff/Sync).
 // Until one was loaded in this process, it falls back to the services seen on containers, so Missing cannot show.
 func (e *Engine) Status(ctx context.Context, app domain.Application) (domain.LiveState, error) {
-	hc, err := e.conn(ctx, app.Host)
-	if err != nil {
-		return domain.LiveState{}, err
-	}
+	hc := e.hc
 	c := hc.cli.Client()
 	ctrs, err := containers(ctx, c, app.Name)
 	if err != nil {
@@ -800,35 +731,8 @@ func worst(a, b domain.HealthStatus) domain.HealthStatus {
 	return a
 }
 
-func (e *Engine) WorkingDirs(ctx context.Context, app domain.Application) ([]string, error) {
-	hc, err := e.conn(ctx, app.Host)
-	if err != nil {
-		return nil, err
-	}
-	return workingDirs(ctx, hc.cli.Client(), app.Name)
-}
-
-// workingDirs lists the working_dir labels of the containers OmegaCD created for app (managed-by=omegacd). Containers
-// of an adopted project, created by another tool, don't count: their folder isn't OmegaCD's.
-func workingDirs(ctx context.Context, c client.APIClient, app string) ([]string, error) {
-	ctrs, err := containers(ctx, c, app)
-	if err != nil {
-		return nil, err
-	}
-	var dirs []string
-	for _, ct := range ctrs {
-		if ct.Labels[domain.ManagedByLabel] == domain.ManagedByValue && ct.Labels[domain.ManagedLabel] == app {
-			dirs = append(dirs, ct.Labels[api.WorkingDirLabel])
-		}
-	}
-	return dirs, nil
-}
-
-func (e *Engine) ProjectExists(ctx context.Context, host, name string) (exists, managed bool, err error) {
-	hc, err := e.conn(ctx, host)
-	if err != nil {
-		return false, false, err
-	}
+func (e *Engine) ProjectExists(ctx context.Context, name string) (exists, managed bool, err error) {
+	hc := e.hc
 	ctrs, err := containers(ctx, hc.cli.Client(), name)
 	if err != nil {
 		return false, false, err
@@ -842,10 +746,7 @@ func (e *Engine) ProjectExists(ctx context.Context, host, name string) (exists, 
 }
 
 func (e *Engine) Logs(ctx context.Context, app domain.Application, containerID string, follow bool, tail int, w io.Writer) error {
-	hc, err := e.conn(ctx, app.Host)
-	if err != nil {
-		return err
-	}
+	hc := e.hc
 	c := hc.cli.Client()
 	insp, err := c.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if cerrdefs.IsNotFound(err) || err == nil && (insp.Container.Config == nil || insp.Container.Config.Labels[api.ProjectLabel] != app.Name) {

@@ -32,7 +32,6 @@ import (
 	"github.com/obleey/omegacd/internal/domain"
 	"github.com/obleey/omegacd/internal/engine"
 	"github.com/obleey/omegacd/internal/logging"
-	"github.com/obleey/omegacd/internal/secrets"
 	"github.com/obleey/omegacd/internal/source"
 	"github.com/obleey/omegacd/internal/store"
 	"github.com/obleey/omegacd/web"
@@ -69,17 +68,14 @@ func run(log *slog.Logger) error {
 	var (
 		addr       = cmp.Or(os.Getenv("OMEGACD_ADDR"), ":8080")
 		dataDir    = cmp.Or(os.Getenv("OMEGACD_DATA"), "/data")
-		workDir    = cmp.Or(os.Getenv("OMEGACD_WORKDIR"), "/run/omegacd")
 		ageKeyFile = cmp.Or(os.Getenv("OMEGACD_AGE_KEY_FILE"), "/etc/omegacd/age.key")
 	)
 	poll, err := pollInterval(os.Getenv("OMEGACD_POLL_INTERVAL"))
 	if err != nil {
 		return err
 	}
-	for _, d := range []string{dataDir, workDir} {
-		if err := os.MkdirAll(d, 0o750); err != nil {
-			return err
-		}
+	if err := os.MkdirAll(dataDir, 0o750); err != nil {
+		return err
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -94,23 +90,7 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	defer st.Close()
-	knownHosts := cmp.Or(os.Getenv("OMEGACD_SSH_KNOWN_HOSTS"), "/etc/omegacd/known_hosts")
-	noLocal, err := localHostDisabled(os.Getenv("OMEGACD_LOCAL_HOST"))
-	if err != nil {
-		return err
-	}
-	eng, err := engine.New(engine.Config{
-		Hosts:          st.GetHost,
-		ListHosts:      st.ListHosts,
-		KnownHostsFile: knownHosts,
-		KeyDir:         filepath.Join(dataDir, "keys"),
-		NoLocalHost:    noLocal,
-		Log:            log.With("component", "engine"),
-	})
-	if err != nil {
-		return err
-	}
-	defer eng.Close()
+	knownHosts := cmp.Or(os.Getenv("OMEGACD_SSH_KNOWN_HOSTS"), "/etc/omegacd/known_hosts") // Git over SSH (Q106)
 	var src domain.Source
 	if u := os.Getenv("OMEGACD_SOURCE_SERVER"); u != "" {
 		c, err := source.Dial(u, sourceTLSDir())
@@ -135,16 +115,12 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
-	selfID, _ := os.Hostname() // inside a container this is the container ID prefix
 	hub := agents.New(st, log.With("component", "agents"))
 	hub.Blob = src.Blob // the files as rendered, secrets still encrypted: only the Agent decrypts (Q19)
 	ctl := controller.New(controller.Config{
-		Agents: hub,
-		Store:  st, Source: src, Secrets: secrets.Decryptor{}, MasterKey: id, Engine: eng,
-		WorkDir: workDir, PollInterval: poll, NoLocalHost: noLocal,
+		Agents: hub, Store: st, Source: src, PollInterval: poll,
 		NormalizeURL: source.NormalizeURL,
 		ObserveSync:  api.ObserveSync,
-		SelfID:       selfID,
 		Log:          log.With("component", "controller"),
 	})
 	hub.Reported, hub.Resynced, hub.Removed, hub.Progress, hub.Status = ctl.AgentReported, ctl.Resynced, ctl.AgentRemoved,
@@ -184,7 +160,7 @@ func run(log *slog.Logger) error {
 		defer cancel()
 		srv.Shutdown(shutdown)
 	}()
-	log.Info("omegacd listening", "addr", addr, "data", dataDir, "workdir", workDir, "poll", poll)
+	log.Info("omegacd listening", "addr", addr, "data", dataDir, "poll", poll)
 	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
@@ -364,17 +340,6 @@ func runAgent(log *slog.Logger) error {
 			AgeRecipient: hostKey.Recipient().String(), HostKey: hostKey})
 	}
 	return ag.Run(ctx)
-}
-
-// localHostDisabled reads OMEGACD_LOCAL_HOST: "false" where no Docker engine runs next to OmegaCD (Kubernetes).
-func localHostDisabled(v string) (bool, error) {
-	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "", "true":
-		return false, nil
-	case "false":
-		return true, nil
-	}
-	return false, fmt.Errorf("OMEGACD_LOCAL_HOST must be true or false, not %q", v)
 }
 
 // pollInterval reads OMEGACD_POLL_INTERVAL (default 3m); 0 turns polling off, leaving webhooks and Refresh.

@@ -5,24 +5,17 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/obleey/omegacd/internal/agents"
 	"github.com/obleey/omegacd/internal/domain"
 	agentv1 "github.com/obleey/omegacd/internal/proto/agent/v1"
+	"github.com/obleey/omegacd/internal/workdir"
 )
-
-// agentHost reports whether the Host is reached through an enrolled Agent (Q80): it has no URL, and an Agent's key.
-// The built-in Host and push Hosts (SSH/TLS) are not, until M4-04 and M4-05.
-func (c *Controller) agentHost(ctx context.Context, host string) bool {
-	if c.cfg.Agents == nil || host == "" || host == domain.LocalHost {
-		return false
-	}
-	h, err := c.cfg.Store.GetHost(ctx, host)
-	return err == nil && h.URL == "" && h.Fingerprint != ""
-}
 
 // deploy sends a's Desired State at op's Revision to its Host's Agent, which fetches the files it lacks, decrypts and
 // deploys them, and waits for its report. The files travel as rendered: secrets stay encrypted until the Agent.
@@ -103,6 +96,41 @@ func (c *Controller) renderedCompose(ctx context.Context, a domain.Application, 
 	}
 	defer done()
 	return composeText(a, stage)
+}
+
+// stage writes r's files, as rendered, into a temporary folder; done removes it.
+func (c *Controller) stage(ctx context.Context, a domain.Application, r domain.Rendered) (dir string, done func(), err error) {
+	tmp, err := os.MkdirTemp("", "omegacd-stage-")
+	if err != nil {
+		return "", nil, err
+	}
+	done = func() { os.RemoveAll(tmp) }
+	dir = filepath.Join(tmp, a.Name)
+	if err := workdir.Write(dir, r.Files, func(hash string) ([]byte, error) { return c.cfg.Source.Blob(ctx, hash) }); err != nil {
+		done()
+		return "", nil, err
+	}
+	return dir, done, nil
+}
+
+// composeText is the app's compose files in dir as written, one after another when there are several.
+func composeText(a domain.Application, dir string) (string, error) {
+	var b strings.Builder
+	files := a.ComposeFilesIn(dir)
+	for _, f := range files {
+		content, err := os.ReadFile(filepath.Join(dir, f))
+		if err != nil {
+			return "", err
+		}
+		if len(files) > 1 {
+			fmt.Fprintf(&b, "# ---- %s ----\n", f)
+		}
+		b.Write(content)
+		if len(content) > 0 && content[len(content)-1] != '\n' {
+			b.WriteByte('\n')
+		}
+	}
+	return b.String(), nil
 }
 
 // AgentReported shows what an Agent's report changed (M3-06): its Sync Operations, then its status.

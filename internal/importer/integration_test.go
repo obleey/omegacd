@@ -124,7 +124,7 @@ func TestImportLocal(t *testing.T) {
 	}
 	defer h.Close()
 	id, _ := age.GenerateX25519Identity()
-	repo, report := importInto(t, h, name, "", id)
+	repo, report := importInto(t, h, name, "box", id)
 	real, _ := filepath.EvalSymlinks(dir) // compose records the resolved path (macOS: /private/var/…)
 	if !strings.Contains(report, real) {
 		real = dir

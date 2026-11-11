@@ -16,7 +16,6 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -139,27 +138,14 @@ type fakeController struct {
 	hosts      map[string]domain.Host
 	lastSync   domain.SyncRequest
 	lastDelete [2]bool // cascade, volumes
-	keys       []domain.HostKey
 }
 
 func (c *fakeController) ListHosts(context.Context) ([]domain.HostView, error) {
-	out := []domain.HostView{{Host: domain.Host{Name: domain.LocalHost}}}
+	var out []domain.HostView
 	for _, h := range c.hosts {
 		out = append(out, domain.HostView{Host: h})
 	}
 	return out, nil
-}
-
-func (c *fakeController) SaveHost(_ context.Context, h domain.Host, create bool) (domain.HostView, error) {
-	switch _, ok := c.hosts[h.Name]; {
-	case ok && create:
-		return domain.HostView{}, domain.ErrAlreadyExists
-	case !ok && !create:
-		return domain.HostView{}, domain.ErrNotFound
-	}
-	h.HasSSHKey = h.SSHPrivateKey != ""
-	c.hosts[h.Name] = h
-	return domain.HostView{Host: h}, nil
 }
 
 func (c *fakeController) DeleteHost(_ context.Context, name string) error {
@@ -170,53 +156,14 @@ func (c *fakeController) DeleteHost(_ context.Context, name string) error {
 	return nil
 }
 
-// Host Keys: the fake hands out keys WITH private keys, so the test proves the API never serialises them.
 func (c *fakeController) HostKeys(_ context.Context, host string) ([]domain.HostKey, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if _, ok := c.hosts[host]; !ok {
+	h, ok := c.hosts[host]
+	if !ok {
 		return nil, domain.ErrNotFound
 	}
-	return slices.Clone(c.keys), nil
-}
-
-func (c *fakeController) GenerateHostKey(_ context.Context, host string) (domain.HostKey, error) {
-	return c.ImportHostKey(context.Background(), host, "AGE-SECRET-KEY-1GENERATED")
-}
-
-func (c *fakeController) ImportHostKey(_ context.Context, host, pk string) (domain.HostKey, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if !strings.HasPrefix(pk, "AGE-SECRET-KEY-1") {
-		return domain.HostKey{}, domain.ErrInvalid
-	}
-	for i := range c.keys {
-		c.keys[i].Current = false
-	}
-	k := domain.HostKey{Host: host, Recipient: "age1" + strings.ToLower(pk[16:]), PrivateKey: pk, Current: true}
-	c.keys = append([]domain.HostKey{k}, c.keys...)
-	return k, nil
-}
-
-func (c *fakeController) RemoveHostKey(_ context.Context, host, recipient string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	i := slices.IndexFunc(c.keys, func(k domain.HostKey) bool { return k.Recipient == recipient })
-	switch {
-	case i < 0:
-		return domain.ErrNotFound
-	case c.keys[i].Current:
-		return fmt.Errorf("%w: current", domain.ErrInvalid)
-	}
-	c.keys = slices.Delete(c.keys, i, i+1)
-	return nil
-}
-
-func (c *fakeController) TestHost(_ context.Context, name string) (domain.HostStatus, error) {
-	if _, ok := c.hosts[name]; !ok {
-		return domain.HostStatus{}, domain.ErrNotFound
-	}
-	return domain.HostStatus{Name: name, Connected: true, ServerVersion: "27.0"}, nil
+	return []domain.HostKey{{Recipient: h.AgeRecipient, Current: true}}, nil
 }
 
 func (c *fakeController) ListApps(context.Context) ([]domain.AppView, error) {
@@ -704,26 +651,13 @@ func TestLoginBackoffPruned(t *testing.T) {
 func TestHostsAPI(t *testing.T) {
 	e := newEnv(t, false)
 	e.login()
-	b := e.expect("POST", "/api/settings/hosts", `{"name":"prod","url":"ssh://deploy@prod","sshPrivateKey":"KEY"}`, 201)
-	if strings.Contains(b, "KEY") || !strings.Contains(b, `"hasSSHKey":true`) {
+	e.ctrl.hosts["prod"] = domain.Host{Name: "prod", AgeRecipient: "age1prod"}
+	if b := e.expect("GET", "/api/settings/hosts", "", 200); !strings.Contains(b, `"name":"prod"`) || !strings.Contains(b, `"ageRecipient":"age1prod"`) {
 		t.Fatal(b)
 	}
-	if e.ctrl.hosts["prod"].SSHPrivateKey != "KEY" {
-		t.Fatal("key not passed to controller")
-	}
-	e.expect("POST", "/api/settings/hosts", `{"name":"prod","url":"ssh://x"}`, 409)
-	e.expect("PUT", "/api/settings/hosts/prod", `{"name":"other"}`, 400)
-	e.expect("PUT", "/api/settings/hosts/nope", `{"url":"tcp://x"}`, 404)
-	if b := e.expect("PUT", "/api/settings/hosts/prod", `{"url":"tcp://prod:2376","tlsKey":"TK"}`, 200); strings.Contains(b, "TK") || !strings.Contains(b, `"url":"tcp://prod:2376"`) {
-		t.Fatal(b)
-	}
-	if b := e.expect("GET", "/api/settings/hosts", "", 200); !strings.Contains(b, `"name":"local"`) || !strings.Contains(b, `"name":"prod"`) {
-		t.Fatal(b)
-	}
-	if b := e.expect("POST", "/api/settings/hosts/prod/test", "", 200); !strings.Contains(b, `"connected":true`) {
-		t.Fatal(b)
-	}
-	e.expect("POST", "/api/settings/hosts/nope/test", "", 404)
+	// push Hosts are gone (Q107): a Host is added by inviting its Agent
+	e.expect("POST", "/api/settings/hosts", `{"name":"x","url":"ssh://deploy@x"}`, 404)
+	e.expect("POST", "/api/settings/hosts/prod/test", "", 404)
 	if b := e.expect("DELETE", "/api/settings/hosts/busy", "", 400); !strings.Contains(b, "web") {
 		t.Fatal(b)
 	}
@@ -731,8 +665,8 @@ func TestHostsAPI(t *testing.T) {
 }
 
 func (c *fakeController) InviteHost(_ context.Context, name string) (string, time.Time, error) {
-	if name == domain.LocalHost {
-		return "", time.Time{}, fmt.Errorf("%w: the built-in Host", domain.ErrInvalid)
+	if name == "Bad" {
+		return "", time.Time{}, fmt.Errorf("%w: name must be lowercase letters, digits, '-' or '_'", domain.ErrInvalid)
 	}
 	return "omegacd-invite-abc", time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC), nil
 }
@@ -752,7 +686,7 @@ func TestEnrollmentAPI(t *testing.T) {
 		!strings.Contains(b, `"expiresAt":"2026-11-09T12:00:00Z"`) {
 		t.Fatal(b)
 	}
-	e.expect("POST", "/api/settings/hosts/local/invite", "", 400)
+	e.expect("POST", "/api/settings/hosts/Bad/invite", "", 400)
 	e.expect("POST", "/api/settings/hosts/web/approve", `{"fingerprint":"SHA256:wrong"}`, 400)
 	e.expect("POST", "/api/settings/hosts/web/approve", `{"fingerprint":"SHA256:right"}`, 204)
 	if b := e.expect("POST", "/api/settings/hosts/web/rotate", "", 400); !strings.Contains(b, "not connected") {
@@ -845,25 +779,16 @@ func TestHostKeysAPI(t *testing.T) {
 	e := newEnv(t, false)
 	e.expect("GET", "/api/settings/hosts/prod/keys", "", 401)
 	e.login()
-	e.ctrl.hosts["prod"] = domain.Host{Name: "prod"}
-	var bodies []string
-	bodies = append(bodies, e.expect("POST", "/api/settings/hosts/prod/keys/generate", "", 201))
-	bodies = append(bodies, e.expect("POST", "/api/settings/hosts/prod/keys/import", `{"privateKey":"AGE-SECRET-KEY-1IMPORTED"}`, 201))
-	e.expect("POST", "/api/settings/hosts/prod/keys/import", `{"privateKey":"nope"}`, 400)
+	e.ctrl.hosts["prod"] = domain.Host{Name: "prod", AgeRecipient: "age1prod"}
 	b := e.expect("GET", "/api/settings/hosts/prod/keys", "", 200)
-	bodies = append(bodies, b)
 	var keys []map[string]any
-	if err := json.Unmarshal([]byte(b), &keys); err != nil || len(keys) != 2 || keys[0]["recipient"] != "age1imported" || keys[0]["current"] != true || keys[1]["current"] != false {
+	if err := json.Unmarshal([]byte(b), &keys); err != nil || len(keys) != 1 || keys[0]["recipient"] != "age1prod" || keys[0]["current"] != true {
 		t.Fatalf("%s %v", b, err)
 	}
-	for _, b := range bodies {
-		if strings.Contains(b, "AGE-SECRET-KEY") || strings.Contains(b, "privateKey") {
-			t.Fatalf("private key in response: %s", b)
-		}
-	}
-	e.expect("DELETE", "/api/settings/hosts/prod/keys/age1imported", "", 400)
-	e.expect("DELETE", "/api/settings/hosts/prod/keys/age1nope", "", 404)
-	e.expect("DELETE", "/api/settings/hosts/prod/keys/age1generated", "", 204)
+	// the private half is born on the Agent and never leaves it (Q108): nothing makes, takes or removes one here
+	e.expect("POST", "/api/settings/hosts/prod/keys/generate", "", 404)
+	e.expect("POST", "/api/settings/hosts/prod/keys/import", `{"privateKey":"AGE-SECRET-KEY-1X"}`, 404)
+	e.expect("DELETE", "/api/settings/hosts/prod/keys/age1prod", "", 404)
 	e.expect("GET", "/api/settings/hosts/nope/keys", "", 404)
 }
 

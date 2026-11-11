@@ -242,22 +242,19 @@ type scanner interface{ Scan(...any) error }
 
 const appCols = `name, repo_url, path, target_revision, compose_files, profiles, host, auto_sync, self_heal, prune, adopt, rolled_back, kind, parent, not_in_git, prune_volumes, work_dir, created_at`
 
-// appRead is appCols plus what only SetAppDirs and SetAppDeleting write.
-const appRead = appCols + `, dirs, deleting`
+// appRead is appCols plus what only SetAppDeleting writes.
+const appRead = appCols + `, deleting`
 
 func scanApp(r scanner) (domain.Application, error) {
 	var a domain.Application
-	var files, profiles, dirs string
+	var files, profiles string
 	var created int64
 	if err := r.Scan(&a.Name, &a.RepoURL, &a.Path, &a.TargetRevision, &files, &profiles, &a.Host,
-		&a.AutoSync, &a.SelfHeal, &a.Prune, &a.Adopt, &a.RolledBack, &a.Kind, &a.Parent, &a.NotInGit, &a.PruneVolumes, &a.WorkDir, &created, &dirs, &a.Deleting); err != nil {
+		&a.AutoSync, &a.SelfHeal, &a.Prune, &a.Adopt, &a.RolledBack, &a.Kind, &a.Parent, &a.NotInGit, &a.PruneVolumes, &a.WorkDir, &created, &a.Deleting); err != nil {
 		return a, mapErr(err)
 	}
 	a.CreatedAt = fromUnix(created)
 	if err := json.Unmarshal([]byte(files), &a.ComposeFiles); err != nil {
-		return a, err
-	}
-	if err := json.Unmarshal([]byte(dirs), &a.Dirs); err != nil {
 		return a, err
 	}
 	return a, json.Unmarshal([]byte(profiles), &a.Profiles)
@@ -306,11 +303,6 @@ func (s *Store) UpdateApp(ctx context.Context, a domain.Application) error {
 	return affected(s.db.ExecContext(ctx, `UPDATE apps SET repo_url=?, path=?, target_revision=?, compose_files=?,
 		profiles=?, host=?, auto_sync=?, self_heal=?, prune=?, adopt=?, rolled_back=?, kind=?, parent=?, not_in_git=?, prune_volumes=?,
 		work_dir=? WHERE name=?`, append(args[1:], a.Name)...))
-}
-
-func (s *Store) SetAppDirs(ctx context.Context, name string, dirs []string) error {
-	b, _ := json.Marshal(dirs)
-	return affected(s.db.ExecContext(ctx, `UPDATE apps SET dirs=? WHERE name=?`, string(b), name))
 }
 
 func (s *Store) DeleteApp(ctx context.Context, name string) error {
@@ -505,15 +497,14 @@ const defaultWorkDir = "/var/lib/omegacd"
 
 const hostCols = `name, url, work_dir, ssh_private_key, tls_ca, tls_cert, tls_key, created_at`
 
-// hostSelect reads a Host with its Agent's enrollment, which SaveHost never changes
-const hostSelect = `SELECT ` + hostCols + `, signing_key, age_recipient, approved, locked, agent, allow_ips FROM hosts`
+// hostSelect reads a Host with its Agent's enrollment
+const hostSelect = `SELECT name, created_at, signing_key, age_recipient, approved, locked, agent, allow_ips FROM hosts`
 
 func (s *Store) scanHost(r scanner) (domain.Host, error) {
 	var h domain.Host
-	var sealed [4]string
 	var created int64
 	var locked, agent, allow string
-	if err := r.Scan(&h.Name, &h.URL, &h.WorkDir, &sealed[0], &sealed[1], &sealed[2], &sealed[3], &created,
+	if err := r.Scan(&h.Name, &created,
 		&h.SigningKey, &h.AgeRecipient, &h.Approved, &locked, &agent, &allow); err != nil {
 		return h, mapErr(err)
 	}
@@ -535,13 +526,6 @@ func (s *Store) scanHost(r scanner) (domain.Host, error) {
 	if len(h.SigningKey) > 0 {
 		h.Fingerprint = domain.Fingerprint(h.SigningKey)
 	}
-	for i, dst := range []*string{&h.SSHPrivateKey, &h.TLSCA, &h.TLSCert, &h.TLSKey} {
-		var err error
-		if *dst, err = s.sealer.Open(sealed[i]); err != nil {
-			return h, fmt.Errorf("open host %s: %w", h.Name, err)
-		}
-	}
-	h.HasSSHKey, h.HasTLS = h.SSHPrivateKey != "", h.TLSCert != "" && h.TLSKey != ""
 	return h, nil
 }
 
@@ -753,9 +737,8 @@ func (s *Store) CreateInvite(ctx context.Context, host string, expires time.Time
 		return "", err
 	}
 	defer tx.Rollback()
-	var url string
 	var key []byte
-	err = tx.QueryRowContext(ctx, `SELECT url, signing_key FROM hosts WHERE name = ?`, host).Scan(&url, &key)
+	err = tx.QueryRowContext(ctx, `SELECT signing_key FROM hosts WHERE name = ?`, host).Scan(&key)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		if _, err := tx.ExecContext(ctx, `INSERT INTO hosts (`+hostCols+`) VALUES (?, '', ?, '', '', '', '', ?)`,
@@ -764,8 +747,6 @@ func (s *Store) CreateInvite(ctx context.Context, host string, expires time.Time
 		}
 	case err != nil:
 		return "", err
-	case url != "":
-		return "", fmt.Errorf("%w: Host %s is reached over SSH or TLS (%s), not through an Agent", domain.ErrInvalid, host, url)
 	case len(key) > 0:
 		return "", fmt.Errorf("%w: an Agent is enrolled for Host %s already", domain.ErrAlreadyExists, host)
 	}
@@ -828,89 +809,8 @@ func (s *Store) ApproveHost(ctx context.Context, host, fingerprint string) error
 	return affected(s.db.ExecContext(ctx, `UPDATE hosts SET approved = 1 WHERE name = ? AND signing_key = ?`, host, h.SigningKey))
 }
 
-func (s *Store) SaveHost(ctx context.Context, h domain.Host) error {
-	if h.WorkDir == "" {
-		h.WorkDir = defaultWorkDir
-	}
-	if h.CreatedAt.IsZero() {
-		h.CreatedAt = time.Now()
-	}
-	args := []any{h.Name, h.URL, h.WorkDir}
-	for _, v := range []string{h.SSHPrivateKey, h.TLSCA, h.TLSCert, h.TLSKey} {
-		sealed, err := s.sealer.Seal(v)
-		if err != nil {
-			return err
-		}
-		args = append(args, sealed)
-	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO hosts (`+hostCols+`) VALUES (?,?,?,?,?,?,?,?)
-		ON CONFLICT (name) DO UPDATE SET url = excluded.url, work_dir = excluded.work_dir,
-		ssh_private_key = COALESCE(NULLIF(excluded.ssh_private_key, ''), ssh_private_key),
-		tls_ca = COALESCE(NULLIF(excluded.tls_ca, ''), tls_ca),
-		tls_cert = COALESCE(NULLIF(excluded.tls_cert, ''), tls_cert),
-		tls_key = COALESCE(NULLIF(excluded.tls_key, ''), tls_key)`, append(args, toUnix(h.CreatedAt))...)
-	return mapErr(err)
-}
-
 func (s *Store) DeleteHost(ctx context.Context, name string) error {
 	return affected(s.db.ExecContext(ctx, `DELETE FROM hosts WHERE name = ?`, name))
-}
-
-// ---- host keys ----
-
-func (s *Store) ListHostKeys(ctx context.Context, host string) ([]domain.HostKey, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT recipient, private_key, current, created_at FROM host_keys
-		WHERE host = ? ORDER BY current DESC, rowid DESC`, host)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	keys := []domain.HostKey{}
-	for rows.Next() {
-		k := domain.HostKey{Host: host}
-		var sealed string
-		var created int64
-		if err := rows.Scan(&k.Recipient, &sealed, &k.Current, &created); err != nil {
-			return nil, err
-		}
-		k.CreatedAt = fromUnix(created)
-		if k.PrivateKey, err = s.sealer.Open(sealed); err != nil {
-			return nil, fmt.Errorf("open host key %s of %s: %w", k.Recipient, host, err)
-		}
-		keys = append(keys, k)
-	}
-	return keys, rows.Err()
-}
-
-func (s *Store) AddHostKey(ctx context.Context, k domain.HostKey) error {
-	sealed, err := s.sealer.Seal(k.PrivateKey)
-	if err != nil {
-		return err
-	}
-	if k.CreatedAt.IsZero() {
-		k.CreatedAt = time.Now()
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `UPDATE host_keys SET current = 0 WHERE host = ?`, k.Host); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO host_keys (host, recipient, private_key, current, created_at) VALUES (?,?,?,1,?)`,
-		k.Host, k.Recipient, sealed, toUnix(k.CreatedAt)); err != nil {
-		var se *sqlite.Error
-		if errors.As(err, &se) && se.Code() == sqlite3.SQLITE_CONSTRAINT_FOREIGNKEY {
-			return domain.ErrNotFound
-		}
-		return mapErr(err)
-	}
-	return tx.Commit()
-}
-
-func (s *Store) DeleteHostKey(ctx context.Context, host, recipient string) error {
-	return affected(s.db.ExecContext(ctx, `DELETE FROM host_keys WHERE host = ? AND recipient = ?`, host, recipient))
 }
 
 // ---- tokens ----

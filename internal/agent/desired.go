@@ -123,7 +123,7 @@ func (ag *Agent) adoptable(ctx context.Context, ds *agentv1.DesiredState) error 
 	if _, err := ag.db.GetApp(ctx, ds.App); !errors.Is(err, domain.ErrNotFound) {
 		return err // nil: deployed here before, OmegaCD's own
 	}
-	exists, managed, err := ag.engine.ProjectExists(ctx, domain.LocalHost, ds.App)
+	exists, managed, err := ag.engine.ProjectExists(ctx, ds.App)
 	if err != nil {
 		return err
 	}

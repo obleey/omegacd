@@ -15,7 +15,7 @@ type projects struct {
 	err error
 }
 
-func (p projects) ProjectExists(_ context.Context, _, name string) (bool, bool, error) {
+func (p projects) ProjectExists(_ context.Context, name string) (bool, bool, error) {
 	return name == "hand", false, p.err
 }
 

@@ -62,9 +62,9 @@ func TestApps(t *testing.T) {
 	a := domain.Application{
 		Name: "web", RepoURL: "https://example.com/r.git", Path: "apps/web", TargetRevision: "main",
 		ComposeFiles: []string{"compose.yaml", "override.yaml"}, Profiles: []string{"prod"},
-		Host: domain.LocalHost, AutoSync: true, Prune: true, PruneVolumes: true, RolledBack: true,
+		Host: "edge", AutoSync: true, Prune: true, PruneVolumes: true, RolledBack: true,
 		Kind: domain.KindCompose, Parent: "root", NotInGit: true, WorkDir: "/srv/apps",
-		CreatedAt: time.Unix(1700000000, 0).UTC(), Dirs: []string{},
+		CreatedAt: time.Unix(1700000000, 0).UTC(),
 	}
 	must(t, s.CreateApp(ctx, a))
 	wantErr(t, s.CreateApp(ctx, a), domain.ErrAlreadyExists)
@@ -82,14 +82,6 @@ func TestApps(t *testing.T) {
 		t.Fatalf("update not applied: %+v", got)
 	}
 	wantErr(t, s.UpdateApp(ctx, domain.Application{Name: "nope"}), domain.ErrNotFound)
-
-	dirs := []string{"local:/work/web", "prod:/srv/omegacd/root/web"}
-	must(t, s.SetAppDirs(ctx, "web", dirs))
-	must(t, s.UpdateApp(ctx, a)) // keeps them
-	if got, _ = s.GetApp(ctx, "web"); !reflect.DeepEqual(got.Dirs, dirs) {
-		t.Fatalf("dirs = %v", got.Dirs)
-	}
-	wantErr(t, s.SetAppDirs(ctx, "nope", dirs), domain.ErrNotFound)
 
 	must(t, s.CreateApp(ctx, domain.Application{Name: "api"}))
 	apps, err := s.ListApps(ctx)
@@ -314,68 +306,18 @@ func TestHosts(t *testing.T) {
 	_, err := s.GetHost(ctx, "prod")
 	wantErr(t, err, domain.ErrNotFound)
 
-	must(t, s.SaveHost(ctx, domain.Host{Name: "prod", URL: "ssh://deploy@prod", SSHPrivateKey: "key", TLSCert: "cert", TLSKey: "tlskey"}))
-	var raw string
-	must(t, s.db.QueryRow(`SELECT ssh_private_key FROM hosts WHERE name = 'prod'`).Scan(&raw))
-	if raw == "" || strings.Contains(raw, "key") {
-		t.Fatalf("key not sealed: %q", raw)
+	for _, name := range []string{"prod", "a"} {
+		_, err := s.CreateInvite(ctx, name, time.Now().Add(time.Hour))
+		must(t, err)
 	}
-
-	// empty secrets keep old values; WorkDir defaults
-	must(t, s.SaveHost(ctx, domain.Host{Name: "prod", URL: "tcp://prod:2376", TLSCA: "ca"}))
-	h, err := s.GetHost(ctx, "prod")
-	must(t, err)
-	if h.URL != "tcp://prod:2376" || h.WorkDir != "/var/lib/omegacd" || h.SSHPrivateKey != "key" || h.TLSCA != "ca" ||
-		h.TLSCert != "cert" || h.TLSKey != "tlskey" || !h.HasSSHKey || !h.HasTLS || h.CreatedAt.IsZero() {
-		t.Fatalf("got %+v", h)
-	}
-
-	must(t, s.SaveHost(ctx, domain.Host{Name: "a", URL: "tcp://a", WorkDir: "/srv"}))
 	hosts, err := s.ListHosts(ctx)
 	must(t, err)
-	if len(hosts) != 2 || hosts[0].Name != "a" || hosts[0].WorkDir != "/srv" || hosts[0].HasSSHKey || hosts[0].HasTLS {
+	if len(hosts) != 2 || hosts[0].Name != "a" || hosts[0].CreatedAt.IsZero() {
 		t.Fatalf("got %+v", hosts)
 	}
 
 	must(t, s.DeleteHost(ctx, "prod"))
 	wantErr(t, s.DeleteHost(ctx, "prod"), domain.ErrNotFound)
-}
-
-func TestHostKeys(t *testing.T) {
-	s, _ := open(t)
-	wantErr(t, s.AddHostKey(ctx, domain.HostKey{Host: "prod", Recipient: "age1a", PrivateKey: "AGE-SECRET-KEY-A"}), domain.ErrNotFound)
-	must(t, s.SaveHost(ctx, domain.Host{Name: "prod", URL: "ssh://deploy@prod"}))
-	must(t, s.SaveHost(ctx, domain.Host{Name: "other", URL: "ssh://deploy@other"}))
-	must(t, s.AddHostKey(ctx, domain.HostKey{Host: "prod", Recipient: "age1a", PrivateKey: "AGE-SECRET-KEY-A"}))
-	must(t, s.AddHostKey(ctx, domain.HostKey{Host: "other", Recipient: "age1o", PrivateKey: "AGE-SECRET-KEY-O"}))
-	must(t, s.AddHostKey(ctx, domain.HostKey{Host: "prod", Recipient: "age1b", PrivateKey: "AGE-SECRET-KEY-B"}))
-	wantErr(t, s.AddHostKey(ctx, domain.HostKey{Host: "prod", Recipient: "age1a", PrivateKey: "AGE-SECRET-KEY-A"}), domain.ErrAlreadyExists)
-
-	keys, err := s.ListHostKeys(ctx, "prod")
-	must(t, err)
-	if len(keys) != 2 || keys[0].Recipient != "age1b" || !keys[0].Current || keys[0].PrivateKey != "AGE-SECRET-KEY-B" ||
-		keys[1].Recipient != "age1a" || keys[1].Current || keys[1].PrivateKey != "AGE-SECRET-KEY-A" || keys[0].CreatedAt.IsZero() {
-		t.Fatalf("%+v", keys)
-	}
-	// the failed duplicate insert must not have demoted the current key
-	if keys, _ := s.ListHostKeys(ctx, "other"); len(keys) != 1 || !keys[0].Current {
-		t.Fatalf("%+v", keys)
-	}
-
-	var plain int
-	must(t, s.db.QueryRow(`SELECT count(*) FROM host_keys WHERE private_key LIKE '%AGE-SECRET-KEY%'`).Scan(&plain))
-	if plain != 0 {
-		t.Fatal("private key stored in plaintext")
-	}
-
-	must(t, s.DeleteHostKey(ctx, "prod", "age1a"))
-	wantErr(t, s.DeleteHostKey(ctx, "prod", "age1a"), domain.ErrNotFound)
-	must(t, s.DeleteHost(ctx, "prod"))
-	var left int
-	must(t, s.db.QueryRow(`SELECT count(*) FROM host_keys WHERE host = 'prod'`).Scan(&left))
-	if left != 0 {
-		t.Fatalf("%d keys left after deleting the Host", left)
-	}
 }
 
 func TestEnrollment(t *testing.T) {
@@ -390,7 +332,7 @@ func TestEnrollment(t *testing.T) {
 	}
 	h, err := s.GetHost(ctx, "web")
 	must(t, err)
-	if h.URL != "" || h.Fingerprint != "" || h.Approved {
+	if h.Fingerprint != "" || h.Approved {
 		t.Fatalf("an invited Host: %+v", h)
 	}
 
@@ -421,11 +363,6 @@ func TestEnrollment(t *testing.T) {
 	if h, _ = s.GetHost(ctx, "web"); !h.Approved {
 		t.Fatalf("not approved: %+v", h)
 	}
-	// SaveHost, the push Hosts' path, keeps what enrollment set
-	must(t, s.SaveHost(ctx, domain.Host{Name: "web", WorkDir: "/srv"}))
-	if h, _ = s.GetHost(ctx, "web"); !h.Approved || h.AgeRecipient != "age1web" {
-		t.Fatalf("after SaveHost: %+v", h)
-	}
 
 	expired, err := s.CreateInvite(ctx, "db", now.Add(time.Hour))
 	must(t, err)
@@ -434,10 +371,6 @@ func TestEnrollment(t *testing.T) {
 	_, err = s.Enroll(ctx, expired, []byte("key-3"), "age1db", now) // and used up by the try
 	wantErr(t, err, domain.ErrInvalid)
 	wantErr(t, s.ApproveHost(ctx, "db", "SHA256:x"), domain.ErrInvalid) // no key to approve
-
-	must(t, s.SaveHost(ctx, domain.Host{Name: "prod", URL: "ssh://deploy@prod"}))
-	_, err = s.CreateInvite(ctx, "prod", now.Add(time.Hour))
-	wantErr(t, err, domain.ErrInvalid)
 
 	_, err = s.CreateInvite(ctx, "db", now.Add(time.Hour))
 	must(t, err)

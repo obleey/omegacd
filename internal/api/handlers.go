@@ -353,34 +353,6 @@ func (s *server) listHosts(w http.ResponseWriter, r *http.Request) {
 	respond(w, http.StatusOK, hs, err)
 }
 
-func (s *server) saveHost(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Name          string `json:"name"`
-		URL           string `json:"url"`
-		WorkDir       string `json:"workDir"`
-		SSHPrivateKey string `json:"sshPrivateKey"`
-		TLSCA         string `json:"tlsCA"`
-		TLSCert       string `json:"tlsCert"`
-		TLSKey        string `json:"tlsKey"`
-	}
-	if err := decode(w, r, &req); err != nil {
-		writeError(w, err)
-		return
-	}
-	if name := r.PathValue("name"); name != "" {
-		if req.Name != "" && req.Name != name {
-			writeError(w, fmt.Errorf("%w: name cannot be changed", domain.ErrInvalid))
-			return
-		}
-		req.Name = name
-	}
-	v, err := s.Controller.SaveHost(r.Context(), domain.Host{
-		Name: req.Name, URL: req.URL, WorkDir: req.WorkDir,
-		SSHPrivateKey: req.SSHPrivateKey, TLSCA: req.TLSCA, TLSCert: req.TLSCert, TLSKey: req.TLSKey,
-	}, r.Method == http.MethodPost)
-	respond(w, saveStatus(r), v, err)
-}
-
 // inviteHost adds a Host by name, or gives a Host no Agent has enrolled for yet a new invite (Q22, Q73).
 func (s *server) inviteHost(w http.ResponseWriter, r *http.Request) {
 	invite, expires, err := s.Controller.InviteHost(r.Context(), r.PathValue("name"))
@@ -454,36 +426,10 @@ func (s *server) deleteHost(w http.ResponseWriter, r *http.Request) {
 	respond(w, http.StatusNoContent, nil, err)
 }
 
-func (s *server) testHost(w http.ResponseWriter, r *http.Request) {
-	st, err := s.Controller.TestHost(r.Context(), r.PathValue("name"))
-	respond(w, http.StatusOK, st, err)
-}
-
-// Host Keys: responses carry public keys only (HostKey.PrivateKey is never serialised).
+// hostKeys is the public half of the Host's Host Key, from its Agent (Q108).
 func (s *server) hostKeys(w http.ResponseWriter, r *http.Request) {
 	keys, err := s.Controller.HostKeys(r.Context(), r.PathValue("name"))
 	respond(w, http.StatusOK, keys, err)
-}
-
-func (s *server) generateHostKey(w http.ResponseWriter, r *http.Request) {
-	k, err := s.Controller.GenerateHostKey(r.Context(), r.PathValue("name"))
-	respond(w, http.StatusCreated, k, err)
-}
-
-func (s *server) importHostKey(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		PrivateKey string `json:"privateKey"`
-	}
-	if err := decode(w, r, &req); err != nil {
-		writeError(w, err)
-		return
-	}
-	k, err := s.Controller.ImportHostKey(r.Context(), r.PathValue("name"), req.PrivateKey)
-	respond(w, http.StatusCreated, k, err)
-}
-
-func (s *server) removeHostKey(w http.ResponseWriter, r *http.Request) {
-	respond(w, http.StatusNoContent, nil, s.Controller.RemoveHostKey(r.Context(), r.PathValue("name"), r.PathValue("recipient")))
 }
 
 func (s *server) listRegistryCreds(w http.ResponseWriter, r *http.Request) {

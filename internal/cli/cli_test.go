@@ -345,38 +345,21 @@ func TestSyncPrune(t *testing.T) {
 }
 
 func TestHostKeys(t *testing.T) {
-	f, srv := newAPI(t, map[string]any{
-		"GET /api/settings/hosts/prod/keys": []domain.HostKey{
-			{Recipient: "age1new", Current: true, CreatedAt: time.Now()}, {Recipient: "age1old"},
-		},
-		"POST /api/settings/hosts/prod/keys/import":    domain.HostKey{Recipient: "age1imported", Current: true},
-		"POST /api/settings/hosts/prod/keys/generate":  domain.HostKey{Recipient: "age1generated", Current: true},
-		"DELETE /api/settings/hosts/prod/keys/age1old": nil,
+	_, srv := newAPI(t, map[string]any{
+		"GET /api/settings/hosts/prod/keys": []domain.HostKey{{Recipient: "age1prod", Current: true}},
+		"GET /api/settings/hosts/new/keys":  []domain.HostKey{},
 	})
-	if r := run(t, srv, nil, "", "host", "key", "show", "prod"); r.code != 0 ||
-		!strings.Contains(r.stdout, "age1new") || !strings.Contains(r.stdout, "current") || !strings.Contains(r.stdout, "previous") {
+	if r := run(t, srv, nil, "", "host", "key", "show", "prod"); r.code != 0 || r.stdout != "age1prod\n" {
 		t.Fatalf("show: %+v", r)
 	}
-	file := filepath.Join(t.TempDir(), "prod.key")
-	os.WriteFile(file, []byte("# public key: age1imported\nAGE-SECRET-KEY-1SECRET\n"), 0o600)
-	if r := run(t, srv, nil, "", "host", "key", "import", "prod", "--file", file); r.code != 0 || !strings.Contains(r.stdout, "age1imported") {
-		t.Fatalf("import: %+v", r)
+	if r := run(t, srv, nil, "", "host", "key", "show", "new"); r.code != 1 || !strings.Contains(r.stderr, "its Agent makes one when it enrolls") {
+		t.Fatalf("show before enrollment: %+v", r)
 	}
-	var body map[string]string
-	if len(f.bodies) != 1 || json.Unmarshal([]byte(f.bodies[0]), &body) != nil || body["privateKey"] != "# public key: age1imported\nAGE-SECRET-KEY-1SECRET\n" {
-		t.Fatalf("import body: %v", f.bodies)
-	}
-	if r := run(t, srv, nil, "", "host", "key", "import", "prod"); r.code != 1 || !strings.Contains(r.stderr, "--file is required") {
-		t.Fatalf("import without --file: %+v", r)
-	}
-	if r := run(t, srv, nil, "", "host", "key", "generate", "prod"); r.code != 0 || !strings.Contains(r.stdout, "age1generated") {
-		t.Fatalf("generate: %+v", r)
-	}
-	if r := run(t, srv, nil, "", "host", "key", "remove", "prod", "age1old"); r.code != 0 || !f.called("DELETE /api/settings/hosts/prod/keys/age1old") {
-		t.Fatalf("remove: %+v", r)
-	}
-	if r := run(t, srv, nil, "", "host", "key", "nope"); r.code != 2 {
-		t.Fatalf("unknown subcommand: %+v", r)
+	// the private half never leaves the Agent (Q108): nothing generates, imports or removes one
+	for _, sub := range []string{"generate", "import", "remove", "nope"} {
+		if r := run(t, srv, nil, "", "host", "key", sub, "prod"); r.code != 2 {
+			t.Fatalf("host key %s: %+v", sub, r)
+		}
 	}
 }
 
@@ -461,8 +444,8 @@ func gitRepo(t *testing.T) string {
 func TestImport(t *testing.T) {
 	id, _ := age.GenerateX25519Identity()
 	_, srv := newAPI(t, map[string]any{"GET /api/settings/hosts": []domain.HostView{
-		{Host: domain.Host{Name: "local"}, KeyRecipient: "age1master"},
-		{Host: domain.Host{Name: "vps"}, KeyRecipient: id.Recipient().String()},
+		{Host: domain.Host{Name: "edge", AgeRecipient: "age1edge"}},
+		{Host: domain.Host{Name: "vps", AgeRecipient: id.Recipient().String()}},
 	}})
 	repo := gitRepo(t)
 	var dialed string
@@ -498,7 +481,7 @@ func TestImportRecipientFlagAndErrors(t *testing.T) {
 	withHost := func(c *CLI) { c.ImportHost = func(string) (importer.Host, error) { return importHost{}, nil } }
 	repo := gitRepo(t)
 	// --recipient: no server needed
-	if r := runWith(t, nil, nil, withHost, "import", "--recipient", id.Recipient().String(), "--dry-run"); r.code != 0 || !strings.Contains(r.stdout, "blog would go to apps/blog") {
+	if r := runWith(t, nil, nil, withHost, "import", "--host", "edge", "--recipient", id.Recipient().String(), "--dry-run"); r.code != 0 || !strings.Contains(r.stdout, "blog would go to apps/blog") {
 		t.Fatalf("%+v", r)
 	}
 	if _, err := os.Stat(filepath.Join(repo, "apps")); err == nil {
@@ -509,13 +492,15 @@ func TestImportRecipientFlagAndErrors(t *testing.T) {
 		srv  bool
 		want string
 	}{
-		{[]string{"import", "--ssh", "root@vps"}, false, "--ssh needs --host NAME"},
-		{[]string{"import"}, false, "pass --recipient age1"},                        // secrets, not logged in
-		{[]string{"import", "--host", "edge"}, true, "Host edge is not in OmegaCD"}, // unknown Host on the server
+		{[]string{"import", "--ssh", "root@vps"}, false, "import needs --host NAME"},
+		{[]string{"import"}, false, "import needs --host NAME"},                     // no default Host (Q104)
+		{[]string{"import", "--host", "edge"}, false, "pass --recipient age1"},      // secrets, not logged in
+		{[]string{"import", "--host", "nope"}, true, "Host nope is not in OmegaCD"}, // unknown Host on the server
+		{[]string{"import", "--host", "new"}, true, "Host new has no Host Key yet"}, // invited, its Agent not enrolled
 	} {
 		var srv *httptest.Server
 		if c.srv {
-			_, srv = newAPI(t, map[string]any{"GET /api/settings/hosts": []domain.HostView{{Host: domain.Host{Name: "local"}}}})
+			_, srv = newAPI(t, map[string]any{"GET /api/settings/hosts": []domain.HostView{{Host: domain.Host{Name: "new"}}}})
 		}
 		r := runWith(t, srv, nil, withHost, c.args...)
 		if r.code == 0 || !strings.Contains(r.stdout+r.stderr, c.want) {
@@ -523,7 +508,7 @@ func TestImportRecipientFlagAndErrors(t *testing.T) {
 		}
 	}
 	t.Chdir(t.TempDir()) // not a Git checkout
-	if r := runWith(t, nil, nil, withHost, "import", "--recipient", id.Recipient().String()); r.code == 0 || !strings.Contains(r.stderr, "inside your Git repository") {
+	if r := runWith(t, nil, nil, withHost, "import", "--host", "edge", "--recipient", id.Recipient().String()); r.code == 0 || !strings.Contains(r.stderr, "inside your Git repository") {
 		t.Errorf("outside a repository: %+v", r)
 	}
 }
@@ -533,7 +518,6 @@ func TestHostEnrollment(t *testing.T) {
 		"POST /api/settings/hosts/web/invite":  map[string]any{"invite": "omegacd-invite-abc", "expiresAt": time.Now().Add(time.Hour)},
 		"POST /api/settings/hosts/web/approve": nil,
 		"GET /api/settings/hosts": []domain.HostView{
-			{Host: domain.Host{Name: "local"}},
 			{Host: domain.Host{Name: "web", Fingerprint: "SHA256:abc", AgeRecipient: "age1web"}},
 			{Host: domain.Host{Name: "db"}},
 			{Host: domain.Host{Name: "cache", Fingerprint: "SHA256:def", Approved: true, Agent: &domain.AgentInfo{Version: "v0.2.1"},
@@ -554,7 +538,7 @@ func TestHostEnrollment(t *testing.T) {
 		t.Fatalf("add: %+v", r)
 	}
 	r = run(t, srv, nil, "", "host", "list")
-	for _, want := range []string{"to approve SHA256:abc", "age1web", "approved SHA256:def", "invited", "(docker socket)",
+	for _, want := range []string{"to approve SHA256:abc", "age1web", "approved SHA256:def", "invited",
 		"LOCKED: two connections (10.0.0.1, 10.0.0.2)", "agent v0.2.1", "REFUSED: Agent v0.0.9", "approved SHA256:def, only from 10.0.0.0/8"} {
 		if !strings.Contains(r.stdout, want) {
 			t.Fatalf("list lacks %q:\n%s", want, r.stdout)
