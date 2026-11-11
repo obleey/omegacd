@@ -4,14 +4,14 @@ set -u  # no pipefail: grep -q closing the pipe early must not fail a check
 BIN=${OMEGACD_BIN:-$(cd "$(dirname "$0")/../.." && pwd)/bin/omegacd}
 T=$(mktemp -d "${TMPDIR:-/tmp}/omegacd-e2es.XXXX")
 REPO=$T/repo; API=http://127.0.0.1:18080/api; W=
-mkdir -p "$REPO/sec" "$T/data" "$T/work"
+mkdir -p "$REPO/sec" "$T/data"
 fail=0
 check() { if eval "$2"; then echo "PASS  $1"; else echo "FAIL  $1"; fail=1; fi; }
 gitc() { git -C "$REPO" -c user.name=e2e -c user.email=e2e@local "$@"; }
 
 age-keygen -o "$T/age.key" 2>/dev/null
 
-OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_WORKDIR=$T/work OMEGACD_AGE_KEY_FILE=$T/age.key \
+OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_AGE_KEY_FILE=$T/age.key \
   OMEGACD_ADMIN_PASSWORD=e2e-password-123 OMEGACD_POLL_INTERVAL=1h "$BIN" > "$T/server.log" 2>&1 &
 SRV=$!
 cleanup() { "$BIN" app delete e2e-sec --volumes --yes >/dev/null 2>&1; kill $SRV ${AGENT:-} 2>/dev/null; wait $SRV ${AGENT:-} 2>/dev/null; rm -rf "$T"; }

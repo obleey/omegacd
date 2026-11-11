@@ -24,13 +24,12 @@ import (
 )
 
 const (
-	maxRetries    = 5
-	retryBase     = 5 * time.Second
-	retryMax      = 3 * time.Minute
-	retryTick     = 5 * time.Second
-	syncTimeout   = 30 * time.Minute
-	subscriberCh  = 64
-	watchDebounce = time.Second
+	maxRetries   = 5
+	retryBase    = 5 * time.Second
+	retryMax     = 3 * time.Minute
+	retryTick    = 5 * time.Second
+	syncTimeout  = 30 * time.Minute
+	subscriberCh = 64
 )
 
 var nameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)

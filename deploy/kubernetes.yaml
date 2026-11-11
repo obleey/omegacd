@@ -1,6 +1,5 @@
-# OmegaCD on Kubernetes: the control plane only. Applications run on Docker hosts that OmegaCD reaches as
-# remote Hosts (ssh:// or tcp:// with TLS); the built-in "local" Host is turned off (OMEGACD_LOCAL_HOST=false),
-# so give every Application a host. See the README's Kubernetes section.
+# OmegaCD on Kubernetes: the Control Plane. Applications run on Hosts, each with an Agent that connects to it
+# (README → Hosts). See the README's Kubernetes section.
 #
 #   kubectl create namespace omegacd
 #   kubectl -n omegacd create secret generic omegacd-keys --from-file=age.key --from-file=known_hosts
@@ -38,11 +37,6 @@ spec:
           ports:
             - { name: http, containerPort: 8080 }
           env:
-            # The work dir on the volume, not in the pod: on an empty work dir OmegaCD assumes a reboot and
-            # restores every Application, recreating its containers.
-            - { name: OMEGACD_WORKDIR, value: /data/work }
-            # No Docker engine in a pod: hide the built-in "local" Host, Applications go to remote Hosts.
-            - { name: OMEGACD_LOCAL_HOST, value: "false" }
             # - { name: OMEGACD_TRUSTED_PROXIES, value: "10.0.0.0/8" }   # your ingress controller
             # - name: OMEGACD_WEBHOOK_SECRET
             #   valueFrom: { secretKeyRef: { name: omegacd-keys, key: webhook-secret } }

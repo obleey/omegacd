@@ -267,7 +267,6 @@ type HostStatus struct {
 	Error         string `json:"error,omitempty"`
 	ServerVersion string `json:"serverVersion,omitempty"`
 	OS            string `json:"os,omitempty"`
-	Containers    int    `json:"containers"`
 }
 
 // HostView is a Host plus its connection status and the Applications deployed to it, as returned by the API.

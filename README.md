@@ -27,10 +27,10 @@ Plenty of apps run on plain Docker hosts — a VPS, a homelab box, a few servers
 - **See the diff before you deploy.** Per-service changes and the Git diff between the deployed and the target Revision.
 - **Drift detection and Self-Heal.** A container changed or removed by hand shows up as OutOfSync, and OmegaCD can put it back.
 - **History and Rollback.** Every Sync is recorded; roll back to any earlier Revision.
-- **Secrets encrypted in Git.** SOPS + age files live next to your compose files and are decrypted only at Sync time.
-- **Many hosts from one place.** The local engine and remote engines over SSH or TLS, in one UI, API and CLI.
+- **Secrets encrypted in Git.** SOPS + age files live next to your compose files and are decrypted only on the Host, by its Agent.
+- **Many hosts from one place.** Every Host runs a small Agent that dials out to OmegaCD — no SSH into your servers, and its Applications keep running while OmegaCD is down. One UI, API and CLI for all of them.
 
-It stays small: one binary in one container, no database server, no agents on your hosts, and your compose files unchanged. OmegaCD runs Compose as a library, so whatever `docker compose up` accepts works (except `build:` — build images in CI; OmegaCD pulls and runs them).
+It stays small: one binary — OmegaCD, and on each Host the same binary as its Agent — no database server, and your compose files unchanged. OmegaCD runs Compose as a library, so whatever `docker compose up` accepts works (except `build:` — build images in CI; OmegaCD pulls and runs them).
 
 **Inspired by** the GitOps tools of the Kubernetes world — [Argo CD](https://argo-cd.readthedocs.io/) and [Flux](https://fluxcd.io/) — and the [OpenGitOps principles](https://opengitops.dev/) (declarative, versioned and immutable, pulled automatically, continuously reconciled), brought to Docker Compose. OmegaCD is an independent project, not affiliated with Argo CD, Flux or the CNCF.
 
@@ -42,8 +42,8 @@ It stays small: one binary in one container, no database server, no agents on yo
 - **Diff** — Live (the compose files on the Host) and Desired (the compose files in Git) side by side and as a Compose diff, plus the per-service changes and the Git diff between the deployed and the target Revision
 - **History and Rollback** — every Sync Operation is recorded; roll back to any earlier Revision
 - **App of Apps** — declare Applications in Git; one parent Application creates, updates and deletes its children
-- **Remote Hosts** — Docker engines over `ssh://` (host keys verified) or `tcp://` with TLS
-- **Secrets** — SOPS + age encrypted files in Git, decrypted only at Sync time
+- **Hosts** — each runs an Agent (Docker or Podman, rootful or rootless) that connects out to OmegaCD; enrolled with a single-use invite and an approved key fingerprint
+- **Secrets** — SOPS + age encrypted files in Git, decrypted only on the Host, with a Host Key that never leaves it
 - **Change detection** — Git polling plus GitHub, GitLab and Gitea/Forgejo webhooks, and a generic one for anything else
 - **Web UI** — resource tree, diffs, colored live container logs, syntax colors for compose and config files (YAML, .env, nginx, Apache, Caddyfile, TOML, Markdown… ~240 formats via Shiki), repository access check while creating an Application, links to the Git host, light/dark/system theme, works on phones
 - **CLI and API** — REST API with API tokens; a CLI for scripts and CI (`omegacd app sync myapp --wait`)
@@ -61,7 +61,7 @@ It stays small: one binary in one container, no database server, no agents on yo
 
 ## Install
 
-OmegaCD needs a Docker engine and an [age](https://github.com/FiloSottile/age) key. The key seals stored credentials and decrypts your SOPS secrets, so **back it up** — without it, stored credentials and encrypted secrets cannot be read.
+OmegaCD (the Control Plane) needs an [age](https://github.com/FiloSottile/age) key, the Master Key: it seals the credentials OmegaCD stores, so **back it up** with the data directory. OmegaCD deploys nothing itself: every machine that runs Applications, the one OmegaCD runs on included, is a [Host](#hosts) with an Agent.
 
 **Quick install** — on a Linux server with Docker, or into a Kubernetes cluster with `kubectl`:
 
@@ -69,34 +69,30 @@ OmegaCD needs a Docker engine and an [age](https://github.com/FiloSottile/age) k
 curl -fsSL https://raw.githubusercontent.com/obleey/omegacd/main/deploy/install.sh | sh
 ```
 
-[`install.sh`](deploy/install.sh) asks for the port and the work dir (Compose) or the kubectl context and namespace (Kubernetes, always confirmed), creates the Master Key, starts OmegaCD and prints the URL, the initial admin password and the public key for `.sops.yaml`. It needs no `age` or `sops` on the server (`omegacd keygen` makes the key), never replaces an existing key, and runs unattended with `OMEGACD_TARGET`, `OMEGACD_VERSION` and the settings listed at its top. The options below do the same by hand.
+[`install.sh`](deploy/install.sh) asks for the port (Compose) or the kubectl context and namespace (Kubernetes, always confirmed), creates the Master Key, starts OmegaCD and prints the URL and the initial admin password. It needs no `age` or `sops` on the server (`omegacd keygen` makes the key), never replaces an existing key, and runs unattended with `OMEGACD_TARGET`, `OMEGACD_VERSION` and the settings listed at its top. The options below do the same by hand.
 
 ### Option 1: Docker Compose (recommended)
 
-Download [`deploy/compose.yaml`](deploy/compose.yaml). It mounts the Docker socket, a data volume, the age key, `known_hosts` and the work dir (at the same path inside and outside, see below). Every setting has a default you can override with environment variables or a `.env` file next to it: `OMEGACD_IMAGE` (pin a release, e.g. `ghcr.io/obleey/omegacd:0.1.0`), `OMEGACD_PORT`, `OMEGACD_WORKDIR`, `OMEGACD_DATA` (a folder instead of the volume), `OMEGACD_AGE_KEY`, `OMEGACD_KNOWN_HOSTS`.
+Download [`deploy/compose.yaml`](deploy/compose.yaml). It mounts a data volume, the age key and `known_hosts` — no Docker socket: OmegaCD deploys through Agents. Every setting has a default you can override with environment variables or a `.env` file next to it: `OMEGACD_IMAGE` (pin a release), `OMEGACD_PORT`, `OMEGACD_DATA` (a folder instead of the volume), `OMEGACD_AGE_KEY`, `OMEGACD_KNOWN_HOSTS`.
 
 ```sh
 curl -fsSLO https://raw.githubusercontent.com/obleey/omegacd/main/deploy/compose.yaml
 ```
 
 ```sh
-age-keygen -o age.key && chmod 600 age.key   # the Master Key: seals OmegaCD's stored secrets; Host Key of the local Host
-touch known_hosts                             # add hosts with ssh-keyscan when you use Git or Hosts over SSH
+age-keygen -o age.key && chmod 600 age.key   # the Master Key: seals the credentials OmegaCD stores
+touch known_hosts                             # add Git servers with ssh-keyscan when you use Git over SSH
 docker compose up -d
 docker compose logs omegacd | grep "initial admin password"
 ```
 
 Open http://localhost:8080, log in as `admin` with the password from the log, and set a new password (required on first login). Put OmegaCD behind a TLS-terminating reverse proxy before exposing it.
 
-**Why `/run/omegacd:/run/omegacd`?** On Sync, OmegaCD writes each Application's files (compose files, configs, decrypted secrets) to its work dir and asks the Docker engine to start the containers. Bind mounts like `./nginx.conf:/etc/nginx/nginx.conf` are resolved by the *engine*, on the host — so the work dir must exist at the same path on the host as inside the OmegaCD container.
-
-**After a reboot** `/run` is empty again (it's RAM-backed, so decrypted secret *files* never touch disk — see [what reaches the disk](#what-reaches-the-disk)). Docker restarts your containers before OmegaCD is up, and their bind-mounted files are missing. On startup OmegaCD notices, restores every Application's files from its *deployed* Revision (nothing new is deployed), re-decrypts secrets and recreates the containers — it shows in History as a `restore` Sync. This covers the machine OmegaCD runs on (its work dir is `OMEGACD_WORKDIR`, shown read-only under **Settings → Hosts**); [remote Hosts](#remote-hosts) use a persistent work dir instead.
-
-**A persistent work dir instead:** point `OMEGACD_WORKDIR` at a disk path such as `/opt/services` and mount it at the same path (`/opt/services:/opt/services`). The files then survive reboots and no `restore` Sync is needed, but decrypted secret files sit on that disk (mode 0600) and end up in its backups. Either way the work dir is OmegaCD's copy of Git, not a place for data: every Sync makes it match Git again (see [Where your data lives](#where-your-data-lives)). Changing the path is safe: on its first start with the new path OmegaCD finds no files there and restores every Application into it, recreating the containers once.
+Then [add a Host](#hosts) — this machine too, if Applications should run on it.
 
 **Upgrade:** bump the image tag (or `docker compose pull` for `latest`) and run `docker compose up -d`. Data lives in the `omegacd-data` volume.
 
-**Upgrading from 0.1.0-rc.5 or earlier:** Application files used to live in `<work dir>/apps/<name>`; now they are in `<work dir>/<name>` (see [Where your data lives](#where-your-data-lives)). Nothing changes on start: each Application keeps running from its old folder until its next Sync, which writes the new folder (recreating containers whose bind mounts moved) and then deletes the Application's old `apps/<name>` folder, and `apps/` once it is empty; anything in `apps/` that isn't an Application's folder is left alone.
+**From v0.1:** there is no migration. v0.2 refuses a v0.1 database with a message and leaves it untouched: export each Application's definition with v0.1's `omegacd app export`, start v0.2 with a new data directory, enroll an Agent on each Host and create the Applications again (naming their `host:`); running stacks are taken over by name.
 
 ### Option 2: Binary + systemd
 
@@ -111,10 +107,10 @@ tar -xzf omegacd_${VERSION}_linux_${ARCH}.tar.gz
 sudo install -m 0755 omegacd_${VERSION}_linux_${ARCH}/omegacd /usr/local/bin/omegacd
 ```
 
-Create a service user in the `docker` group and its key files:
+Create a service user and its key files:
 
 ```sh
-sudo useradd --system --home-dir /var/lib/omegacd --shell /usr/sbin/nologin --groups docker omegacd
+sudo useradd --system --home-dir /var/lib/omegacd --shell /usr/sbin/nologin omegacd
 sudo install -d -m 0750 -o omegacd -g omegacd /etc/omegacd
 sudo -u omegacd age-keygen -o /etc/omegacd/age.key
 sudo -u omegacd install -m 0600 /dev/null /etc/omegacd/known_hosts
@@ -137,31 +133,25 @@ journalctl -u omegacd | grep "initial admin password"
 [Unit]
 Description=OmegaCD - GitOps continuous delivery for Docker Compose
 Documentation=https://github.com/obleey/omegacd
-After=docker.service network-online.target
-Requires=docker.service
+After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=omegacd
 Group=omegacd
-SupplementaryGroups=docker
 ExecStart=/usr/local/bin/omegacd server
 Restart=on-failure
 RestartSec=5
 
 Environment=OMEGACD_ADDR=:8080
 Environment=OMEGACD_DATA=/var/lib/omegacd
-Environment=OMEGACD_WORKDIR=/run/omegacd
 Environment=OMEGACD_AGE_KEY_FILE=/etc/omegacd/age.key
 Environment=OMEGACD_SSH_KNOWN_HOSTS=/etc/omegacd/known_hosts
 EnvironmentFile=-/etc/omegacd/omegacd.env
 
 StateDirectory=omegacd
 StateDirectoryMode=0750
-RuntimeDirectory=omegacd
-RuntimeDirectoryMode=0750
-RuntimeDirectoryPreserve=yes
 
 NoNewPrivileges=yes
 ProtectSystem=full
@@ -179,7 +169,7 @@ WantedBy=multi-user.target
 
 </details>
 
-Further settings (webhook secret, trusted proxies, …) go into `/etc/omegacd/omegacd.env` (mode 0600). Remote `ssh://` Hosts need the `ssh` client installed. **Upgrade:** replace `/usr/local/bin/omegacd` and `systemctl restart omegacd`.
+Further settings (webhook secret, trusted proxies, …) go into `/etc/omegacd/omegacd.env` (mode 0600). **Upgrade:** replace `/usr/local/bin/omegacd` and `systemctl restart omegacd`.
 
 ### Option 3: CLI only
 
@@ -187,7 +177,7 @@ For laptops and CI, download the `darwin_*` or `linux_*` archive from [Releases]
 
 ### Option 4: Kubernetes
 
-OmegaCD can run in a cluster as the control plane, managing Docker hosts as [remote Hosts](#remote-hosts) over SSH or TLS. Kubernetes nodes run containerd, not Docker, so the manifest sets `OMEGACD_LOCAL_HOST=false`: the built-in `local` Host is not shown, and Applications must name a `host:`. [`deploy/kubernetes.yaml`](deploy/kubernetes.yaml) has a PersistentVolumeClaim, a single-replica Deployment and a Service:
+OmegaCD can run in a cluster as the Control Plane; the [Hosts](#hosts) it deploys to run Docker or Podman, each with an Agent that connects to it (through the Ingress). [`deploy/kubernetes.yaml`](deploy/kubernetes.yaml) has a PersistentVolumeClaim, a single-replica Deployment and a Service:
 
 ```sh
 kubectl create namespace omegacd
@@ -196,7 +186,7 @@ kubectl -n omegacd apply -f https://raw.githubusercontent.com/obleey/omegacd/mai
 kubectl -n omegacd logs deploy/omegacd | grep "initial admin password"
 ```
 
-Keep `replicas: 1` (one controller per SQLite database) and the work dir on the volume (`OMEGACD_WORKDIR=/data/work`): with an empty work dir OmegaCD assumes a reboot and recreates every Application's containers. Add the commented Ingress for your host name, and set `OMEGACD_TRUSTED_PROXIES` to the ingress controller.
+Keep `replicas: 1` (one controller per SQLite database). Add the commented Ingress for your host name, and set `OMEGACD_TRUSTED_PROXIES` to the ingress controller.
 
 ### Versions
 
@@ -204,7 +194,13 @@ The version is always the Git release tag: pushing tag `v0.1.0` builds and stamp
 
 ## Your first Application
 
-This repository has a ready example, [`examples/hello`](examples/hello): nginx serving a page that lives in Git.
+This repository has a ready example, [`examples/hello`](examples/hello): nginx serving a page that lives in Git. It runs on a [Host](#hosts): enroll an Agent on the machine you want it on first. The examples call that Host `local` — any name works; this machine is a Host like any other:
+
+```sh
+omegacd host add local      # prints the command that starts its Agent, with a single-use invite
+# run that command on the machine, then approve the fingerprint it prints:
+omegacd host approve local SHA256:…
+```
 
 ```yaml
 # examples/hello/compose.yaml
@@ -218,12 +214,12 @@ services:
     restart: unless-stopped
 ```
 
-**In the UI:** **New Application** → name `hello`, repository `https://github.com/obleey/omegacd`, path `examples/hello`, turn on **Auto-Sync**, **Create**. OmegaCD deploys it within seconds; open http://localhost:8081 (or the server's address). The Application page shows its containers, the Diff, History and Logs.
+**In the UI:** **New Application** → name `hello`, repository `https://github.com/obleey/omegacd`, path `examples/hello`, Host `local`, turn on **Auto-Sync**, **Create**. OmegaCD deploys it within seconds; open http://localhost:8081 (or the server's address). The Application page shows its containers, the Diff, History and Logs.
 
 **With the CLI** (`omegacd login` first, see [CLI](#cli)):
 
 ```sh
-omegacd app create hello --repo https://github.com/obleey/omegacd --path examples/hello --auto-sync
+omegacd app create hello --repo https://github.com/obleey/omegacd --path examples/hello --host local --auto-sync
 omegacd app wait hello --sync --health
 ```
 
@@ -258,10 +254,10 @@ autoSync: false
 | **Application** | A Compose project whose desired state lives at a path in a Git repository and is deployed to one Host. |
 | **App of Apps** | An Application whose path holds Application definitions instead of compose files. Syncing it creates and updates its Child Applications, and with Prune deletes those no longer declared. It deploys nothing itself and has no Host: each Child Application names its own, so one App of Apps can span several Hosts. |
 | **Child Application** | An Application declared in an App of Apps. Its settings — and Rollback — are owned by Git, not the UI. A manual Sync of the parent also syncs children that are OutOfSync or whose last Sync failed; a Refresh of the parent refreshes all children. |
-| **Host** | A Docker engine Applications are deployed to. `local` (the mounted Docker socket) is built in. |
+| **Host** | A machine Applications are deployed to, through its Agent: `omegacd agent`, enrolled with `omegacd host add`. The machine OmegaCD runs on is a Host like any other. |
 | **Sync** | Making the running containers match the compose files at the target Revision (commit). Each attempt is a Sync Operation, recorded as Running, Succeeded or Failed. |
 | **Sync Status** | **Synced**, **OutOfSync** (Live State differs, or a new Revision is waiting), or **Unknown** (the desired state cannot be determined, e.g. Git is unreachable). |
-| **Health Status** | **Healthy**, **Progressing**, **Degraded**, **Missing**, or **Unknown** (the Host is unreachable), from container state and healthchecks. A container that exited 0 counts as Healthy (one-shot jobs) — unless its service has a restart policy, then it is long-running and stopped means Degraded. |
+| **Health Status** | **Healthy**, **Progressing**, **Degraded**, **Missing**, or **Unknown** (its Host's Agent hasn't reported it), from container state and healthchecks, as the Agent reports them. A container that exited 0 counts as Healthy (one-shot jobs) — unless its service has a restart policy, then it is long-running and stopped means Degraded. |
 | **Rollback** | A Sync to an earlier Revision from the history. It turns Auto-Sync off so the next commit does not undo it; a manual Sync to the target Revision ends it. |
 
 **Sync Policy**, per Application:
@@ -285,12 +281,12 @@ path: apps/web                 # directory with the compose files
 targetRevision: main           # branch, tag or commit
 composeFiles: [compose.yaml]   # default: the first of compose.yaml, compose.yml, docker-compose.yaml, docker-compose.yml
 profiles: [prod]               # optional Compose profiles
-host: edge-01                  # required: the Host to deploy to (local for OmegaCD's own Docker engine)
+host: edge-01                  # required: the Host whose Agent deploys it
 autoSync: true
 selfHeal: true
 prune: true
 pruneVolumes: false            # with prune: also delete volumes no longer declared (data is lost)
-workDir: /srv/apps             # optional, for Agents (v0.2): the Host's folder for its files, under a root the Agent
+workDir: /srv/apps             # optional: the Host's folder for its files, under a root the Agent
                                # allows (OMEGACD_AGENT_WORKDIR_ALLOW); default the Agent's work dir. Not inherited
 ---
 name: cache
@@ -302,7 +298,7 @@ selfHeal: false
 prune: false
 ```
 
-`omegacd app export NAME` (or **Export YAML** in the UI) writes this format for an existing Application, and `omegacd app create -f FILE` reads it. Every definition in an App of Apps names its `host:` (`local` for OmegaCD's own Docker engine): there is no default, and a definition without one fails the App of Apps' Sync, so nothing is deployed to a Host Git didn't name. Nested App of Apps are not supported. `adopt: true` lets an Application take over an existing, unmanaged Compose project of the same name.
+`omegacd app export NAME` (or **Export YAML** in the UI) writes this format for an existing Application, and `omegacd app create -f FILE` reads it. Every Application names its `host:`: there is no default, and a definition without one fails the App of Apps' Sync, so nothing is deployed to a Host Git didn't name. Nested App of Apps are not supported. `adopt: true` lets an Application take over an existing, unmanaged Compose project of the same name.
 
 ![App of Apps](assets/screenshots/app-of-apps.png)
 
@@ -342,7 +338,7 @@ The migration runs on **every** Sync, and again when the Host restores the Appli
 
 ## Where your data lives
 
-Each Application has its own folder in the work dir: `<work dir>/<name>`, or `<work dir>/<App of Apps>/<name>` for a Child Application (an App of Apps itself has no files) — on the machine OmegaCD runs on and on remote Hosts alike. OmegaCD makes that folder match Git on every Sync (files not in Git are deleted), so **data must not live there**. Only named volumes and absolute paths keep data:
+Each Application has its own folder in its Host's work dir (the Agent's `OMEGACD_AGENT_WORKDIR`, or the Application's `workDir:`): `<work dir>/<name>`, or `<work dir>/<App of Apps>/<name>` for a Child Application (an App of Apps itself has no files). Its Agent makes that folder match Git on every Sync (files not in Git are deleted), so **data must not live there**. Only named volumes and absolute paths keep data:
 
 | In your compose file | Where the data is | Kept across reboots, Syncs and deletes? |
 |---|---|---|
@@ -354,7 +350,7 @@ Each Application has its own folder in the work dir: `<work dir>/<name>`, or `<w
 
 Changes *inside* data folders and volumes never count as drift. Back up volumes and data folders yourself (e.g. restic or borg) — OmegaCD doesn't.
 
-**Folders OmegaCD didn't create are never synced into.** A work dir like `/opt/services` may already hold other folders. A Sync writes into an Application's folder only if it is missing or empty (or holds only empty directories), if OmegaCD's database records that a Sync of that Application wrote there, or if a container OmegaCD created for it (`managed-by=omegacd`) runs from it — containers of other tools don't count. An App of Apps' folder may also hold its children's folders. Anything else fails, naming the folder: rename the Application, pick another work dir, or move the folder away. Older versions marked their folders with a `.omegacd` file instead: a folder marked for the Application is still taken, and the Sync deletes the marker; one marked for another Application is refused.
+**Folders OmegaCD didn't create are never synced into.** A work dir like `/opt/services` may already hold other folders. A Sync writes into an Application's folder only if it is missing or empty (or holds only empty directories), if the Agent recorded that it wrote there for that Application, or if a container OmegaCD created for it (`managed-by=omegacd`) runs from it — containers of other tools don't count. An App of Apps' folder may also hold its children's folders. Anything else fails, naming the folder: rename the Application, pick another work dir, or move the folder away. Older versions marked their folders with a `.omegacd` file instead: a folder marked for the Application is still taken, and the Sync deletes the marker; one marked for another Application is refused.
 
 ## Git access
 
@@ -368,27 +364,24 @@ SSH host keys are always verified against the `known_hosts` file (`OMEGACD_SSH_K
 ssh-keyscan github.com gitlab.com >> known_hosts   # verify the fingerprints against your provider's docs
 ```
 
-## Remote Hosts
+## Hosts
 
-Applications deploy to the built-in `local` Host by default. Add more Docker engines under **Settings → Hosts** and pick one per Application:
+Every Host runs an Agent: the same binary, as `omegacd agent`. It dials out to OmegaCD over one WebSocket — https only, except to its own machine — so nothing connects into your servers; it deploys with the Host's Docker or Podman, decrypts its secrets, reports Health, containers and logs, and keeps its Applications running and self-healing while OmegaCD is down.
 
-- **`ssh://deploy@server[:port]`** — give the Host an SSH private key for a user allowed to use Docker on the server. The server's host key must be in the same `known_hosts` file (`ssh-keyscan server >> known_hosts`).
-- **`tcp://server:2376`** — Docker over TLS; give the Host its CA, client certificate and key (PEM).
+```sh
+omegacd host add web-1                       # prints the command that starts its Agent, with a single-use invite (an hour)
+# on the server, as a user of its container engine (docker group, or rootless Docker or Podman):
+OMEGACD_AGENT_CONTROL_PLANE=https://omegacd.example.com OMEGACD_AGENT_INVITE=omegacd-invite-… omegacd agent
+omegacd host approve web-1 SHA256:…          # after comparing the fingerprint the Agent printed with host list's
+```
 
-Each remote Host gets its own [Host Key](#secrets) when it is added; nothing deploys to a Host without one.
-
-On Sync, the Application's files are copied to its folder in the Host's work dir (default `/var/lib/omegacd`, set per Host; same layout and the same [protection of other folders](#where-your-data-lives) as locally) so bind mounts, configs and secrets resolve there. Files synced by 0.1.0-rc.5 or earlier, in `<work dir>/apps/<name>`, move on their next Sync after the [upgrade](#option-1-docker-compose-recommended). It is on disk, so after the Host reboots its containers come back with their files; decrypted secret files are kept there too (mode 0600) — use disk encryption if that matters to you. Values from env files are stored by Docker in the container configuration in any case. To move an Application to another Host, delete and recreate it.
-
-![Settings → Hosts](assets/screenshots/settings-hosts.png)
+Applications with `host: web-1` then deploy through it; a Sync to it while it's offline waits for it, and its Applications show their last known state. `omegacd agent --help` lists its settings (its work dir, state dir, engine). The machine OmegaCD runs on is a Host like any other: give it an Agent too, and OmegaCD can deploy its own Compose project as an Application — an Agent only refuses the project it runs in itself.
 
 ## Secrets
 
-Commit secrets encrypted with [SOPS](https://github.com/getsops/sops) to the **Host Key** of the Host the Application deploys to. Each Host has its own age key, so a key leaked from one server exposes only that server's secrets:
+Commit secrets encrypted with [SOPS](https://github.com/getsops/sops) to the **Host Key** of the Host the Application deploys to. Each Host's Agent makes its own age key when it enrolls and keeps it in its state dir; only its public half reaches OmegaCD, so OmegaCD can decrypt nothing, and a key leaked from one server exposes only that server's secrets.
 
-- **`local`** uses the **Master Key** — the age key in `OMEGACD_AGE_KEY_FILE` (`age-keygen -y age.key` prints its public key). It also encrypts everything OmegaCD stores, including the other Hosts' keys.
-- **Remote Hosts** get a Host Key generated when they are added; or import one made on the server with `age-keygen`. A remote Host without a Host Key accepts no Syncs.
-
-**Settings → Hosts** shows each Host's public key, and the **Keys** dialog has the ready `.sops.yaml` rule for it (**Copy .sops.yaml for all Hosts** gives one rule per Host). Private keys are never shown or downloadable, in the UI, API or CLI (`omegacd host key show|generate|import --file|remove`). Back up the Master Key together with the data directory: that is all it takes to restore every Host Key.
+**Settings → Hosts** shows each Host's public key, and the **Keys** dialog has the ready `.sops.yaml` rule for it (**Copy .sops.yaml for all Hosts** gives one rule per Host); `omegacd host key show HOST` prints it. Back up each Agent's state dir: it holds the Host Key.
 
 ```yaml
 # .sops.yaml — the paths are up to you
@@ -396,14 +389,14 @@ creation_rules:
   - path_regex: apps/prod/.*\.sops\.
     age: age1...   # Host Key of "prod"
   - path_regex: apps/local/.*\.sops\.
-    age: age1...   # the Master Key
+    age: age1...   # Host Key of "local"
 ```
 
 Decryption uses age keys only: files encrypted solely with PGP or a cloud KMS are not decrypted.
 
-**Rotating a Host Key:** *Generate new key* (or import one) makes it current; the old key becomes *previous* and is still tried when decrypting, so Syncs keep working. Re-encrypt the Host's files with `sops updatekeys` after updating `.sops.yaml`, push, then remove the previous key. A file no key of its Host can decrypt fails the Sync with the keys it is encrypted for and the keys the Host has.
+A file its Host's key can't decrypt fails the Sync, naming the keys it is encrypted for. Rotating a Host Key comes later ([Roadmap](ROADMAP.md)).
 
-Any file whose name contains `.sops.` is decrypted at Sync time, with `.sops.` removed from the name — `app.sops.env` becomes `app.env`, `db-password.sops.txt` becomes `db-password.txt`. The work dir keeps only the decrypted file, which is what the containers read; the encrypted one stays in Git:
+Any file whose name contains `.sops.` is decrypted by the Agent at Sync time, with `.sops.` removed from the name — `app.sops.env` becomes `app.env`, `db-password.sops.txt` becomes `db-password.txt`. The work dir keeps only the decrypted file, which is what the containers read; the encrypted one stays in Git:
 
 ```sh
 sops encrypt --age age1... --input-type dotenv --output-type dotenv app.env > app.sops.env
@@ -422,7 +415,7 @@ secrets:
     file: ./db-password.txt    # decrypted from db-password.sops.txt
 ```
 
-The format is taken from the decrypted file's extension: `.yaml`/`.yml`, `.json`, `.env`/`.dotenv`, `.ini`, anything else binary. Plaintext exists only in the Application's work dir (mode 0600; on the local machine `/run` is a tmpfs on most Linux hosts, on [remote Hosts](#remote-hosts) it is on disk) — never in Git and never in the UI, which shows only the keys of decrypted env files:
+The format is taken from the decrypted file's extension: `.yaml`/`.yml`, `.json`, `.env`/`.dotenv`, `.ini`, anything else binary. Plaintext exists only in the Application's folder on its Host (mode 0600; the Agent's default work dir is under `/run`, a tmpfs on most Linux hosts) — never in Git, never on OmegaCD's side and never in the UI, which shows only the keys of decrypted env files:
 
 ![A decrypted env file in the UI: keys only, every value hidden](assets/screenshots/secret-file.png)
 
@@ -503,12 +496,12 @@ Pass the server and token as environment variables, and let `--wait` fail the jo
 
 ### Moving an existing server to OmegaCD
 
-Stacks you started by hand with `docker compose up` can move into Git without downtime planning. `omegacd import` runs **on your laptop, in your repository's checkout**, and reads the stacks running on a server over your own SSH (keys, agent, `~/.ssh/config`) — nothing is installed there and nothing on the server changes:
+Stacks you started by hand with `docker compose up` can move into Git without downtime planning. `omegacd import` runs **on the server, in a checkout of your repository**, and reads the stacks running there — nothing on the server changes (reading another Host's stacks through its Agent comes later, [Roadmap](ROADMAP.md)):
 
 ```sh
-cd ~/code/server-apps                      # your (possibly brand-new) Git repo
-omegacd import --ssh deploy@vps.example.com --host vps --dry-run   # see what would happen
-omegacd import --ssh deploy@vps.example.com --host vps             # write it
+cd ~/server-apps                           # your (possibly brand-new) Git repo
+omegacd import --host vps --dry-run        # see what would happen; vps: this server's name in OmegaCD
+omegacd import --host vps                  # write it
 ```
 
 ```text
@@ -526,27 +519,24 @@ For each stack it:
 
 - copies the compose files and the **config** they mount (files up to 1 MB, read-only folders up to 1 MB) into `apps/<name>/`;
 - leaves **data** where it is: writable or big folders become absolute paths on the server (`./wp-content` → `/opt/stacks/blog/wp-content`), named volumes stay as they are;
-- **encrypts secrets** with the server's Host Key: env files with password-like keys become `*.sops.env`, Compose secret files and bind-mounted files that hold a key or credential (by name, or by content: private keys, age keys, `password:`/`token=` settings) `*.sops.*` — never as is; one without a file extension is left out with a warning — and passwords written in `environment:` move into an encrypted `.sops.env` (the compose file then says `${WORDPRESS_DB_PASSWORD}`). The key is looked up on your OmegaCD by `--host`, or given with `--recipient age1…`;
+- **encrypts secrets** with the server's Host Key: env files with password-like keys become `*.sops.env`, Compose secret files and bind-mounted files that hold a key or credential (by name, or by content: private keys, age keys, `password:`/`token=` settings) `*.sops.*` — never as is; one without a file extension is left out with a warning — and passwords written in `environment:` move into an encrypted `.sops.env` (the compose file then says `${WORDPRESS_DB_PASSWORD}`). The key is looked up on your OmegaCD by `--host` (the Host's Agent must have enrolled), or given with `--recipient age1…`;
 - adds a definition to `platform/apps.yaml` with `host: vps` and `adopt: true`, Auto-Sync **off**;
 - says what the takeover will do: containers that only use images and volumes keep running; those mounting files from the stack's folder are recreated once.
 
-Then review with `git diff`, commit and push, add the server under **Settings → Hosts** (if it isn't there yet), and create an App of Apps with path `platform`. Check each Application's Diff and Sync it to take its stack over. Without `--ssh`, `import` reads the local Docker engine; name stacks (`omegacd import blog uptime`) to import only those. Stacks already managed by OmegaCD or already defined are skipped, and an existing `apps/<name>` is only overwritten with `--force`.
+Then review with `git diff`, commit and push, and create an App of Apps with path `platform`. Check each Application's Diff and Sync it to take its stack over. Name stacks (`omegacd import blog uptime`) to import only those. Stacks already managed by OmegaCD or already defined are skipped, and an existing `apps/<name>` is only overwritten with `--force`.
 
 ### Hosts and keys
 
 ```sh
-omegacd host list                          # Hosts with status, Docker version and Host Key
-omegacd host test vps                      # can OmegaCD reach its Docker engine?
-omegacd host add web                       # v0.2, in development: a Host with an Agent; prints the command with its invite
+omegacd host list                          # Hosts with their Agents, connection and Host Key
+omegacd host add web                       # a Host; prints the command that starts its Agent, with its invite
 omegacd host approve web SHA256:…          # after comparing the fingerprint the Agent printed with host list's
                                            # then Applications with host: web deploy through its Agent
 omegacd host rotate web                    # the Agent makes a new signing key
 omegacd host allow web 203.0.113.7         # its Agent may connect only from there (CIDRs too; none: anywhere)
 omegacd host unlock web                    # locked by two connections with one key, for a harmless cause
 omegacd host delete web                    # revokes its Agent's key (a key that may be stolen: delete, add again)
-omegacd host key show vps                  # the public key, for .sops.yaml
-omegacd host key generate vps              # a new Host Key; the old one stays as "previous" until removed
-omegacd host key import vps --file key.txt # use a key made elsewhere (- reads stdin)
+omegacd host key show web                  # its Host Key's public half, for .sops.yaml
 omegacd keygen --out age.key               # a new age key, e.g. the Master Key for a fresh install
 ```
 
@@ -556,7 +546,7 @@ omegacd keygen --out age.key               # a new age key, e.g. the Master Key 
 | --- | --- |
 | `login --server URL --token TOKEN`, `logout`, `version` | |
 | `app list`, `app get NAME` | `-o json` for the raw API object |
-| `app create NAME --repo URL [--path P] [--revision R] [--file F]... [--profile P]... [--host H] [--kind apps] [--auto-sync] [--self-heal] [--prune [--prune-volumes]] [--adopt]` | or `app create -f app.yaml` |
+| `app create NAME --repo URL --host H [--path P] [--revision R] [--file F]... [--profile P]... [--kind apps] [--auto-sync] [--self-heal] [--prune [--prune-volumes]] [--adopt]` | or `app create -f app.yaml`; an App of Apps (`--kind apps`) has no Host |
 | `app sync NAME [--prune] [--wait] [--no-health] [--timeout 10m]` | |
 | `app refresh NAME` | re-read Git and the Live State now; an App of Apps refreshes its children too |
 | `app diff NAME` | exit 0: no differences, 1: differences, 2: error |
@@ -564,13 +554,13 @@ omegacd keygen --out age.key               # a new age key, e.g. the Master Key 
 | `app wait NAME [--sync] [--health] [--timeout 10m]` | |
 | `app logs NAME [CONTAINER_OR_SERVICE] [-f] [--tail N]` | |
 | `app export NAME` | Application definition YAML |
-| `app delete NAME [--cascade=false \| --volumes \| --forget] [--yes]` | asks first on a terminal; `--cascade=false` keeps the containers; `--volumes` also deletes the volumes and their data; on a Host with an Agent (v0.2, in development) the Agent deletes, and to an offline Host the delete waits for it; `--forget` removes it from OmegaCD only, for an Application whose Host is gone for good |
-| `import [STACK]... [--ssh user@host --host NAME] [--recipient age1…] [--apps-dir apps] [--definitions platform/apps.yaml] [--repo-url URL] [--dry-run] [--force]` | run in your repository's checkout — see [Moving an existing server](#moving-an-existing-server-to-omegacd) |
-| `host list`, `host test NAME` | |
-| `host add NAME`, `host approve NAME FINGERPRINT` | v0.2, in development: enrolls a Host's Agent with a single-use invite (valid an hour), approved by its key's fingerprint; Applications on it then deploy through the Agent, which decrypts their secrets and reports their Health, containers, resources and logs (a Sync to it while it's offline waits for it; offline, the app shows its last known state and since when the Host is gone). The Agent connects over https only, except to its own machine; `OMEGACD_AGENT_CA_FILE` trusts a private CA |
-| `host allow NAME [CIDR]...` | v0.2, in development: the addresses the Host's Agent may connect from (behind a reverse proxy: set `OMEGACD_TRUSTED_PROXIES`); none: anywhere |
-| `host rotate NAME`, `host unlock NAME`, `host delete NAME` | v0.2, in development: a new signing key for the connected Agent; let a Host locked by two connections with its key connect again; delete a Host, revoking its Agent's key |
-| `host key show HOST`, `host key generate HOST`, `host key import HOST --file PATH`, `host key remove HOST RECIPIENT` | private keys are read from a file or stdin, never from the command line, and never shown |
+| `app delete NAME [--cascade=false \| --volumes \| --forget] [--yes]` | asks first on a terminal; `--cascade=false` keeps the containers; `--volumes` also deletes the volumes and their data; its Host's Agent deletes, and to an offline Host the delete waits for it; `--forget` removes it from OmegaCD only, for an Application whose Host is gone for good |
+| `import --host NAME [STACK]... [--recipient age1…] [--apps-dir apps] [--definitions platform/apps.yaml] [--repo-url URL] [--dry-run] [--force]` | run in your repository's checkout — see [Moving an existing server](#moving-an-existing-server-to-omegacd) |
+| `host list` | |
+| `host add NAME`, `host approve NAME FINGERPRINT` | enrolls a Host's Agent with a single-use invite (valid an hour), approved by its key's fingerprint; Applications on it then deploy through the Agent, which decrypts their secrets and reports their Health, containers, resources and logs (a Sync to it while it's offline waits for it; offline, the app shows its last known state and since when the Host is gone). The Agent connects over https only, except to its own machine; `OMEGACD_AGENT_CA_FILE` trusts a private CA |
+| `host allow NAME [CIDR]...` | the addresses the Host's Agent may connect from (behind a reverse proxy: set `OMEGACD_TRUSTED_PROXIES`); none: anywhere |
+| `host rotate NAME`, `host unlock NAME`, `host delete NAME` | a new signing key for the connected Agent; let a Host locked by two connections with its key connect again; delete a Host, revoking its Agent's key |
+| `host key show HOST` | the public half of its Host Key; the private half never leaves the Host |
 | `keygen [--out FILE]` | a new age key, like `age-keygen`; works offline, never overwrites a file |
 
 Every command talking to a server takes `--server`, `--token` and `-o table|json`; `OMEGACD_SERVER` and `OMEGACD_TOKEN` override the saved login. Colors are used only on a terminal and honour `NO_COLOR`.
@@ -584,11 +574,9 @@ All server settings are environment variables:
 | Variable | Default | |
 | --- | --- | --- |
 | `OMEGACD_ADDR` | `:8080` | Listen address |
-| `OMEGACD_DATA` | `/data` | Database (`omegacd.db`), Git cache, rendered files and keys |
-| `OMEGACD_WORKDIR` | `/run/omegacd` | Where Application files are written on Sync; same path on host and container |
-| `OMEGACD_AGE_KEY_FILE` | `/etc/omegacd/age.key` | age identity: seals stored credentials and decrypts SOPS files. Required |
-| `OMEGACD_SSH_KNOWN_HOSTS` | `/etc/omegacd/known_hosts` | Host keys for Git over SSH and `ssh://` Hosts |
-| `OMEGACD_LOCAL_HOST` | `true` | `false` where no Docker engine runs next to OmegaCD (Kubernetes): the built-in `local` Host is hidden and refused, Applications go to remote Hosts |
+| `OMEGACD_DATA` | `/data` | Database (`omegacd.db`), Git cache and rendered files |
+| `OMEGACD_AGE_KEY_FILE` | `/etc/omegacd/age.key` | age identity, the Master Key: seals the credentials OmegaCD stores. Required |
+| `OMEGACD_SSH_KNOWN_HOSTS` | `/etc/omegacd/known_hosts` | Host keys of Git servers, for Git over SSH |
 | `OMEGACD_POLL_INTERVAL` | `3m` | How often Git is polled (Go duration); `0` turns polling off (webhooks only, see [Webhooks](#webhooks)) |
 | `OMEGACD_ADMIN_PASSWORD` | *(generated)* | Initial `admin` password, used only on first start. If unset, a random one is logged and must be changed on first login |
 | `OMEGACD_WEBHOOK_SECRET` | *(none)* | Shared secret for webhooks |
@@ -618,8 +606,7 @@ directory and run it again on both sides. Keep the Source Server on an internal 
 balancer between the two must pass TLS through untouched (TCP mode: Traefik `HostSNI` TCP router with
 `tls.passthrough`, nginx `stream` with `ssl_preread`, HAProxy `mode tcp`): terminating TLS there would drop the
 client certificate and the Source Server refuses the connection. Repository credentials live in the Source
-Server's data dir (see [Git access](#git-access)); credentials an older version kept in the database move there at
-the first start.
+Server's data dir (see [Git access](#git-access)).
 
 CLI: `OMEGACD_SERVER`, `OMEGACD_TOKEN`, `NO_COLOR`.
 
@@ -637,12 +624,12 @@ CLI: `OMEGACD_SERVER`, `OMEGACD_TOKEN`, `NO_COLOR`.
 ## Security
 
 - **Secrets stay secret.** Passwords, tokens and private keys are write-only in the API and UI; decrypted SOPS files are never shown (env files show keys only).
-- **Credentials are sealed at rest** with the age key (repository, registry and Host credentials in the database).
+- **Credentials are sealed at rest**: registry credentials with the Master Key, repository credentials by the Source Server with its own key. Secrets in Git are decrypted only on their Host, by its Agent.
 - **API tokens** (`ocd_…`) are shown once and stored only as SHA-256 hashes; the admin password is stored as a bcrypt hash.
 - **Sessions** are HttpOnly, SameSite=Lax cookies (Secure behind HTTPS) that expire after 24 h of inactivity. State-changing requests from the browser must carry an `X-Requested-With` header, which cross-site forms cannot send (CSRF protection).
 - **Login throttling** with exponential backoff per client IP. Behind a reverse proxy, set `OMEGACD_TRUSTED_PROXIES` so the real client IP is used.
-- **Host keys** are always verified for SSH (Git and Hosts); there is no "accept unknown host" mode.
-- OmegaCD has full control of the Docker engines it manages — treat access to it like root access to those hosts.
+- **Host keys** are always verified for Git over SSH; there is no "accept unknown host" mode.
+- An Agent has full control of its Host's container engine, and OmegaCD can deploy anything to every Host — treat access to it like root access to those hosts.
 
 Please report vulnerabilities privately, see [SECURITY.md](SECURITY.md).
 
@@ -653,12 +640,12 @@ Requires Go (version in `go.mod`), Node.js 24 and a running Docker engine.
 ```sh
 make build              # web UI, then bin/omegacd (VERSION from git describe)
 make test               # unit tests
-make test-integration   # integration tests against the local Docker engine (incl. docker:dind for remote Hosts)
+make test-integration   # integration tests against the local Docker engine
 make e2e                # end-to-end: throwaway OmegaCDs driven through the CLI (test/e2e; needs age-keygen and sops)
 make stop               # stop a locally running omegacd (only the process listening on :8080)
-make run                # build and run with data in ./data (OMEGACD_WORKDIR=/some/dir to move the work dir)
+make run                # build and run with data in ./data
 make docker             # build the container image
-make up / make down     # run that image with deploy/compose.yaml, same data and work dir as make run
+make up / make down     # run that image with deploy/compose.yaml, same data as make run
 ```
 
 | Path | |
@@ -666,7 +653,8 @@ make up / make down     # run that image with deploy/compose.yaml, same data and
 | `cmd/omegacd` | entry point: server and CLI |
 | `internal/api` | HTTP API, auth, webhooks, metrics |
 | `internal/controller` | reconcile loop, Sync Operations, Sync Policy, App of Apps |
-| `internal/engine` | Docker Compose (as a library), Hosts, diff, health |
+| `internal/agent`, `internal/agents` | the Agent on a Host; the Control Plane's side of its connection |
+| `internal/engine` | Docker Compose (as a library) for the Agent: deploy, diff, health |
 | `internal/source` | Source Server: Git fetch, rendering and validating Desired States, diffs, webhook parsing |
 | `internal/blob`, `internal/workdir` | content-addressed file store; writing an Application's files |
 | `internal/secrets`, `internal/crypto` | SOPS decryption, sealing with age |
@@ -678,7 +666,7 @@ Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). What is te
 
 ## Roadmap
 
-See [ROADMAP.md](ROADMAP.md). **v0.2 is in development on `main`**: a redesign to pull-based Agents (every Host runs an Agent that dials out, secrets are decrypted only on the Host, Git lives in a separate Source Server). Its plan is in [docs/v0.2](docs/v0.2/README.md). This README describes v0.1, which continues on the `release-0.1` branch.
+See [ROADMAP.md](ROADMAP.md). **v0.2 is in development on `main`**: a redesign to pull-based Agents (every Host runs an Agent that dials out, secrets are decrypted only on the Host, Git lives in a separate Source Server). Its plan is in [docs/v0.2](docs/v0.2/README.md). This README describes `main`; v0.1 (push over SSH/TLS) is frozen on the `release-0.1` branch.
 
 ## License
 

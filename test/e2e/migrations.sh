@@ -6,7 +6,7 @@ set -u
 BIN=${OMEGACD_BIN:-$(cd "$(dirname "$0")/../.." && pwd)/bin/omegacd}
 T=$(mktemp -d "${TMPDIR:-/tmp}/omegacd-e2em.XXXX")
 REPO=$T/repo; API=http://127.0.0.1:18080/api; APP=e2e-mig
-mkdir -p "$REPO/mig" "$T/data" "$T/work"
+mkdir -p "$REPO/mig" "$T/data"
 fail=0
 check() { if eval "$2"; then echo "PASS  $1"; else echo "FAIL  $1"; fail=1; fi; }
 gitc() { git -C "$REPO" -c user.name=e2e -c user.email=e2e@local "$@"; }
@@ -38,7 +38,7 @@ EOF
 gitc init -q -b main && gitc add -A && gitc commit -qm init
 
 age-keygen -o "$T/age.key" 2>/dev/null
-OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_WORKDIR=$T/work OMEGACD_AGE_KEY_FILE=$T/age.key \
+OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_AGE_KEY_FILE=$T/age.key \
   OMEGACD_ADMIN_PASSWORD=e2e-password-123 OMEGACD_POLL_INTERVAL=1h "$BIN" > "$T/server.log" 2>&1 &
 SRV=$!
 cleanup() { "$BIN" app delete $APP --volumes --yes >/dev/null 2>&1; kill $SRV ${AGENT:-} 2>/dev/null; wait $SRV ${AGENT:-} 2>/dev/null; rm -rf "$T"; }

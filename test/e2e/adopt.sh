@@ -39,8 +39,8 @@ before_a=$(ids adopt-a); before_b=$(ids adopt-b)
 check "adopt-b serves before the takeover" serves
 
 age-keygen -o "$T/age.key" 2>/dev/null
-mkdir -p "$T/data" "$T/work"
-OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_WORKDIR=$T/work OMEGACD_AGE_KEY_FILE=$T/age.key \
+mkdir -p "$T/data"
+OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_AGE_KEY_FILE=$T/age.key \
   OMEGACD_ADMIN_PASSWORD=e2e-password-123 OMEGACD_POLL_INTERVAL=1h "$BIN" > "$T/server.log" 2>&1 &
 SRV=$!
 cleanup() {

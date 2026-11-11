@@ -7,7 +7,7 @@ BIN=${OMEGACD_BIN:-$(cd "$(dirname "$0")/../.." && pwd)/bin/omegacd}
 T=$(mktemp -d "${TMPDIR:-/tmp}/omegacd-e2ep.XXXX")
 REPO=$T/repo API=http://127.0.0.1:18080/api PARENT=e2e-paths CHILD=e2e-paths-web
 SECRET=$(openssl rand -hex 16) # the webhook secret, made up per run
-mkdir -p "$REPO/apps" "$REPO/web" "$T/data" "$T/src-data" "$T/work"
+mkdir -p "$REPO/apps" "$REPO/web" "$T/data" "$T/src-data"
 fail=0
 check() { if eval "$2"; then echo "PASS  $1"; else echo "FAIL  $1"; fail=1; fi; }
 gitc() { git -C "$REPO" -c user.name=e2e -c user.email=e2e@local "$@"; }
@@ -44,7 +44,7 @@ OMEGACD_SOURCE_ADDR=127.0.0.1:19090 OMEGACD_DATA=$T/src-data OMEGACD_SOURCE_TLS_
 PIDS+=($!)
 for _ in $(seq 50); do curl -s --cacert "$T/tls/ca.pem" https://127.0.0.1:19090/ -o /dev/null; [ $? -ne 7 ] && break; sleep 0.2; done
 control_plane() { # poll interval
-  OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_WORKDIR=$T/work OMEGACD_AGE_KEY_FILE=$T/age.key \
+  OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_AGE_KEY_FILE=$T/age.key \
     OMEGACD_ADMIN_PASSWORD=e2e-password-123 OMEGACD_POLL_INTERVAL=$1 OMEGACD_WEBHOOK_SECRET=$SECRET \
     OMEGACD_SOURCE_SERVER=https://127.0.0.1:19090 OMEGACD_SOURCE_TLS_DIR=$T/tls "$BIN" >> "$T/server.log" 2>&1 &
   SRV=$!
@@ -110,7 +110,7 @@ kill $SRV; wait $SRV 2>/dev/null
 control_plane 2s
 echo "conf v3" > "$REPO/web/conf.txt"; gitc commit -qam v3
 check "a push nobody announces is found by polling" 'deployed $CHILD "conf v3"'
-check "still no clone on the Control Plane's side" '[ ! -d "$T/data/repos" ] && [ -z "$(find "$T/data" "$T/work" -name HEAD -path "*.git*" 2>/dev/null)" ]'
+check "still no clone on the Control Plane's side" '[ ! -d "$T/data/repos" ] && [ -z "$(find "$T/data" -name HEAD -path "*.git*" 2>/dev/null)" ]'
 check "the log is at debug and holds no secret (Q62)" 'grep -q level=DEBUG "$T/source.log" && ! grep -qF -e "$SECRET" -e e2e-password-123 "$T/server.log" "$T/source.log" "$T/agent.log"'
 
 [ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- server log"; tail -20 "$T/server.log"; echo "--- source server log"; tail -10 "$T/source.log"; echo "--- agent log"; tail -10 "$T/agent.log"; }

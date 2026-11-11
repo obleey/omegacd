@@ -6,7 +6,7 @@
 # It asks for its settings; for unattended installs set them instead:
 #   OMEGACD_TARGET    compose | kubernetes
 #   OMEGACD_VERSION   image tag, e.g. 0.1.0 (default latest)
-#   compose:          OMEGACD_DIR (/opt/omegacd), OMEGACD_PORT (8080), OMEGACD_WORKDIR (/run/omegacd)
+#   compose:          OMEGACD_DIR (/opt/omegacd), OMEGACD_PORT (8080)
 #   kubernetes:       OMEGACD_KUBE_CONTEXT (required when unattended), OMEGACD_NAMESPACE (omegacd)
 # Running it again is safe: an existing Master Key (age.key, or the omegacd-keys Secret) is never replaced.
 set -eu
@@ -63,11 +63,7 @@ install_compose() {
 
 	ask OMEGACD_DIR "Install folder (compose.yaml, .env, age.key)" /opt/omegacd
 	ask OMEGACD_PORT "Port for the web UI" 8080
-	say "Work dir: where OmegaCD writes each Application's files. /run/omegacd is RAM (decrypted secret"
-	say "files never touch disk, restored after a reboot); a disk path like /opt/services keeps them."
-	ask OMEGACD_WORKDIR "Work dir" /run/omegacd
-
-	mkdir -p "$OMEGACD_DIR" "$OMEGACD_WORKDIR"
+	mkdir -p "$OMEGACD_DIR"
 	cd "$OMEGACD_DIR"
 	fetch "$RAW/compose.yaml" compose.yaml
 	if [ -s age.key ]; then
@@ -79,7 +75,6 @@ install_compose() {
 	cat >.env <<EOF
 OMEGACD_IMAGE=$IMAGE
 OMEGACD_PORT=$OMEGACD_PORT
-OMEGACD_WORKDIR=$OMEGACD_WORKDIR
 EOF
 	docker compose up -d --pull missing
 
