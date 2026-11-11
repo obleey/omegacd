@@ -67,21 +67,25 @@ Agent's log, updated where they look at the old path (the Control Plane's work d
 with M4-05, which rewrites the README for Hosts without `local`.
 
 ### M4-05 · Delete push and legacy
-**Status:** todo
+**Status:** in progress (feat/m4-05-delete-push)
 **Depends on:** M4-01, M4-02, M4-04
 
 Remove (Q9, Q18, Q104): SSH/TLS Hosts and their settings, the Host `local` and the default Host (every Application
 names its `host:`), the Control Plane's own deploy path and engine, `OMEGACD_LOCAL_HOST`, central decryption
 and stored private Host Keys (the Control Plane keeps Agents' public keys only), the old layouts and their fallbacks,
-`import --ssh`, and with them the image's `openssh-client` (the Dockerfile installs it only for the Docker client's
-`ssh://` Hosts; Git over SSH is go-git) and `OMEGACD_SSH_KNOWN_HOSTS` with its known_hosts handling. A fresh v0.2
-database schema; no migration.
+`import --ssh`, `host key generate|import|remove`, and the image's `openssh-client` (the Dockerfile installs it only
+for the Docker client's `ssh://` Hosts; Git over SSH is go-git). `OMEGACD_SSH_KNOWN_HOSTS` stays, for Git over SSH only
+(Q106). One public Host Key recipient per Host, from its Agent (Q108). A fresh v0.2 database schema; no migration
+(Q105). The UI parts that call removed endpoints go in the same PR, with no new UI (Q110).
+Decided before it: Q105–Q110.
 
 A v0.1 database is refused with a message (export with v0.1's `app export`, then reinstall) and left untouched (Q90).
 
 From M4-04: the check that OmegaCD doesn't Sync its own Compose project (`refuseSelf`, today the Control Plane's)
-moves into the Agent, which refuses only its own project: the Control Plane's is an Application like any other, OmegaCD
-managing itself (Q104). The README walkthrough and its e2e script install and enroll an Agent first.
+moves into the Agent, which refuses only the project containing its own container (Q109): the Control Plane's is an
+Application like any other, OmegaCD managing itself (Q104). The README is edited to be correct and its walkthrough, with
+its e2e script, installs and enrolls an Agent first; the deploy files lose the socket, the work dir and
+`OMEGACD_LOCAL_HOST` (Q110).
 
 **Done when:** none of it is left (grep), all tests pass, the binary is smaller, and a v0.1 database is refused
 without being changed.

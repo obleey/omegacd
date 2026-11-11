@@ -320,3 +320,29 @@ is declared. Their details (syntax, UI, messages) are decided when each is built
   finishes it and reports it on reconnect (M3-06). An Agent refuses only its own Compose project (M4-05).
   Supersedes the built-in Agent of Q9, Q26/Q35, Q74, Q88, Q89, Q100 and Q101, and ADR 0003's consequence. M4-04 keeps
   what every Agent needs (Q102, Q103) and runs the e2e scripts through an enrolled Agent.
+
+## Before M4-05: deleting push (2026-11-11)
+
+- **Q105** A fresh v0.2 database schema, one `CREATE` instead of v0.1's migrations, with its own version marker. Any
+  older database, v0.1 or v0.2 from before M4-05, is refused with Q90's message and left untouched; v0.2 is not
+  released, so there is no one to migrate. The repository credentials the Control Plane kept before M1-06 go with it.
+- **Q106** Git over SSH stays: the Source Server clones with a deploy key saved as a repository credential, verifying
+  the server against `OMEGACD_SSH_KNOWN_HOSTS`, which is now for Git only. HTTPS tokens alone would lose deploy keys
+  (GitHub has no HTTPS equivalent not tied to a person). The image's `openssh-client` goes: it served only `ssh://`
+  Hosts, and go-git needs none. After v0.2 (ROADMAP), as Argo CD does: built-in host keys for the big Git providers,
+  known hosts managed through the CLI and UI, and GitHub App credentials.
+- **Q107** The engine package is the Agent's own: every push trace goes (SSH/TLS Hosts and their fields and settings,
+  the remote file helper, the engine's `host` parameter, the Control Plane's engine path and its `Engine`,
+  `OMEGACD_WORKDIR` and `OMEGACD_LOCAL_HOST`). The Control Plane reaches every Host through its Agent.
+- **Q108** One public Host Key recipient per Host, the one its Agent reported at enrollment, shown with its
+  `.sops.yaml` rule and used by `import`. Stored private Host Keys and `host key generate|import|remove` go (Q9).
+  Rotating an Agent's Host Key, the previous one kept for decryption until files are re-encrypted, is a ticket after
+  v0.2 (ROADMAP).
+- **Q109** An Agent refuses only the Compose project that contains its own container (found as `SelfID` was: the
+  container ID from the hostname); an Agent under systemd refuses nothing. The Control Plane's project is an
+  Application like any other (Q104).
+- **Q110** `local` is an ordinary Host name. M4-05 edits the README to be correct (push, `local` and the Control Plane's
+  Host Keys gone; "Your first Application" installs and enrolls an Agent first), and strips the deploy files of what the
+  server no longer uses (the Docker socket, the work dir, `OMEGACD_LOCAL_HOST`); the full rewrite comes with M6.
+  `import --ssh` goes (Q47); `import` without it stays until M6-05. One PR, deleting the UI parts that call removed
+  endpoints, with no new UI (M5 builds the Add Host flow).
