@@ -37,8 +37,8 @@ type CLI struct {
 	StdoutTTY      bool          // colors, colorized diffs
 	StdinTTY       bool          // confirmation prompts
 	Poll           time.Duration // --wait polling interval
-	// ImportHost connects omegacd import to a Docker host ("" local, else ssh); nil uses importer.Dial.
-	ImportHost func(target string) (importer.Host, error)
+	// ImportHost connects omegacd import to this machine's Docker engine; nil uses importer.Dial.
+	ImportHost func() (importer.Host, error)
 }
 
 // Main runs the CLI with the real process environment and returns the exit code.
@@ -81,7 +81,7 @@ func init() { // init breaks the cycle commands → run funcs → flags → comm
 		"version":       {"version", (*CLI).version},
 		"keygen":        {"keygen [--out FILE]   (a new age key like age-keygen; the public key also goes to stderr)", (*CLI).keygen},
 		"source-certs":  {"source-certs [--out DIR] [--host NAME]...   (mTLS certificates for a standalone Source Server; --host: the names the Control Plane dials it by)", (*CLI).sourceCerts},
-		"import":        {"import [STACK]... [--ssh user@host --host NAME] [--recipient age1…] [--apps-dir apps] [--definitions platform/apps.yaml] [--dry-run] [--force]\n    (run in your repository checkout: writes the Compose stacks running on a Docker host into it as Applications)", (*CLI).importStacks},
+		"import":        {"import --host NAME [STACK]... [--recipient age1…] [--apps-dir apps] [--definitions platform/apps.yaml] [--dry-run] [--force]\n    (run on the Host, in your repository checkout: writes the Compose stacks running on this machine into it as Applications for Host NAME)", (*CLI).importStacks},
 		"app list":      {"app list", (*CLI).appList},
 		"app get":       {"app get NAME", (*CLI).appGet},
 		"app create":    {"app create NAME --repo URL [--path P] [--revision R] [--file F]... [--profile P]... [--host H] [--kind apps] [--auto-sync] [--self-heal] [--prune [--prune-volumes]] [--adopt]\n  app create -f app.yaml", (*CLI).appCreate},

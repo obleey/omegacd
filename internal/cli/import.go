@@ -21,7 +21,6 @@ func (l *listFlag) Set(v string) error { *l = append(*l, v); return nil }
 func (c *CLI) importStacks(ctx context.Context, args []string) error {
 	var o opts
 	fs := c.flags("import", &o)
-	sshTarget := fs.String("ssh", "", "import from the Docker host at user@host (or ssh://user@host:port) over your ssh; default: the local Docker")
 	hostName := fs.String("host", "", "the Host's name in OmegaCD, whose Agent runs these stacks (required)")
 	var recipients listFlag
 	fs.Var(&recipients, "recipient", "age public key to encrypt secrets for (the Host Key from Settings → Hosts); repeatable; default: looked up on your OmegaCD")
@@ -54,9 +53,9 @@ func (c *CLI) importStacks(ctx context.Context, args []string) error {
 
 	dial := c.ImportHost
 	if dial == nil {
-		dial = func(target string) (importer.Host, error) { return importer.Dial(target) }
+		dial = func() (importer.Host, error) { return importer.Dial() }
 	}
-	h, err := dial(*sshTarget)
+	h, err := dial()
 	if err != nil {
 		return fmt.Errorf("connect to Docker: %w", err)
 	}

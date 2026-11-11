@@ -5,18 +5,13 @@ package importer
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
-	"encoding/pem"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"filippo.io/age"
-	"golang.org/x/crypto/ssh"
 
 	"github.com/obleey/omegacd/internal/secrets"
 )
@@ -118,7 +113,7 @@ func TestImportLocal(t *testing.T) {
 		t.Fatalf("compose up: %v: %s", err, out)
 	}
 	t.Cleanup(func() { docker("compose", "-p", name, "down", "-v") })
-	h, err := Dial("")
+	h, err := Dial()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,68 +125,6 @@ func TestImportLocal(t *testing.T) {
 		real = dir
 	}
 	checkImported(t, repo, name, real, report, id)
-}
-
-// TestImportOverSSH imports a stack running inside a Docker host reachable only over ssh, as from a laptop.
-func TestImportOverSSH(t *testing.T) {
-	id, err := docker("run", "-d", "--privileged", "-e", "DOCKER_TLS_CERTDIR=", "-p", "127.0.0.1::22", "docker:29-dind")
-	if err != nil {
-		skipUnlessRequired(t, "cannot start docker:dind: %v: %s", err, id)
-	}
-	id = id[strings.LastIndex(id, "\n")+1:]
-	t.Cleanup(func() { docker("rm", "-f", "-v", id) })
-	for deadline := time.Now().Add(60 * time.Second); ; time.Sleep(500 * time.Millisecond) {
-		if _, err := docker("exec", id, "docker", "version"); err == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			skipUnlessRequired(t, "dind did not come up")
-		}
-	}
-	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
-	block, _ := ssh.MarshalPrivateKey(priv, "")
-	sshPub, _ := ssh.NewPublicKey(pub)
-	setup := `set -e
-apk add --no-cache --upgrade openssh-server openssh-client >/dev/null # --upgrade: the image ships an older openssh-client
-ln -sf /usr/local/bin/docker /usr/bin/docker
-ssh-keygen -A >/dev/null
-mkdir -p /root/.ssh && chmod 700 /root/.ssh
-echo "$1" > /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys
-sed -i 's/^root:[!*]*:/root::/' /etc/shadow
-/usr/sbin/sshd
-cat /etc/ssh/ssh_host_ed25519_key.pub`
-	hostKey, err := docker("exec", id, "sh", "-c", setup, "sh", string(ssh.MarshalAuthorizedKey(sshPub)))
-	if err != nil {
-		t.Fatalf("ssh setup in dind failed: %v: %s", err, hostKey)
-	}
-	portOut, _ := docker("port", id, "22")
-	port := portOut[strings.LastIndex(portOut, ":")+1:]
-	tmp := t.TempDir()
-	keyFile, known := filepath.Join(tmp, "id"), filepath.Join(tmp, "known_hosts")
-	os.WriteFile(keyFile, pem.EncodeToMemory(block), 0o600)
-	os.WriteFile(known, []byte("[127.0.0.1]:"+port+" "+hostKey[strings.LastIndex(hostKey, "ssh-ed25519"):]+"\n"), 0o600)
-
-	// the stack lives on the remote host only: write it there and start it with plain docker compose
-	local := t.TempDir()
-	writeStack(t, local)
-	if out, err := docker("cp", local+"/.", id+":/srv/shop"); err != nil {
-		t.Fatalf("copy stack: %v: %s", err, out)
-	}
-	if out, err := docker("exec", "-w", "/srv/shop", id, "docker", "compose", "-p", "shop", "up", "-d", "--quiet-pull"); err != nil {
-		t.Fatalf("compose up in dind: %v: %s", err, out)
-	}
-
-	h, err := Dial("root@127.0.0.1:"+port, "-i", keyFile, "-o", "IdentitiesOnly=yes", "-o", "UserKnownHostsFile="+known, "-o", "StrictHostKeyChecking=yes")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer h.Close()
-	ageID, _ := age.GenerateX25519Identity()
-	repo, report := importInto(t, h, "shop", "vps", ageID)
-	checkImported(t, repo, "shop", "/srv/shop", report, ageID)
-	if b, _ := os.ReadFile(filepath.Join(repo, "platform", "apps.yaml")); !strings.Contains(string(b), "host: vps") || !strings.Contains(string(b), "adopt: true") {
-		t.Errorf("definition:\n%s", b)
-	}
 }
 
 // skipUnlessRequired skips a test whose environment is missing (a tool, a dind that won't start), except in the whole

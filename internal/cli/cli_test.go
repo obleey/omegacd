@@ -448,13 +448,10 @@ func TestImport(t *testing.T) {
 		{Host: domain.Host{Name: "vps", AgeRecipient: id.Recipient().String()}},
 	}})
 	repo := gitRepo(t)
-	var dialed string
-	withHost := func(c *CLI) {
-		c.ImportHost = func(target string) (importer.Host, error) { dialed = target; return importHost{}, nil }
-	}
-	r := runWith(t, srv, nil, withHost, "import", "--ssh", "root@vps.example.com", "--host", "vps")
-	if r.code != 0 || dialed != "root@vps.example.com" {
-		t.Fatalf("%+v dialed %q", r, dialed)
+	withHost := func(c *CLI) { c.ImportHost = func() (importer.Host, error) { return importHost{}, nil } }
+	r := runWith(t, srv, nil, withHost, "import", "--host", "vps")
+	if r.code != 0 {
+		t.Fatalf("%+v", r)
 	}
 	enc, err := os.ReadFile(filepath.Join(repo, "apps/blog/app.sops.env"))
 	if err != nil || bytes.Contains(enc, []byte("s3cret")) {
@@ -478,7 +475,7 @@ func TestImport(t *testing.T) {
 
 func TestImportRecipientFlagAndErrors(t *testing.T) {
 	id, _ := age.GenerateX25519Identity()
-	withHost := func(c *CLI) { c.ImportHost = func(string) (importer.Host, error) { return importHost{}, nil } }
+	withHost := func(c *CLI) { c.ImportHost = func() (importer.Host, error) { return importHost{}, nil } }
 	repo := gitRepo(t)
 	// --recipient: no server needed
 	if r := runWith(t, nil, nil, withHost, "import", "--host", "edge", "--recipient", id.Recipient().String(), "--dry-run"); r.code != 0 || !strings.Contains(r.stdout, "blog would go to apps/blog") {
@@ -492,7 +489,7 @@ func TestImportRecipientFlagAndErrors(t *testing.T) {
 		srv  bool
 		want string
 	}{
-		{[]string{"import", "--ssh", "root@vps"}, false, "import needs --host NAME"},
+		{[]string{"import", "--host", "vps", "--ssh", "root@vps"}, false, "-ssh"},   // no SSH path (Q47)
 		{[]string{"import"}, false, "import needs --host NAME"},                     // no default Host (Q104)
 		{[]string{"import", "--host", "edge"}, false, "pass --recipient age1"},      // secrets, not logged in
 		{[]string{"import", "--host", "nope"}, true, "Host nope is not in OmegaCD"}, // unknown Host on the server

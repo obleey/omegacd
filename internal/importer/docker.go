@@ -9,13 +9,11 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"net/http"
 	"path"
 	"slices"
 	"strconv"
 	"strings"
 
-	"github.com/docker/cli/cli/connhelper"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 )
@@ -28,29 +26,13 @@ const (
 	helperImage  = "busybox:1.38" // reads files on the host from a short-lived container, like the engine writes them
 )
 
-// DockerHost is the Docker engine at target: "" for the local one (DOCKER_HOST, the socket), or user@host /
-// ssh://user@host, reached with your own ssh (keys, agent, ~/.ssh/config) — nothing is installed on the host.
+// DockerHost is the Docker engine of the machine import runs on (DOCKER_HOST, the socket). There is no SSH path (Q47):
+// M6-05 reads another Host's stacks through its Agent.
 type DockerHost struct{ c client.APIClient }
 
-// Dial connects to target; sshFlags are extra ssh options (tests use them for a key and known_hosts).
-func Dial(target string, sshFlags ...string) (*DockerHost, error) {
-	if target == "" {
-		c, err := client.New(client.FromEnv)
-		return &DockerHost{c}, err
-	}
-	if !strings.Contains(target, "://") {
-		target = "ssh://" + target
-	}
-	if !strings.HasPrefix(target, "ssh://") {
-		return nil, fmt.Errorf("--ssh %s: give user@host or ssh://user@host[:port]", target)
-	}
-	helper, err := connhelper.GetConnectionHelperWithSSHOpts(target, append([]string{"-o", "BatchMode=yes"}, sshFlags...))
-	if err != nil {
-		return nil, err
-	}
-	c, err := client.New(
-		client.WithHTTPClient(&http.Client{Transport: &http.Transport{DialContext: helper.Dialer}}),
-		client.WithHost(helper.Host), client.WithDialContext(helper.Dialer))
+// Dial connects to the engine the way the docker CLI does.
+func Dial() (*DockerHost, error) {
+	c, err := client.New(client.FromEnv)
 	return &DockerHost{c}, err
 }
 
