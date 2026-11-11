@@ -46,7 +46,7 @@
 			<dd class="mono">{a.hosts?.join(', ') || '—'}</dd>
 		{:else}
 			<dt><Icon name="server" size={13} />Host</dt>
-			<dd class="mono">{a.host || 'local'}</dd>
+			<dd class="mono">{a.host}</dd>
 		{/if}
 		<dt><Icon name="folder" size={13} />Repository</dt>
 		<dd class="mono trunc" title="{a.repoURL} {a.path}">

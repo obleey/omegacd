@@ -229,7 +229,7 @@
 								<article class="card pending">
 									<header><Icon name="app" size={18} /><h3>{p.name}</h3><span class="tag">pending</span></header>
 									<div class="status"><Badge status="OutOfSync" label="Sync Status" /><Badge status="Missing" label="Health Status" /></div>
-									<p class="muted small"><span class="mono">{p.host || 'local'}</span> · Sync {g.a.name} to create</p>
+									<p class="muted small"><span class="mono">{p.host}</span> · Sync {g.a.name} to create</p>
 								</article>
 							{/each}
 						{/if}
@@ -263,7 +263,7 @@
 								<div class="namecell"><span class="muted" aria-hidden="true">↳</span><span class="name">{p.name}</span><span class="tag">pending</span></div>
 								<div class="muted small">Sync {a.name} to create</div>
 							</td>
-							<td class="mono small">{p.host || 'local'}</td>
+							<td class="mono small">{p.host}</td>
 							<td></td>
 							<td><Badge status="OutOfSync" label="Sync Status" /></td>
 							<td><Badge status="Missing" label="Health Status" /></td>
@@ -291,7 +291,7 @@
 									<GitLink href={gitWeb(a.repoURL)?.repo}>{a.repoURL.replace(/^https?:\/\//, '')}</GitLink>{a.path && a.path !== '.' ? ` · ${a.path}` : ''}
 								</div>
 							</td>
-							<td class="mono small">{a.kind === 'apps' ? a.hosts?.join(', ') || '—' : a.host || 'local'}</td>
+							<td class="mono small">{a.kind === 'apps' ? a.hosts?.join(', ') || '—' : a.host}</td>
 							<td class="mono small">
 								{a.targetRevision}
 								<div class="muted"><GitLink href={a.targetSHA && gitWeb(a.repoURL)?.commit(a.targetSHA)}>{short(a.targetSHA)}</GitLink></div>

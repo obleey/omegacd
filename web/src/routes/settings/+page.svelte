@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api, ago, enc, errMsg, get, type APIToken, type HostKey, type HostStatus, type HostView, type RegistryCredential, type RepoCredential } from '#lib/api.ts';
+	import { api, ago, enc, errMsg, get, type APIToken, type HostKey, type HostView, type RegistryCredential, type RepoCredential } from '#lib/api.ts';
 	import Badge from '#lib/Badge.svelte';
 	import Dialog from '#lib/Dialog.svelte';
 	import { shortKey, sopsYaml } from '#lib/hostkeys.ts';
@@ -18,10 +18,6 @@
 	const blankReg = () => ({ id: 0, registry: '', username: '', password: '' });
 	let repoForm = $state(blankRepo());
 	let regForm = $state(blankReg());
-	// Host form: edit = false creates; secret fields are write-only like credentials.
-	const blankHost = () => ({ edit: false, name: '', url: '', workDir: '', sshPrivateKey: '', tlsCA: '', tlsCert: '', tlsKey: '', hasSSHKey: false, hasTLS: false });
-	let hostForm = $state(blankHost());
-	let testing = $state<Record<string, boolean>>({});
 	let tokenName = $state('');
 	let newToken = $state('');
 	let copied = $state(false);
@@ -63,26 +59,6 @@
 		e.preventDefault();
 		if (await run(() => save('registry-credentials', regForm))) regForm = blankReg();
 	}
-	async function saveHost(e: SubmitEvent) {
-		e.preventDefault();
-		const { edit, hasSSHKey, hasTLS, ...body } = hostForm;
-		const ok = await run(() =>
-			edit ? api('PUT', `/settings/hosts/${enc(body.name)}`, body) : api('POST', '/settings/hosts', body)
-		);
-		if (ok) hostForm = blankHost();
-	}
-	async function testHost(name: string) {
-		error = '';
-		testing[name] = true;
-		try {
-			const st = await api<HostStatus>('POST', `/settings/hosts/${enc(name)}/test`);
-			hosts = hosts.map((h) => (h.name === name ? { ...h, status: st } : h));
-		} catch (e) {
-			toastError(e, `Testing Host ${name} failed`);
-		} finally {
-			testing[name] = false;
-		}
-	}
 	function delHost(name: string) {
 		if (confirm(`Delete Host “${name}”?`)) run(() => api('DELETE', `/settings/hosts/${enc(name)}`));
 	}
@@ -111,14 +87,12 @@
 		}
 	}
 
-	// Host Keys dialog. Only public keys ever reach the browser; an imported private key is cleared once sent.
+	// Host Keys dialog: a Host's Host Key is born on its Agent; only its public half reaches the Control Plane (Q108).
 	let keysOpen = $state(false);
 	let keysHost = $state('');
 	let keys = $state<HostKey[] | null>(null);
-	let importKey = $state('');
 	let current = $derived(keys?.find((k) => k.current));
-	let previous = $derived(keys?.filter((k) => !k.current) ?? []);
-	let allSops = $derived(sopsYaml(hosts.map((h) => ({ name: h.name, recipient: h.keyRecipient }))));
+	let allSops = $derived(sopsYaml(hosts.map((h) => ({ name: h.name, recipient: h.ageRecipient ?? '' }))));
 	const keysPath = () => `/settings/hosts/${enc(keysHost)}/keys`;
 
 	async function loadKeys() {
@@ -131,26 +105,8 @@
 	function openKeys(name: string) {
 		keysHost = name;
 		keys = null;
-		importKey = '';
 		keysOpen = true;
 		loadKeys();
-	}
-	async function keyAction(fn: () => Promise<unknown>) {
-		if (await run(fn)) await loadKeys();
-	}
-	function generateKey() {
-		if (confirm(`Generate a new Host Key for “${keysHost}”?\n\nThe current key becomes previous; re-encrypt your files with sops updatekeys, then remove it.`))
-			keyAction(() => api('POST', `${keysPath()}/generate`));
-	}
-	function importHostKey(e: SubmitEvent) {
-		e.preventDefault();
-		const privateKey = importKey;
-		importKey = '';
-		keyAction(() => api('POST', `${keysPath()}/import`, { privateKey }));
-	}
-	function removeKey(recipient: string) {
-		if (confirm(`Remove the previous key ${shortKey(recipient)} of “${keysHost}”?\n\nFiles still encrypted only for it can no longer be decrypted.`))
-			keyAction(() => api('DELETE', `${keysPath()}/${enc(recipient)}`));
 	}
 </script>
 
@@ -162,102 +118,52 @@
 
 <section class="card">
 	<h2><span class="hicon"><Icon name="server" size={17} /></span>Hosts</h2>
-	<p class="muted small">Docker engines Applications deploy to. Secrets are stored encrypted and never shown.
-		Each Host has its own Host Key: OmegaCD decrypts the Encrypted Secrets of the Host's Applications with it, so encrypt them for that key in <code>.sops.yaml</code>. Private keys are never shown.</p>
+	<p class="muted small">Machines Applications deploy to, each through its Agent. Add one with <code>omegacd host add NAME</code>: it prints
+		the command that enrolls its Agent. Each Host has its own Host Key, born on its Agent, which decrypts the Encrypted Secrets of
+		the Host's Applications: encrypt them for its public key in <code>.sops.yaml</code>.</p>
 	<div class="row tools"><button onclick={() => copyText(allSops, '.sops.yaml')}>Copy .sops.yaml for all Hosts</button></div>
 	<div class="scroll-x"><table>
-		<thead><tr><th>Name</th><th>URL</th><th>Work dir</th><th>Connection</th><th>Host Key</th><th>Applications</th><th><span class="sr-only">Actions</span></th></tr></thead>
+		<thead><tr><th>Name</th><th>Agent</th><th>Connection</th><th>Host Key</th><th>Applications</th><th><span class="sr-only">Actions</span></th></tr></thead>
 		<tbody>
 			{#each hosts as h (h.name)}
-				{@const local = h.name === 'local'}
 				<tr>
 					<td>{h.name}</td>
-					<td class="mono">{local ? 'local Docker socket' : h.url}</td>
-					<td class="mono small">{h.workDir || '—'}</td>
-					<td>
-						<Badge status={h.status.connected ? 'Connected' : 'Disconnected'} label="Connection" />
-						<div class="muted small">{h.status.connected ? `Docker ${h.status.serverVersion ?? ''}` : h.status.error}</div>
+					<td class="small">
+						{#if !h.fingerprint}invited{:else if h.locked?.length}locked: two connections{:else if h.approved}approved{:else}to approve{/if}
+						{#if h.agent}<div class="muted small">Agent {h.agent.version}</div>{/if}
 					</td>
 					<td>
-						{#if h.keyRecipient}
+						<Badge status={h.status.connected ? 'Connected' : 'Disconnected'} label="Connection" />
+						<div class="muted small">{h.status.connected ? `Engine ${h.status.serverVersion ?? ''}` : h.status.error}</div>
+					</td>
+					<td>
+						{#if h.ageRecipient}
 							<span class="keycell">
-								<code title={h.keyRecipient}>{shortKey(h.keyRecipient)}</code>
-								<button class="ghost sm" onclick={() => copyText(h.keyRecipient, `Public key of ${h.name}`)} aria-label="Copy the public key of {h.name}">Copy</button>
+								<code title={h.ageRecipient}>{shortKey(h.ageRecipient)}</code>
+								<button class="ghost sm" onclick={() => copyText(h.ageRecipient ?? '', `Public key of ${h.name}`)} aria-label="Copy the public key of {h.name}">Copy</button>
 							</span>
-							{#if local}<div class="muted small">Master Key</div>{/if}
 						{:else}
-							<Badge status="No Host Key" text="No Host Key — Syncs fail" />
+							<span class="muted small">when its Agent enrolls</span>
 						{/if}
 					</td>
 					<td>{h.apps.join(', ') || '—'}</td>
 					<td class="right">
-						<button onclick={() => testHost(h.name)} disabled={testing[h.name]}>{testing[h.name] ? 'Testing…' : 'Test'}</button>
 						<button onclick={() => openKeys(h.name)} aria-label="Keys of {h.name}">Keys</button>
-						{#if local}
-							<span class="muted small" title="The local work dir must match how OmegaCD was started (and, in Docker, its volume mount), so it is set at startup, not here.">set at startup (<code>OMEGACD_WORKDIR</code>)</span>
-						{:else}
-							<button onclick={() => (hostForm = { ...blankHost(), edit: true, name: h.name, url: h.url, workDir: h.workDir, hasSSHKey: h.hasSSHKey, hasTLS: h.hasTLS })}>Edit</button>
-							<span title={h.apps.length ? 'Used by Applications; delete or move them first' : undefined}>
-								<button class="danger" onclick={() => delHost(h.name)} disabled={h.apps.length > 0}>Delete</button>
-							</span>
-						{/if}
+						<span title={h.apps.length ? 'Used by Applications; delete or move them first' : undefined}>
+							<button class="danger" onclick={() => delHost(h.name)} disabled={h.apps.length > 0}>Delete</button>
+						</span>
 					</td>
 				</tr>
 			{/each}
 		</tbody>
 	</table></div>
-	<form onsubmit={saveHost}>
-		<h3>{hostForm.edit ? `Edit Host “${hostForm.name}”` : 'Add Host'}</h3>
-		<div class="grid">
-			<div class="field">
-				<label for="h-name">Name</label>
-				<input id="h-name" bind:value={hostForm.name} required disabled={hostForm.edit} pattern="[a-z0-9][a-z0-9_-]*" autocomplete="off" />
-			</div>
-			<div class="field">
-				<label for="h-url">URL</label>
-				<input id="h-url" bind:value={hostForm.url} required placeholder="ssh://deploy@server or tcp://server:2376" autocomplete="off" />
-			</div>
-			<div class="field">
-				<label for="h-dir">Work dir</label>
-				<input id="h-dir" bind:value={hostForm.workDir} placeholder="/var/lib/omegacd" autocomplete="off" />
-				<span class="hint">Application files are copied here on the host. Keep it on disk (default) so they survive a reboot.</span>
-			</div>
-		</div>
-		<p class="muted small">ssh:// hosts need their key in OmegaCD's known_hosts file.</p>
-		<div class="field">
-			<label for="h-ssh">SSH private key <span class="muted">({hostForm.hasSSHKey ? 'set' : 'not set'})</span></label>
-			<textarea id="h-ssh" bind:value={hostForm.sshPrivateKey} rows="3" placeholder={hostForm.hasSSHKey ? 'unchanged' : '-----BEGIN OPENSSH PRIVATE KEY-----'}></textarea>
-		</div>
-		<p class="muted small">TLS client certificate for tcp:// hosts: {hostForm.hasTLS ? 'set' : 'not set'}</p>
-		<div class="grid">
-			<div class="field">
-				<label for="h-ca">TLS CA</label>
-				<textarea id="h-ca" bind:value={hostForm.tlsCA} rows="3" placeholder={hostForm.edit ? 'unchanged' : '-----BEGIN CERTIFICATE-----'}></textarea>
-			</div>
-			<div class="field">
-				<label for="h-cert">TLS cert</label>
-				<textarea id="h-cert" bind:value={hostForm.tlsCert} rows="3" placeholder={hostForm.hasTLS ? 'unchanged' : '-----BEGIN CERTIFICATE-----'}></textarea>
-			</div>
-			<div class="field">
-				<label for="h-key">TLS key</label>
-				<textarea id="h-key" bind:value={hostForm.tlsKey} rows="3" placeholder={hostForm.hasTLS ? 'unchanged' : '-----BEGIN PRIVATE KEY-----'}></textarea>
-			</div>
-		</div>
-		<div class="row">
-			<button class="primary" type="submit">{hostForm.edit ? 'Save' : 'Add'}</button>
-			{#if hostForm.edit}<button type="button" onclick={() => (hostForm = blankHost())}>Cancel</button>{/if}
-		</div>
-	</form>
 </section>
 
-<Dialog bind:open={keysOpen} title="Host Keys of {keysHost}" wide>
-	{#if keysHost === 'local'}
-		<p class="muted small">The local Host uses the Master Key (<code>OMEGACD_AGE_KEY_FILE</code>), which also seals OmegaCD's stored secrets. It is set at startup and can't be changed here.</p>
-	{/if}
+<Dialog bind:open={keysOpen} title="Host Key of {keysHost}" wide>
 	{#if keys === null}
 		<p class="muted small" role="status">Loading…</p>
 	{:else if current}
-		<h3 class="dh">Current public key</h3>
+		<h3 class="dh">Public key</h3>
 		<div class="row keyrow">
 			<code class="tok">{current.recipient}</code>
 			<button onclick={() => copyText(current!.recipient, 'Public key')}>Copy</button>
@@ -266,33 +172,7 @@
 		<pre class="tok">{sopsYaml([{ name: keysHost, recipient: current.recipient }])}</pre>
 		<div class="row"><button onclick={() => copyText(sopsYaml([{ name: keysHost, recipient: current!.recipient }]), '.sops.yaml rule')}>Copy rule</button></div>
 	{:else}
-		<p><Badge status="No Host Key" text="No Host Key — Syncs fail" /></p>
-		<p class="muted small">Nothing deploys to this Host until it has a Host Key. Generate one, or import a key generated on the server.</p>
-	{/if}
-	{#if previous.length}
-		<h3 class="dh">Previous keys</h3>
-		<p class="muted small">Still tried when decrypting, so Syncs keep working while you re-encrypt with <code>sops updatekeys</code>. Remove a key once no file needs it.</p>
-		<ul class="prev">
-			{#each previous as k (k.recipient)}
-				<li class="row">
-					<code class="tok">{k.recipient}</code>
-					{#if k.createdAt}<span class="muted small">{ago(k.createdAt)}</span>{/if}
-					<button class="danger" onclick={() => removeKey(k.recipient)} aria-label="Remove previous key {shortKey(k.recipient)}">Remove</button>
-				</li>
-			{/each}
-		</ul>
-	{/if}
-	{#if keysHost !== 'local'}
-		<h3 class="dh">Rotate</h3>
-		<div class="row"><button onclick={generateKey}>Generate new key</button></div>
-		<form class="import" onsubmit={importHostKey}>
-			<div class="field">
-				<label for="hk-import">Import key</label>
-				<textarea id="hk-import" bind:value={importKey} rows="3" required autocomplete="off" spellcheck="false" placeholder="AGE-SECRET-KEY-1…"></textarea>
-				<span class="hint">An age private key, e.g. made on the server with <code>age-keygen</code>. It becomes the current key, is stored encrypted and is never shown again.</span>
-			</div>
-			<button type="submit">Import key</button>
-		</form>
+		<p class="muted small">No Host Key yet: the Host's Agent makes one when it enrolls. Its private half never leaves the Host.</p>
 	{/if}
 	{#snippet actions()}
 		<button onclick={() => (keysOpen = false)}>Close</button>
@@ -449,7 +329,4 @@
 	button.sm { padding: 0.1rem 0.45rem; font-size: 0.78rem; }
 	.dh { margin: 1rem 0 0.4rem; font-size: 0.95rem; }
 	.keyrow { flex-wrap: nowrap; }
-	.prev { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.4rem; }
-	.prev li { flex-wrap: nowrap; }
-	.import { margin-top: 0.8rem; }
 </style>
