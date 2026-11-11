@@ -111,10 +111,6 @@ func run(log *slog.Logger) error {
 		src = s
 	}
 
-	if err := moveRepoCredentials(ctx, st, src); err != nil {
-		return err
-	}
-
 	hub := agents.New(st, log.With("component", "agents"))
 	hub.Blob = src.Blob // the files as rendered, secrets still encrypted: only the Agent decrypts (Q19)
 	ctl := controller.New(controller.Config{
@@ -163,27 +159,6 @@ func run(log *slog.Logger) error {
 	log.Info("omegacd listening", "addr", addr, "data", dataDir, "poll", poll)
 	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return err
-	}
-	return nil
-}
-
-// moveRepoCredentials hands Repository credentials an older version stored in the Control Plane's database to the
-// Source Server, which owns them now (Q40), and deletes them here: one at a time, each deleted only once saved.
-func moveRepoCredentials(ctx context.Context, st *store.Store, src domain.Source) error {
-	cs, err := st.ListRepoCredentials(ctx)
-	if err != nil {
-		return err
-	}
-	for _, c := range cs {
-		id := c.ID
-		c.ID = 0
-		// already there: a move that stopped before deleting here; the Source Server's copy stays
-		if _, err := src.SaveCredential(ctx, c); err != nil && !errors.Is(err, domain.ErrAlreadyExists) {
-			return fmt.Errorf("move repository credential %s to the source server: %w", c.URLPrefix, err)
-		}
-		if err := st.DeleteRepoCredential(ctx, id); err != nil {
-			return err
-		}
 	}
 	return nil
 }

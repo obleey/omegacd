@@ -1,8 +1,11 @@
 package store
 
 import (
+	"bytes"
 	"context"
+	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -55,6 +58,43 @@ func TestReopenKeepsSchema(t *testing.T) {
 	defer s2.Close()
 	_, err = s2.GetApp(ctx, "a")
 	must(t, err)
+}
+
+// Q105: a new database starts at v0.2's schema, past every version v0.1 counted to.
+func TestNewDatabaseIsV02(t *testing.T) {
+	s, _ := open(t)
+	var v int
+	must(t, s.db.QueryRow(`PRAGMA user_version`).Scan(&v))
+	if v != schemaBase+len(migrations) {
+		t.Fatalf("user_version %d", v)
+	}
+}
+
+// Q90, Q105: a v0.1 database (or v0.2's before its fresh schema) is refused with what to do, and left as it was:
+// not a byte changed, no journal files next to it.
+func TestOldDatabaseIsRefusedUntouched(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "omegacd.db")
+	old, err := sql.Open("sqlite", "file:"+path)
+	must(t, err)
+	_, err = old.Exec(`CREATE TABLE apps (name TEXT PRIMARY KEY); INSERT INTO apps VALUES ('web'); PRAGMA user_version = 16`)
+	must(t, err)
+	must(t, old.Close())
+	before, err := os.ReadFile(path)
+	must(t, err)
+
+	id, _ := age.GenerateX25519Identity()
+	_, err = Open(path, crypto.NewSealer(id))
+	wantErr(t, err, ErrOldDatabase)
+	if !strings.Contains(err.Error(), "user_version 16") || !strings.Contains(err.Error(), "omegacd app export") {
+		t.Fatalf("message: %v", err)
+	}
+	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
+		t.Fatal("the old database changed")
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+		t.Fatalf("files next to it: %v", entries)
+	}
 }
 
 func TestApps(t *testing.T) {
@@ -151,42 +191,6 @@ func TestOps(t *testing.T) {
 	if len(ops) != 0 {
 		t.Fatalf("ops not deleted with app: %d", len(ops))
 	}
-}
-
-func TestRepoCredentials(t *testing.T) {
-	s, _ := open(t)
-	id, err := s.SaveRepoCredential(ctx, domain.RepoCredential{URLPrefix: "https://git.example.com/", Username: "u", Password: secretPW, SSHPrivateKey: "key"})
-	must(t, err)
-	_, err = s.SaveRepoCredential(ctx, domain.RepoCredential{URLPrefix: "https://git.example.com/"})
-	wantErr(t, err, domain.ErrAlreadyExists)
-
-	var raw string
-	must(t, s.db.QueryRow(`SELECT password FROM repo_credentials WHERE id = ?`, id).Scan(&raw))
-	if raw == "" || strings.Contains(raw, secretPW) {
-		t.Fatalf("password not sealed: %q", raw)
-	}
-
-	// empty secrets keep old values
-	_, err = s.SaveRepoCredential(ctx, domain.RepoCredential{ID: id, URLPrefix: "https://git.example.com/x", Username: "u2"})
-	must(t, err)
-	creds, err := s.ListRepoCredentials(ctx)
-	must(t, err)
-	want := domain.RepoCredential{ID: id, URLPrefix: "https://git.example.com/x", Username: "u2", Password: secretPW, SSHPrivateKey: "key", HasPassword: true, HasSSHKey: true}
-	if len(creds) != 1 || creds[0] != want {
-		t.Fatalf("got %+v", creds)
-	}
-
-	_, err = s.SaveRepoCredential(ctx, domain.RepoCredential{ID: id, URLPrefix: "p", Password: "new"})
-	must(t, err)
-	creds, _ = s.ListRepoCredentials(ctx)
-	if creds[0].Password != "new" || creds[0].SSHPrivateKey != "key" {
-		t.Fatalf("got %+v", creds[0])
-	}
-
-	_, err = s.SaveRepoCredential(ctx, domain.RepoCredential{ID: 999, URLPrefix: "q"})
-	wantErr(t, err, domain.ErrNotFound)
-	must(t, s.DeleteRepoCredential(ctx, id))
-	wantErr(t, s.DeleteRepoCredential(ctx, id), domain.ErrNotFound)
 }
 
 func TestRegistryCredentials(t *testing.T) {
