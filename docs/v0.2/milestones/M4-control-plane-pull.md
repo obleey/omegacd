@@ -67,7 +67,7 @@ Agent's log, updated where they look at the old path (the Control Plane's work d
 with M4-05, which rewrites the README for Hosts without `local`.
 
 ### M4-05 · Delete push and legacy
-**Status:** in progress (feat/m4-05-delete-push)
+**Status:** done (2026-11-12, PR #125)
 **Depends on:** M4-01, M4-02, M4-04
 
 Remove (Q9, Q18, Q104): SSH/TLS Hosts and their settings, the Host `local` and the default Host (every Application
