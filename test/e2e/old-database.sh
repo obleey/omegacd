@@ -28,5 +28,9 @@ for _ in $(seq 50); do curl -sf http://127.0.0.1:18080/api/version >/dev/null &&
 check "with a new data dir it starts" 'curl -sf http://127.0.0.1:18080/api/version >/dev/null'
 kill $pid; wait $pid 2>/dev/null
 
+touch "$T/a-file"
+(server "$T/a-file/data") > "$T/nodir.log" 2>&1; rc=$?
+check "a data dir it can't make stops it, saying which setting" '[ $rc -ne 0 ] && grep -q "data dir: mkdir .*a-file" "$T/nodir.log" && grep -q OMEGACD_DATA "$T/nodir.log"'
+
 [ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- old"; tail -5 "$T/old.log"; echo "--- new"; tail -5 "$T/new.log"; }
 exit $fail

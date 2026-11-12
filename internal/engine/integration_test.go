@@ -4,16 +4,20 @@ package engine
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/rand/v2"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -833,4 +837,99 @@ func skipUnlessRequired(t *testing.T, format string, args ...any) {
 func dockerCmd(args ...string) (string, error) {
 	out, err := exec.Command("docker", args...).CombinedOutput()
 	return strings.TrimSpace(string(out)), err
+}
+
+// syncBuffer is a log the watch writes while the test reads it.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+func (s *syncBuffer) String() string { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }
+
+// The event stream outlives the engine going away: Watch logs it once and retries; when the engine answers again it
+// says so and calls changed("") once, since what happened in between wasn't heard.
+func TestWatchReconnects(t *testing.T) {
+	network, addr, _ := strings.Cut(cmp.Or(os.Getenv("DOCKER_HOST"), "unix:///var/run/docker.sock"), "://")
+	free, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := free.Addr().String()
+	free.Close() // nothing listens there yet: the engine is down
+	t.Setenv("DOCKER_HOST", "tcp://"+port)
+	logs := &syncBuffer{}
+	e, err := New(Config{Log: slog.New(slog.NewTextHandler(logs, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	resync := make(chan struct{}, 1)
+	go e.Watch(ctx, func(p string) {
+		if p == "" {
+			select {
+			case resync <- struct{}{}:
+			default:
+			}
+		}
+	})
+	for deadline := time.Now().Add(5 * time.Second); !strings.Contains(logs.String(), "engine unreachable"); time.Sleep(50 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("no warning while the engine was down:\n%s", logs.String())
+		}
+	}
+
+	// a watch stopped while it waits to retry returns at once
+	down, cancelDown := context.WithCancel(t.Context())
+	stopped := make(chan error, 1)
+	go func() { stopped <- e.Watch(down, func(string) {}) }()
+	time.Sleep(200 * time.Millisecond) // its first try failed: it waits
+	cancelDown()
+	select {
+	case err := <-stopped:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("a stopped watch kept waiting to retry")
+	}
+
+	ln, err := net.Listen("tcp", port) // the engine is back: that port leads to it
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				up, err := net.Dial(network, addr)
+				if err != nil {
+					return
+				}
+				defer up.Close()
+				go io.Copy(up, c)
+				io.Copy(c, up)
+			}()
+		}
+	}()
+	select {
+	case <-resync:
+	case <-time.After(15 * time.Second):
+		t.Fatalf("no resync after the engine came back:\n%s", logs.String())
+	}
+	if !strings.Contains(logs.String(), "watch: engine reachable again") {
+		t.Fatalf("logs:\n%s", logs.String())
+	}
 }

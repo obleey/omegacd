@@ -1626,3 +1626,14 @@ func TestUpdateSetsAdopt(t *testing.T) {
 		t.Fatal("adopt not kept")
 	}
 }
+
+// Staging a Revision's files fails, saying why, when there is no temporary folder to stage them in.
+func TestStageWithoutTempDir(t *testing.T) {
+	r := newRig(t)
+	file := filepath.Join(t.TempDir(), "a-file")
+	os.WriteFile(file, nil, 0o600)
+	t.Setenv("TMPDIR", file)
+	if _, _, err := r.c.stage(t.Context(), app("web"), domain.Rendered{}); err == nil {
+		t.Fatal("staged without a temporary folder")
+	}
+}

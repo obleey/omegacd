@@ -75,7 +75,7 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	if err := os.MkdirAll(dataDir, 0o750); err != nil {
-		return err
+		return fmt.Errorf("data dir: %w (set OMEGACD_DATA to a folder this user owns or can create)", err)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
