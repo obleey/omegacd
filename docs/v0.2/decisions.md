@@ -346,3 +346,10 @@ is declared. Their details (syntax, UI, messages) are decided when each is built
   server no longer uses (the Docker socket, the work dir, `OMEGACD_LOCAL_HOST`); the full rewrite comes with M6.
   `import --ssh` goes (Q47); `import` without it stays until M6-05. One PR, deleting the UI parts that call removed
   endpoints, with no new UI (M5 builds the Add Host flow).
+
+## Ubuntu 26.04 (2026-11-12)
+
+- **Q111** v0.2 is tested on Ubuntu 24.04 (and Debian 13), not 26.04: every CI job is pinned to `ubuntu-24.04`
+  (`ubuntu-24.04-arm` for arm64), so a runner image change can't move the tests under us. On GitHub's 26.04 runner,
+  rootless Podman couldn't remove a container's network (cause not found yet); Ubuntu 26.04 as a tested Host is after
+  v0.2.0 (ROADMAP), with what M4-12 found. M4-12 is deferred.

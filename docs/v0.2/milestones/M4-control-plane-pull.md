@@ -166,17 +166,17 @@ out: it is deleted first, never tested (Q97). Then CI requires 100%: any uncover
 silent (reviewed package by package, the operator-facing ones tested by their log line).
 
 ### M4-12 · Ubuntu 26.04: Podman green
-**Status:** todo
+**Status:** deferred: after v0.2 (Q111, 2026-11-12; ROADMAP)
 **Depends on:** M4-05
 **Issue:** [#126](https://github.com/obleey/omegacd/issues/126)
 
-CI has always run on `ubuntu-latest`. When GitHub moved it to Ubuntu 26.04, the current LTS (PR #125), the runner's
-own rootless Podman failed every container removal: `rootless netns: kill network process: permission denied`.
-Rootful and rootless Docker and Podman in a container passed. The cause isn't known yet (probably AppArmor and pasta).
-CI's amd64 jobs are pinned to `ubuntu-26.04` (PR #125), so Agent engines fails there until this is fixed. To do:
+CI ran on `ubuntu-latest`. When GitHub moved it to Ubuntu 26.04, the current LTS (PR #125), the runner's own rootless
+Podman failed every container removal: `rootless netns: kill network process: permission denied`. Rootful and
+rootless Docker and Podman in a container passed. The cause isn't known yet (probably AppArmor and pasta). v0.2 is
+tested on Ubuntu 24.04 only: every CI job is pinned to `ubuntu-24.04` (PR #125). After v0.2.0, to do:
 - find the cause; fix it in the Agent if an Agent can hit it, otherwise in the tests' setup, and document what a Host
   needs;
-- Agent engines green on CI's `ubuntu-26.04`;
+- CI's jobs on `ubuntu-26.04`, Agent engines green there;
 - Ubuntu 26.04 machines (amd64 and arm64) in `make test-linux` (omegacd-testinfra) and M7-07's runner labels; Q61 and
   TESTING.md name 26.04 as tested.
 

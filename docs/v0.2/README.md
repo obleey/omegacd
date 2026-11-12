@@ -7,7 +7,7 @@ itself, and a separate **Source Server** owns Git and rendering. v0.1 (push over
 | Read | For |
 | --- | --- |
 | [architecture.md](architecture.md) | the decided design: components, trust boundaries, flows, protocol, UI, install |
-| [decisions.md](decisions.md) | every design decision (Q1–Q110) with its outcome: the "why" |
+| [decisions.md](decisions.md) | every design decision (Q1–Q111) with its outcome: the "why" |
 | [milestones/](milestones/) | the work, as tickets with dependencies and "done when" |
 | [../adr/](../adr/) | the hard-to-reverse decisions (0003–0006) |
 | [../../GLOSSARY.md](../../GLOSSARY.md) | the vocabulary: Host, Agent, Control Plane, Source Server, Enrollment, … |

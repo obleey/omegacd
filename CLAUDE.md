@@ -6,7 +6,7 @@ https://github.com/obleey/omegacd.
 ## Where things stand
 
 - **`main` is v0.2 in development**: a breaking redesign to pull-based Agents and a separate Source Server. Read
-  [docs/v0.2/README.md](docs/v0.2/README.md) first: architecture, every design decision (Q1–Q110), and the work as
+  [docs/v0.2/README.md](docs/v0.2/README.md) first: architecture, every design decision (Q1–Q111), and the work as
   tickets in [docs/v0.2/milestones/](docs/v0.2/milestones/). Work milestones in order (M1 → M8).
 - **v0.1 is deprecated** (Q97): `release-0.1` (push over SSH/TLS, last tag `v0.1.0-rc.10`) is frozen, no fixes; there
   is no v0.1.0 release. v0.2.0 is OmegaCD's first stable release. Write no tests or features for v0.1-only code: M4-05
