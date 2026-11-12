@@ -102,20 +102,3 @@ pull mirror of GitHub (every 10 minutes, Actions off). The switch:
 
 **Done when:** an issue, a pull request with its CI on the maintainer's runners, and a release (image pulled from Docker
 Hub, binary and install script downloaded by someone not logged in) all work on Forgejo alone.
-
-### M7-08 · Ubuntu 26.04 in the test matrix
-**Status:** todo
-**Depends on:** M4-05
-**Issue:** [#126](https://github.com/obleey/omegacd/issues/126)
-
-Ubuntu 26.04 is the current LTS, so Agents will run there. CI's first run on it (GitHub's `ubuntu-latest` moved, PR #125)
-failed against the runner's own rootless Podman: every container removal was denied, `rootless netns: kill network
-process: permission denied`. Rootful and rootless Docker and Podman in a container passed. The cause isn't known yet
-(probably AppArmor and pasta). Until this is done, CI is pinned to `ubuntu-24.04`. To do:
-- find the cause; fix it in the Agent if an Agent can hit it, otherwise in the tests' setup, and document what a Host
-  needs;
-- add an `ubuntu-26.04` runner to CI's Go, Agent engines and End to end jobs (required checks), and Ubuntu 26.04 machines
-  (amd64 and arm64) to `make test-linux` (omegacd-testinfra) and to M7-07's runner labels;
-- Q61 and TESTING.md name 26.04 as tested.
-
-**Done when:** `make test-linux` and CI are green on Ubuntu 26.04 on both architectures, with the runner's own Podman.

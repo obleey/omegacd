@@ -164,3 +164,21 @@ out: it is deleted first, never tested (Q97). Then CI requires 100%: any uncover
 
 **Done when:** `make cover` shows 100% of the lines not marked unreachable, CI enforces it, and no error path is
 silent (reviewed package by package, the operator-facing ones tested by their log line).
+
+### M4-12 · Ubuntu 26.04: back to ubuntu-latest
+**Status:** todo
+**Depends on:** M4-05
+**Issue:** [#126](https://github.com/obleey/omegacd/issues/126)
+
+CI has always run on `ubuntu-latest`. When GitHub moved it to Ubuntu 26.04, the current LTS (PR #125), the runner's
+own rootless Podman failed every container removal: `rootless netns: kill network process: permission denied`.
+Rootful and rootless Docker and Podman in a container passed. The cause isn't known yet (probably AppArmor and pasta).
+PR #125 pinned CI to `ubuntu-24.04` to get M4-05 through. To do:
+- find the cause; fix it in the Agent if an Agent can hit it, otherwise in the tests' setup, and document what a Host
+  needs;
+- CI's Go, Agent engines and End to end jobs back on `ubuntu-latest`, with the required checks renamed back;
+- Ubuntu 26.04 machines (amd64 and arm64) in `make test-linux` (omegacd-testinfra) and M7-07's runner labels; Q61 and
+  TESTING.md name 26.04 as tested.
+
+**Done when:** CI is green on `ubuntu-latest` (26.04) and `make test-linux` on Ubuntu 26.04 on both architectures,
+with the runner's own Podman.
