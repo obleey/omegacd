@@ -787,7 +787,7 @@ func TestHostKeysAPI(t *testing.T) {
 	}
 	// the private half is born on the Agent and never leaves it (Q108): nothing makes, takes or removes one here
 	e.expect("POST", "/api/settings/hosts/prod/keys/generate", "", 404)
-	e.expect("POST", "/api/settings/hosts/prod/keys/import", `{"privateKey":"AGE-SECRET-KEY-1X"}`, 404)
+	e.expect("POST", "/api/settings/hosts/prod/keys/import", `{}`, 404)
 	e.expect("DELETE", "/api/settings/hosts/prod/keys/age1prod", "", 404)
 	e.expect("GET", "/api/settings/hosts/nope/keys", "", 404)
 }
