@@ -260,7 +260,7 @@
 		</div>
 
 		<dl class="meta">
-			{#if isApps}<div><dt><Icon name="server" size={12} />Hosts</dt><dd class="mono">{app.hosts?.join(', ') || '—'}</dd></div>{:else}<div><dt><Icon name="server" size={12} />Host</dt><dd class="mono">{app.host || 'local'}</dd></div>{/if}
+			{#if isApps}<div><dt><Icon name="server" size={12} />Hosts</dt><dd class="mono">{app.hosts?.join(', ') || '—'}</dd></div>{:else}<div><dt><Icon name="server" size={12} />Host</dt><dd class="mono">{app.host}</dd></div>{/if}
 			<div class="wide"><dt><Icon name="folder" size={12} />Repository</dt><dd class="mono"><GitLink href={web?.repo} title="Open the Repository">{app.repoURL}</GitLink></dd></div>
 			<div><dt><Icon name="folder" size={12} />Path</dt><dd class="mono"><GitLink href={web && (app.deployedSHA || app.targetSHA) ? web.tree(app.deployedSHA || app.targetSHA!, app.path || '') : null} title="Open this folder in the Repository">{app.path || '.'}</GitLink></dd></div>
 			<div><dt><Icon name="branch" size={12} />Target Revision</dt><dd class="mono">{app.targetRevision} <span class="muted">(<GitLink href={app.targetSHA && web?.commit(app.targetSHA)} title="Open commit {app.targetSHA}">{short(app.targetSHA)}</GitLink>)</span></dd></div>

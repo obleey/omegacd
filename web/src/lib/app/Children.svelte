@@ -28,7 +28,7 @@
 				icon: a.kind === 'apps' ? 'apps' : 'app',
 				kind: 'Child Application',
 				name: a.name,
-				sub: `${a.host || 'local'} · ${a.targetRevision} ${short(a.targetSHA)}`,
+				sub: `${a.host} · ${a.targetRevision} ${short(a.targetSHA)}`,
 				status: [['Sync Status', shownSync(a)], ['Health Status', a.health]],
 				tag: a.notInGit ? 'not in Git' : undefined,
 				dim: a.notInGit,
@@ -43,7 +43,7 @@
 				icon: 'app',
 				kind: 'Child Application',
 				name: p.name,
-				sub: `${p.host || 'local'} · Sync ${app.name} to create`,
+				sub: `${p.host} · Sync ${app.name} to create`,
 				status: [['Sync Status', 'OutOfSync'], ['Health Status', 'Missing']],
 				tag: 'pending',
 				dim: true
@@ -88,7 +88,7 @@
 								{#if a.kind === 'apps'}<span class="tag">App of Apps</span>{/if}
 								{#if a.notInGit}<span class="tag warn">not in Git</span>{/if}
 							</td>
-							<td class="mono small">{a.host || 'local'}</td>
+							<td class="mono small">{a.host}</td>
 							<td><Badge status={shownSync(a)} label="Sync Status" /></td>
 							<td><Badge status={a.health} label="Health Status" /></td>
 							<td class="small">
@@ -104,7 +104,7 @@
 					{#each pending as p (p.name)}
 						<tr class="pending">
 							<td><span class="name">{p.name}</span> <span class="tag">pending</span></td>
-							<td class="mono small">{p.host || 'local'}</td>
+							<td class="mono small">{p.host}</td>
 							<td><Badge status="OutOfSync" label="Sync Status" /></td>
 							<td><Badge status="Missing" label="Health Status" /></td>
 							<td class="small muted">Sync {app.name} to create</td>

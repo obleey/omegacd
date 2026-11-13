@@ -251,7 +251,7 @@ func TestImportKeepsContainersWithoutFileMounts(t *testing.T) {
 		files:  map[string]string{"/opt/cache/docker-compose.yml": "services:\n  redis:\n    image: redis:7\n    volumes: [data:/data, ./state:/state]\nvolumes:\n  data: {}\n"},
 	}
 	repo := t.TempDir()
-	report, err := run(t, h, Options{Repo: repo, Recipients: func() ([]string, error) { t.Fatal("asked for recipients without secrets"); return nil, nil }})
+	report, err := run(t, h, Options{Repo: repo, HostName: "box", Recipients: func() ([]string, error) { t.Fatal("asked for recipients without secrets"); return nil, nil }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +259,7 @@ func TestImportKeepsContainersWithoutFileMounts(t *testing.T) {
 		t.Fatalf("report:\n%s", report)
 	}
 	apps, _ := appdef.Parse(filepath.Join(repo, "platform"))
-	if len(apps) != 1 || !slices.Equal(apps[0].ComposeFiles, []string{"docker-compose.yml"}) || apps[0].Host != "local" {
+	if len(apps) != 1 || !slices.Equal(apps[0].ComposeFiles, []string{"docker-compose.yml"}) || apps[0].Host != "box" {
 		t.Fatalf("definition: %+v", apps)
 	}
 	b, _ := os.ReadFile(filepath.Join(repo, "apps/cache/docker-compose.yml"))

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -22,8 +21,7 @@ func (l *listFlag) Set(v string) error { *l = append(*l, v); return nil }
 func (c *CLI) importStacks(ctx context.Context, args []string) error {
 	var o opts
 	fs := c.flags("import", &o)
-	sshTarget := fs.String("ssh", "", "import from the Docker host at user@host (or ssh://user@host:port) over your ssh; default: the local Docker")
-	hostName := fs.String("host", "", "the Host's name in OmegaCD (required with --ssh)")
+	hostName := fs.String("host", "", "the Host's name in OmegaCD, whose Agent runs these stacks (required)")
 	var recipients listFlag
 	fs.Var(&recipients, "recipient", "age public key to encrypt secrets for (the Host Key from Settings → Hosts); repeatable; default: looked up on your OmegaCD")
 	appsDir := fs.String("apps-dir", "apps", "folder for the stacks, relative to the repository root")
@@ -35,8 +33,8 @@ func (c *CLI) importStacks(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if *sshTarget != "" && *hostName == "" {
-		return errors.New("--ssh needs --host NAME: the name this server has (or will have) in OmegaCD under Settings → Hosts")
+	if *hostName == "" { // every Application names its Host (Q104)
+		return errors.New("import needs --host NAME: the name this machine has (or will have) in OmegaCD under Settings → Hosts")
 	}
 
 	root, err := git(ctx, "rev-parse", "--show-toplevel")
@@ -55,9 +53,9 @@ func (c *CLI) importStacks(ctx context.Context, args []string) error {
 
 	dial := c.ImportHost
 	if dial == nil {
-		dial = func(target string) (importer.Host, error) { return importer.Dial(target) }
+		dial = func() (importer.Host, error) { return importer.Dial() }
 	}
-	h, err := dial(*sshTarget)
+	h, err := dial()
 	if err != nil {
 		return fmt.Errorf("connect to Docker: %w", err)
 	}
@@ -76,9 +74,8 @@ func (c *CLI) importStacks(ctx context.Context, args []string) error {
 	})
 }
 
-// hostRecipient looks up the Host Key's public key on the OmegaCD the CLI is logged in to.
+// hostRecipient looks up the Host Key's public key, from its Agent (Q108), on the OmegaCD the CLI is logged in to.
 func (c *CLI) hostRecipient(ctx context.Context, o opts, host string) ([]string, error) {
-	host = cmp.Or(host, domain.LocalHost)
 	cl, err := c.client(o)
 	if err != nil {
 		return nil, fmt.Errorf("secrets found: pass --recipient age1… (the Host Key of %s from Settings → Hosts), or omegacd login so it can be looked up", host)
@@ -89,10 +86,10 @@ func (c *CLI) hostRecipient(ctx context.Context, o opts, host string) ([]string,
 	}
 	for _, h := range hosts {
 		if h.Name == host {
-			if h.KeyRecipient == "" {
-				return nil, fmt.Errorf("Host %s has no Host Key yet: generate one under Settings → Hosts, or pass --recipient", host)
+			if h.AgeRecipient == "" {
+				return nil, fmt.Errorf("Host %s has no Host Key yet: its Agent makes one when it enrolls; enroll it first, or pass --recipient", host)
 			}
-			return []string{h.KeyRecipient}, nil
+			return []string{h.AgeRecipient}, nil
 		}
 	}
 	return nil, fmt.Errorf("Host %s is not in OmegaCD: add it under Settings → Hosts first, or pass --recipient", host)

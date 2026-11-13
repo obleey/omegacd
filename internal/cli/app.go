@@ -148,7 +148,7 @@ func (c *CLI) appCreate(ctx context.Context, args []string) error {
 	fs.StringVar(&a.TargetRevision, "revision", "", "branch, tag or commit (default main)")
 	fs.Var(&files, "file", "compose file, relative to --path (repeatable)")
 	fs.Var(&profiles, "profile", "Compose profile (repeatable)")
-	fs.StringVar(&a.Host, "host", "", "Host to deploy to (default local)")
+	fs.StringVar(&a.Host, "host", "", "Host to deploy to, through its Agent (required, except for an App of Apps)")
 	fs.StringVar(&a.Kind, "kind", "", "compose (default) or apps (an App of Apps)")
 	fs.BoolVar(&a.AutoSync, "auto-sync", false, "Sync automatically when the Repository changes")
 	fs.BoolVar(&a.SelfHeal, "self-heal", false, "Sync automatically when the Live State drifts")
@@ -693,25 +693,23 @@ func (c *CLI) hostList(ctx context.Context, args []string) error {
 	}
 	var rows [][]string
 	for _, h := range hosts {
-		u, agent := h.URL, ""
+		var agent string
 		switch {
-		case h.Name == domain.LocalHost:
-			u = "(docker socket)"
-		case u == "" && h.Fingerprint == "":
-			u, agent = "(agent)", "invited"
-		case u == "" && len(h.Locked) > 0:
+		case h.Fingerprint == "":
+			agent = "invited"
+		case len(h.Locked) > 0:
 			var at []string
 			for _, c := range h.Locked {
 				at = append(at, c.Address)
 			}
-			u, agent = "(agent)", "LOCKED: two connections ("+strings.Join(at, ", ")+")"
-		case u == "" && h.Approved:
-			u, agent = "(agent)", "approved "+h.Fingerprint
-		case u == "":
-			u, agent = "(agent)", "to approve "+h.Fingerprint
+			agent = "LOCKED: two connections (" + strings.Join(at, ", ") + ")"
+		case h.Approved:
+			agent = "approved " + h.Fingerprint
+		default:
+			agent = "to approve " + h.Fingerprint
 		}
 		version := h.Status.ServerVersion
-		if a := h.Agent; u == "(agent)" && a != nil {
+		if a := h.Agent; a != nil {
 			version = "agent " + a.Version
 			if a.Refused != "" { // the reason in full: -o json
 				agent = "REFUSED: Agent " + a.Version
@@ -720,10 +718,10 @@ func (c *CLI) hostList(ctx context.Context, args []string) error {
 		if len(h.AllowIPs) > 0 {
 			agent += ", only from " + strings.Join(h.AllowIPs, " ")
 		}
-		rows = append(rows, []string{h.Name, u, strconv.FormatBool(h.Status.Connected), version,
-			strconv.Itoa(h.Status.Containers), cmp.Or(h.KeyRecipient, h.AgeRecipient, "(none)"), cmp.Or(agent, "-"), strings.Join(h.Apps, ", ")})
+		rows = append(rows, []string{h.Name, strconv.FormatBool(h.Status.Connected), version,
+			cmp.Or(h.AgeRecipient, "(none)"), agent, strings.Join(h.Apps, ", ")})
 	}
-	c.table([]string{"NAME", "URL", "CONNECTED", "VERSION", "CONTAINERS", "HOST KEY", "AGENT", "APPS"}, rows, 2)
+	c.table([]string{"NAME", "CONNECTED", "VERSION", "HOST KEY", "AGENT", "APPS"}, rows, 1)
 	return nil
 }
 
@@ -837,33 +835,6 @@ func (c *CLI) hostApprove(ctx context.Context, args []string) error {
 	return nil
 }
 
-func (c *CLI) hostTest(ctx context.Context, args []string) error {
-	var o opts
-	pos, err := parse(c.flags("host test", &o), args, 1, 1)
-	if err != nil {
-		return err
-	}
-	cl, err := c.client(o)
-	if err != nil {
-		return err
-	}
-	var st domain.HostStatus
-	if err := cl.do(ctx, "POST", "/api/settings/hosts/"+url.PathEscape(pos[0])+"/test", nil, &st); err != nil {
-		return err
-	}
-	if o.output == "json" {
-		if err := c.printJSON(st); err != nil {
-			return err
-		}
-	} else if st.Connected {
-		fmt.Fprintf(c.Stdout, "%s: connected, Docker %s (%s), %d containers\n", st.Name, st.ServerVersion, st.OS, st.Containers)
-	}
-	if !st.Connected {
-		return fmt.Errorf("%s: %s", pos[0], cmp.Or(st.Error, "not connected"))
-	}
-	return nil
-}
-
 func hostKeysPath(host string) string { return "/api/settings/hosts/" + url.PathEscape(host) + "/keys" }
 
 func (c *CLI) hostKeyShow(ctx context.Context, args []string) error {
@@ -884,85 +855,12 @@ func (c *CLI) hostKeyShow(ctx context.Context, args []string) error {
 		return c.printJSON(keys)
 	}
 	if len(keys) == 0 {
-		return fmt.Errorf("Host %q has no Host Key — run: omegacd host key generate %s", pos[0], pos[0])
+		return fmt.Errorf("Host %q has no Host Key yet: its Agent makes one when it enrolls (omegacd host add %s)", pos[0], pos[0])
 	}
-	var rows [][]string
 	for _, k := range keys {
-		status, created := "previous", ""
-		switch {
-		case k.Master:
-			status = "current (Master Key)"
-		case k.Current:
-			status = "current"
-		}
-		if !k.CreatedAt.IsZero() {
-			created = k.CreatedAt.Local().Format(time.DateTime)
-		}
-		rows = append(rows, []string{k.Recipient, status, created})
+		fmt.Fprintln(c.Stdout, k.Recipient)
 	}
-	c.table([]string{"RECIPIENT", "STATUS", "CREATED"}, rows)
 	return nil
-}
-
-func (c *CLI) hostKeyGenerate(ctx context.Context, args []string) error {
-	var o opts
-	pos, err := parse(c.flags("host key generate", &o), args, 1, 1)
-	if err != nil {
-		return err
-	}
-	return c.addHostKey(ctx, o, pos[0], "generate", nil)
-}
-
-func (c *CLI) hostKeyImport(ctx context.Context, args []string) error {
-	var o opts
-	fs := c.flags("host key import", &o)
-	file := fs.String("file", "", "file holding the age private key (AGE-SECRET-KEY-1...), - for stdin")
-	pos, err := parse(fs, args, 1, 1)
-	if err != nil {
-		return err
-	}
-	if *file == "" {
-		return errors.New("--file is required (the private key is never taken from the command line)")
-	}
-	var b []byte
-	if *file == "-" {
-		b, err = io.ReadAll(c.Stdin)
-	} else {
-		b, err = os.ReadFile(*file)
-	}
-	if err != nil {
-		return err
-	}
-	return c.addHostKey(ctx, o, pos[0], "import", map[string]string{"privateKey": string(b)})
-}
-
-func (c *CLI) addHostKey(ctx context.Context, o opts, host, action string, body any) error {
-	cl, err := c.client(o)
-	if err != nil {
-		return err
-	}
-	var k domain.HostKey
-	if err := cl.do(ctx, "POST", hostKeysPath(host)+"/"+action, body, &k); err != nil {
-		return err
-	}
-	if o.output == "json" {
-		return c.printJSON(k)
-	}
-	fmt.Fprintf(c.Stdout, "%s: current Host Key is now %s\nAdd it to .sops.yaml, run sops updatekeys on the Host's files, then remove the previous key.\n", host, k.Recipient)
-	return nil
-}
-
-func (c *CLI) hostKeyRemove(ctx context.Context, args []string) error {
-	var o opts
-	pos, err := parse(c.flags("host key remove", &o), args, 2, 2)
-	if err != nil {
-		return err
-	}
-	cl, err := c.client(o)
-	if err != nil {
-		return err
-	}
-	return cl.do(ctx, "DELETE", hostKeysPath(pos[0])+"/"+url.PathEscape(pos[1]), nil, nil)
 }
 
 // hostsLabel names hostsOf for app get.

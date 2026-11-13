@@ -3,7 +3,7 @@
 name: forgejo
 services:
   forgejo:
-    image: codeberg.org/forgejo/forgejo:15
+    image: data.forgejo.org/forgejo/forgejo:15 # Forgejo's own registry: Codeberg's answered 403 (2026-11-12)
     ports: ["80:3000"]
     environment:
       FORGEJO__security__INSTALL_LOCK: "true"

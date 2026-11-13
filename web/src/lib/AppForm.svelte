@@ -39,13 +39,13 @@
 	});
 	let adopt = $state(init?.adopt ?? false);
 	let kind = $state(init?.kind || 'compose');
-	let host = $state(init?.host || 'local');
-	let hosts = $state<string[]>([init?.host || 'local']);
+	let host = $state(init?.host || '');
+	let hosts = $state<string[]>(init?.host ? [init.host] : []);
 	onMount(() => {
 		get<HostView[]>('/settings/hosts')
 			.then((hs) => {
 				hosts = hs.map((h) => h.name);
-				// no "local" when OmegaCD runs without a Docker engine (OMEGACD_LOCAL_HOST=false): preselect the first Host
+				// there is no default Host (Q104): preselect the first
 				if (!init?.host && hosts.length && !hosts.includes(host)) host = hosts[0];
 			})
 			.catch(() => {}); // the select keeps the current Host
@@ -205,7 +205,7 @@ path: apps/web
 targetRevision: main
 composeFiles: [compose.yaml]
 profiles: []
-host: local
+host: web-1
 autoSync: true
 selfHeal: true
 prune: false</pre>
@@ -271,11 +271,12 @@ prune: false</pre>
 	{#if kind === 'compose'}
 	<div class="field">
 		<label for="f-host">Host</label>
-		<select id="f-host" bind:value={host} disabled={editing}>
+		<select id="f-host" bind:value={host} disabled={editing} required>
+			{#if !hosts.length}<option value="" disabled>no Hosts yet</option>{/if}
 			{#each hosts as h (h)}<option value={h}>{h}</option>{/each}
 		</select>
 		<span class="hint">
-			{editing ? 'To move the Application to another Host, delete and recreate it.' : 'The Docker engine to deploy to. Add Hosts in Settings.'}
+			{editing ? 'To move the Application to another Host, delete and recreate it.' : 'The Host whose Agent deploys it. Add Hosts with omegacd host add.'}
 		</span>
 	</div>
 	{/if}

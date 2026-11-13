@@ -53,13 +53,14 @@ The plan: [docs/v0.2](docs/v0.2/README.md) (architecture, decisions, 8 milestone
 
 ## After v0.2 — trustworthy for real sites (to be re-planned)
 
-- **Ubuntu 26.04** — the current LTS (newer Docker, Podman, systemd) as a supported Host, tested like 24.04: two more test servers
+- **Ubuntu 26.04** — the current LTS (newer Docker, Podman, systemd) as a supported Host, tested like 24.04: two more test servers; on GitHub's 26.04 runner rootless Podman can't remove a container's network (`rootless netns: kill network process: permission denied`), cause to find first, then CI moves from `ubuntu-24.04` (Q111, M4-12)
 - **RHEL-family Hosts** — RHEL, Rocky, Alma, Fedora with SELinux enforcing, Podman or Docker CE: install, systemd units with SELinux contexts, `.rpm`, and the test matrix in every push. The test machines for it (Rocky, Fedora, a Rocky VM with SELinux enforcing) were built and removed again, what they taught is in M7-06; v0.2's tickets M6-07 and M7-06 move here
 
 - **Sync hooks** — jobs once per Sync or Rollback, before it (a backup) or after it (`cache:clear`, a smoke test), declared in the Application definition and run by the Agent as one-shots of a project's services, offline too; a failing pre-sync hook stops the Sync, never re-run on a restore or Self-Heal (Q64). Migrations on every start already work with Compose's own one-shot services (v0.2's M2-11). Rollback reverts code, not data (Q65)
 - **Order between Child Applications** — `dependsOn: [caddy]` in a definition: the App of Apps syncs children in that order (e.g. the app that creates a shared network before those that join it), instead of a failed first attempt and a retry; the Control Plane orchestrates, waiting for the Synced and Healthy reports, offline Hosts shown as waited for (Q66)
 - **apt repository** (dnf with the RHEL family) — a signed repository for the packages, so `apt upgrade` updates OmegaCD (the signing key lives in CI secrets)
-- **Agent keys**: automatic rotation, and sealing them with systemd-creds or a TPM (v0.2: one-click rotation, owner-only key files; Q76, Q77)
+- **Agent keys**: automatic rotation, and sealing them with systemd-creds or a TPM (v0.2: one-click rotation, owner-only key files; Q76, Q77); rotating an Agent's Host Key, the previous one kept for decryption until files are re-encrypted (Q108)
+- **Git over SSH without setup** — built-in host keys for GitHub, GitLab, Bitbucket and Codeberg, known hosts managed through the CLI and UI instead of a file, and GitHub App credentials (per installation, short-lived tokens, not tied to a person), as Argo CD does (Q106)
 - **Restore hook** — an explicit, person-triggered hook that restores the backup a pre-sync hook made, for a Rollback that needs the data back too (Q65); never automatic
 - **Notifications** — Slack, Discord, email, generic webhook on Sync failed / Degraded / recovered
 - **Restart unhealthy containers** — Self-Heal option `restartUnhealthy`: restart a container its own healthcheck reports unhealthy for a while (Docker's restart policies only react to exits), with backoff and a limit, each restart in History and notified

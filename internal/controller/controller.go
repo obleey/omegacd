@@ -8,9 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -19,8 +17,6 @@ import (
 	"sync"
 	"time"
 
-	"filippo.io/age"
-
 	"github.com/obleey/omegacd/internal/agents"
 	"github.com/obleey/omegacd/internal/domain"
 	"github.com/obleey/omegacd/internal/logging"
@@ -28,13 +24,12 @@ import (
 )
 
 const (
-	maxRetries    = 5
-	retryBase     = 5 * time.Second
-	retryMax      = 3 * time.Minute
-	retryTick     = 5 * time.Second
-	syncTimeout   = 30 * time.Minute
-	subscriberCh  = 64
-	watchDebounce = time.Second
+	maxRetries   = 5
+	retryBase    = 5 * time.Second
+	retryMax     = 3 * time.Minute
+	retryTick    = 5 * time.Second
+	syncTimeout  = 30 * time.Minute
+	subscriberCh = 64
 )
 
 var nameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
@@ -42,16 +37,10 @@ var nameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
 type Config struct {
 	Store        domain.Store
 	Source       domain.Source
-	Secrets      domain.Secrets
-	MasterKey    *age.X25519Identity // seals stored secrets; also the Host Key of LocalHost
-	NoLocalHost  bool                // OMEGACD_LOCAL_HOST=false: no local Docker engine, only remote Hosts
-	Engine       domain.Engine
-	WorkDir      string
 	PollInterval time.Duration
 	NormalizeURL func(string) string
 	ObserveSync  func(app string, phase domain.OpPhase, d time.Duration) // may be nil
-	SelfID       string                                                  // omegacd's own container ID or hostname, to refuse managing itself
-	// Agents deploys to Hosts with an enrolled Agent (Q80); nil: there are none
+	// Agents deploys to every Host: each runs an Agent (Q9, Q107)
 	Agents Agents
 	Log    *slog.Logger
 }
@@ -103,9 +92,6 @@ func New(cfg Config) *Controller {
 // Run reconciles every Application each PollInterval (never when 0: webhooks, Refresh and restarts only)
 // and drives retries until ctx ends.
 func (c *Controller) Run(ctx context.Context) {
-	// restore before watching Docker events, so Self-Heal can't race the restore
-	c.restoreWorkDirs(ctx)
-	go c.watch(ctx)
 	c.reconcileAll(ctx)
 	var pollC <-chan time.Time // nil: never fires
 	if c.cfg.PollInterval > 0 {
@@ -125,62 +111,6 @@ func (c *Controller) Run(ctx context.Context) {
 			for _, name := range c.dueRetries() {
 				c.reconcileByName(ctx, name)
 			}
-		}
-	}
-}
-
-const triggerRestore = "restore"
-
-func composeFilesPresent(dir string, files []string) bool {
-	for _, f := range files {
-		if fi, err := os.Stat(filepath.Join(dir, f)); err != nil || !fi.Mode().IsRegular() {
-			return false
-		}
-	}
-	return len(files) > 0
-}
-
-// restoreWorkDirs re-creates the working files of deployed Applications that are gone, typically
-// because WorkDir lives on tmpfs (/run) and the machine rebooted: Docker restarts the containers
-// on its own, but their bind mounts then point at missing files. It re-syncs the deployed
-// Revision (not the target, so nothing new is deployed) and recreates the containers.
-func (c *Controller) restoreWorkDirs(ctx context.Context) {
-	apps, err := c.cfg.Store.ListApps(ctx)
-	if err != nil {
-		c.cfg.Log.Error("list applications", "err", err)
-		return
-	}
-	for _, a := range apps {
-		if a.Kind == domain.KindApps {
-			// its definitions were kept in the old layout's apps/<name>; now they are only staged.
-			// Its own folder holds its children's: kept.
-			if err := c.removeFiles(a, c.appDir(a)); err != nil {
-				c.cfg.Log.Warn("remove old definitions", "app", a.Name, "err", err)
-			}
-			continue
-		}
-		if c.cfg.NoLocalHost && cmp.Or(a.Host, domain.LocalHost) == domain.LocalHost {
-			continue // nothing to restore into: such an app shows its Host as disabled
-		}
-		if c.agentHost(ctx, a.Host) {
-			continue // its Agent restores it, from its own cache (Q24)
-		}
-		// the compose files are the signal: after a reboot Docker may already have re-created
-		// missing bind-mount sources as empty directories, so the dir itself can be non-empty.
-		if dir := c.appDir(a); composeFilesPresent(dir, a.ComposeFilesIn(dir)) {
-			c.dropSopsCopies(a)
-			continue
-		}
-		if c.liveDir(a) != c.appDir(a) {
-			continue // still in the old layout: running from there until its next Sync moves it
-		}
-		last, err := c.cfg.Store.LastSucceededOp(ctx, a.Name)
-		if err != nil {
-			continue // never deployed: nothing to restore
-		}
-		c.cfg.Log.Warn("working files missing, restoring the deployed revision", "app", a.Name, "revision", short(last.Revision))
-		if _, err := c.startSync(a, last.Revision, triggerRestore); err != nil {
-			c.cfg.Log.Error("restore", "app", a.Name, "err", err)
 		}
 	}
 }
@@ -235,7 +165,7 @@ func (c *Controller) reconcile(ctx context.Context, a domain.Application) domain
 func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fetch bool) domain.AppView {
 	ctx = logging.With(ctx, "app", a.Name)
 	v := domain.AppView{Application: a, SyncStatus: domain.Unknown, Health: domain.Missing, ReconciledAt: time.Now()}
-	viaAgent := a.Kind == domain.KindCompose && c.agentHost(ctx, a.Host)
+	viaAgent := a.Kind == domain.KindCompose
 	var targetTree string
 	var drift, agentDrift bool
 
@@ -297,46 +227,7 @@ func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fe
 			v.SyncStatus, v.SyncMessage = domain.OutOfSync, "live state drifted: "+describe(st.Drift)
 			agentDrift = true
 		}
-	default:
-		diffs, derr := c.cfg.Engine.Diff(ctx, a, c.liveDir(a), "")
-		switch {
-		case derr != nil:
-			v.SyncMessage = derr.Error()
-		default:
-			// undeclared services already stopped, networks and volumes are not drift:
-			// re-syncing would change nothing without Prune (or, for in-use ones, at all)
-			diffs = slices.DeleteFunc(diffs, func(d domain.ServiceDiff) bool {
-				switch {
-				case d.Kind != "":
-					v.PrunePending = append(v.PrunePending, d.Kind+" "+d.Service)
-				case d.Change == "removed" && slices.Contains(d.Fields, domain.FieldStopped):
-					v.PrunePending = append(v.PrunePending, d.Service)
-				default:
-					return false
-				}
-				return true
-			})
-			switch {
-			case c.liveDir(a) != c.appDir(a): // its files' new paths make every service differ: that's not drift
-				v.SyncStatus, v.SyncMessage = domain.OutOfSync, "files move to "+a.Dir()+" in the Host's work dir on the next Sync"
-			case len(diffs) > 0:
-				drift = true
-				v.SyncStatus, v.SyncMessage = domain.OutOfSync, "live state drifted: "+describe(diffs)
-			default:
-				v.SyncStatus = domain.Synced
-			}
-		}
 	}
-
-	// a Sync would fail on a remote Host without a Host Key: say why, and don't auto-sync into that failure
-	var noKey bool
-	if v.SyncStatus == domain.OutOfSync && a.Kind != domain.KindApps && !viaAgent { // an Agent has its own Host Key
-		if _, err := c.syncKeys(ctx, a); err != nil {
-			v.SyncMessage, noKey = err.Error(), true
-		}
-	}
-
-	// after Diff: loading the project tells the engine which services are declared
 	if viaAgent {
 		v.Health = domain.HealthUnknown // until its Agent first reports
 		if st, err := c.cfg.Store.AgentStatus(ctx, a.Name); err == nil {
@@ -344,16 +235,6 @@ func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fe
 		}
 		if !c.cfg.Agents.Online(a.Host) {
 			v.SyncMessage = strings.TrimPrefix(v.SyncMessage+"; "+c.offline(ctx, a), "; ")
-		}
-	} else if a.Kind != domain.KindApps {
-		if live, err := c.cfg.Engine.Status(ctx, a); err == nil {
-			v.Health = live.Health
-		} else {
-			// can't ask the Host: "Missing" would claim the containers are gone
-			v.Health = domain.HealthUnknown
-			// the most actionable fact; it explains any Sync Status error from the same outage too
-			v.SyncMessage = "Host " + cmp.Or(a.Host, domain.LocalHost) + " unreachable: " + err.Error()
-			c.cfg.Log.WarnContext(ctx, "live state", "err", err)
 		}
 	}
 
@@ -369,9 +250,6 @@ func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fe
 	}
 	s.view = v
 	trigger, why := c.autoTrigger(a, s, v)
-	if noKey {
-		trigger, why = "", "no Host Key"
-	}
 	c.mu.Unlock()
 	c.cfg.Log.DebugContext(ctx, "reconciled", "status", v.SyncStatus, "message", v.SyncMessage, "health", v.Health,
 		"target", short(sha), "deployed", short(v.DeployedSHA), "drift", drift, "autoSync", cmp.Or(trigger, "no"), "why", why)
@@ -410,60 +288,6 @@ func (c *Controller) target(ctx context.Context, a domain.Application, fetch boo
 func (c *Controller) render(ctx context.Context, a domain.Application, sha string) (domain.Rendered, error) {
 	return c.cfg.Source.Render(ctx, domain.RenderSpec{RepoURL: a.RepoURL, Revision: sha, Path: a.Path,
 		ComposeFiles: a.ComposeFiles, Profiles: a.Profiles, Apps: a.Kind == domain.KindApps})
-}
-
-// watch reconciles an Application without a Git fetch whenever its containers change,
-// debounced so a burst of Docker events causes one reconcile.
-func (c *Controller) watch(ctx context.Context) {
-	type key struct{ host, project string }
-	var mu sync.Mutex
-	pending := map[key]bool{}
-	err := c.cfg.Engine.Watch(ctx, func(host, project string) {
-		k := key{host, project}
-		mu.Lock()
-		defer mu.Unlock()
-		if pending[k] {
-			return
-		}
-		pending[k] = true
-		time.AfterFunc(watchDebounce, func() {
-			mu.Lock()
-			delete(pending, k)
-			mu.Unlock()
-			c.mu.Lock()
-			st, ok := c.apps[project]
-			busy := ok && (st.syncing || st.deleting)
-			c.mu.Unlock()
-			if busy {
-				return // the Sync reconciles when it finishes
-			}
-			if project == "" {
-				c.reconcileHost(ctx, host)
-				return
-			}
-			if a, err := c.cfg.Store.GetApp(ctx, project); err == nil && a.Host == host {
-				c.reconcileWith(ctx, a, false)
-			}
-		})
-	})
-	if err != nil {
-		c.cfg.Log.Error("watch docker events", "err", err)
-	}
-}
-
-// reconcileHost re-checks every compose Application on host without a Git fetch, e.g. after its Docker
-// engine was unreachable and container events were missed.
-func (c *Controller) reconcileHost(ctx context.Context, host string) {
-	apps, err := c.cfg.Store.ListApps(ctx)
-	if err != nil {
-		c.cfg.Log.Error("list applications", "err", err)
-		return
-	}
-	for _, a := range apps {
-		if a.Kind == domain.KindCompose && a.Host == host {
-			c.reconcileWith(ctx, a, false)
-		}
-	}
 }
 
 // autoTrigger is the trigger of the Sync policy wants now ("" for none), and why (for the debug log). Caller holds c.mu.
@@ -548,7 +372,7 @@ func (c *Controller) setSyncing(name string, v bool) {
 func (c *Controller) runSync(a domain.Application, op domain.SyncOperation) {
 	ctx, cancel := context.WithTimeout(context.Background(), syncTimeout)
 	defer cancel()
-	ctx = logging.With(ctx, "app", a.Name, "op", op.ID, "revision", short(op.Revision), "host", cmp.Or(a.Host, domain.LocalHost))
+	ctx = logging.With(ctx, "app", a.Name, "op", op.ID, "revision", short(op.Revision), "host", a.Host)
 	c.cfg.Log.InfoContext(ctx, "sync started", "trigger", op.Trigger)
 	err := c.apply(ctx, a, op)
 	if waiting := errors.Is(err, agents.ErrOffline) || errors.Is(err, agents.ErrNotApproved); waiting || errors.Is(err, agents.ErrDisconnected) {
@@ -655,13 +479,8 @@ func (c *Controller) syncPendingChildren(ctx context.Context, parent string) {
 	}
 }
 
-// apply materialises the Revision into the Application's working dir and brings the project up.
+// apply renders the Revision and sends it to the Application's Agent, or, for an App of Apps, syncs its children.
 func (c *Controller) apply(ctx context.Context, a domain.Application, op domain.SyncOperation) error {
-	if a.Kind == domain.KindCompose && !c.agentHost(ctx, a.Host) { // an Agent's Host isn't OmegaCD's own
-		if err := c.refuseSelf(ctx, a); err != nil {
-			return err
-		}
-	}
 	r, err := c.render(ctx, a, op.Revision)
 	if err != nil {
 		return fmt.Errorf("render: %w", err)
@@ -673,91 +492,7 @@ func (c *Controller) apply(ctx context.Context, a domain.Application, op domain.
 	if a.Kind == domain.KindApps {
 		return c.syncChildren(ctx, a, r.Apps) // an App of Apps has no files: its definitions are only read
 	}
-	if c.agentHost(ctx, a.Host) {
-		return c.deploy(ctx, a, op, r)
-	}
-	keys, err := c.syncKeys(ctx, a)
-	if err != nil {
-		return err
-	}
-	if fresh, err := c.cfg.Store.GetApp(ctx, a.Name); err == nil {
-		a.Dirs = fresh.Dirs // a may have been read before the last Sync
-	}
-	var kids []string // its App of Apps' children
-	if a.Parent != "" {
-		children, err := c.children(ctx, a.Parent)
-		if err != nil {
-			return err
-		}
-		for _, ch := range children {
-			kids = append(kids, ch.Name)
-		}
-	}
-	if err := c.claim(ctx, &a, kids); err != nil {
-		return err
-	}
-	dir := c.appDir(a)
-	if err := c.write(ctx, r, dir); err != nil {
-		return fmt.Errorf("write files: %w", err)
-	}
-	if err := c.decrypt(a, dir, keys); err != nil {
-		return err
-	}
-	for _, f := range a.ComposeFilesIn(dir) {
-		if _, err := os.Stat(filepath.Join(dir, f)); errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("%w: compose file %q not found in path %q of the repository at %s; check the Application's Path and Compose files",
-				domain.ErrInvalid, f, cmp.Or(a.Path, "/"), short(op.Revision))
-		}
-	}
-	if err := c.cfg.Engine.Validate(ctx, a, dir); err != nil {
-		return err
-	}
-	regs, err := c.cfg.Store.ListRegistryCredentials(ctx)
-	if err != nil {
-		return err
-	}
-	dirs := []string{domain.HostDir(domain.LocalHost, dir)}
-	err = c.cfg.Engine.Sync(ctx, a, dir, domain.SyncOptions{
-		Prune:         a.Prune,
-		PruneVolumes:  a.Prune && a.PruneVolumes,
-		ForceRecreate: op.Trigger == triggerRestore,
-		Registries:    regs,
-		Progress: func(p domain.ProgressEvent) {
-			p.OpID = op.ID
-			c.emit(domain.Event{Type: "progress", App: a.Name, Data: p})
-		},
-		Children: kids,
-		Wrote: func(hostDir string) error {
-			dirs = append(dirs, hostDir)
-			return c.addDir(ctx, &a, hostDir)
-		},
-	})
-	if err == nil {
-		// the containers use dir now: an older folder of the app (old layout, former App of Apps) can go
-		if rerr := c.removeFiles(a, dir); rerr != nil {
-			c.cfg.Log.WarnContext(ctx, "remove old application files", "err", rerr)
-		}
-		if rerr := c.cfg.Store.SetAppDirs(ctx, a.Name, dirs); rerr != nil {
-			c.cfg.Log.WarnContext(ctx, "record application folders", "err", rerr)
-		}
-	}
-	return err
-}
-
-func (c *Controller) refuseSelf(ctx context.Context, a domain.Application) error {
-	if c.cfg.SelfID == "" || a.Host != domain.LocalHost {
-		return nil
-	}
-	live, err := c.cfg.Engine.Status(ctx, a)
-	if err != nil {
-		return nil
-	}
-	for _, ct := range live.Containers {
-		if strings.HasPrefix(ct.ID, c.cfg.SelfID) || ct.Name == c.cfg.SelfID {
-			return fmt.Errorf("%w: application %q contains omegacd itself", domain.ErrInvalid, a.Name)
-		}
-	}
-	return nil
+	return c.deploy(ctx, a, op, r)
 }
 
 func backoff(attempt int) time.Duration {
@@ -834,19 +569,10 @@ func (c *Controller) checkNew(ctx context.Context, a *domain.Application) error 
 	if err := normalize(a); err != nil {
 		return err
 	}
-	// an App of Apps deploys nothing, so it needs no Docker engine: it can be created where local is disabled
+	// its Agent checks for a hand-started project of the same name at the first Sync (Adopt in the Desired State)
 	if a.Kind == domain.KindCompose {
 		if err := c.checkHost(ctx, a.Host); err != nil {
 			return err
-		}
-		if !c.agentHost(ctx, a.Host) { // an Agent checks its own Host, at the first Sync (Adopt in the Desired State)
-			exists, managed, err := c.cfg.Engine.ProjectExists(ctx, a.Host, a.Name)
-			if err != nil {
-				return err
-			}
-			if exists && !managed && !a.Adopt {
-				return domain.ErrUnmanaged
-			}
 		}
 	}
 	a.CreatedAt = time.Now()
@@ -952,16 +678,8 @@ func (c *Controller) deleteAppLocked(ctx context.Context, a domain.Application, 
 					waiting, err = append(waiting, ch.Name), nil
 				}
 			} else {
-				old := c.appDir(ch)
+				// its Agent moves its files out of the App of Apps' folder at its next Sync
 				ch.Parent, ch.NotInGit = "", false
-				// its files leave the App of Apps' folder with it; the next Sync recreates its containers there
-				rerr := os.Rename(old, c.appDir(ch))
-				if rerr == nil {
-					rerr = c.addDir(ctx, &ch, domain.HostDir(domain.LocalHost, c.appDir(ch)))
-				}
-				if rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
-					c.cfg.Log.Warn("move application files", "app", ch.Name, "err", rerr)
-				}
 				if err = c.cfg.Store.UpdateApp(ctx, ch); err == nil {
 					c.reconcileWith(ctx, ch, false)
 				}
@@ -977,7 +695,7 @@ func (c *Controller) deleteAppLocked(ctx context.Context, a domain.Application, 
 			return fmt.Errorf("%w of %s", domain.ErrWaitingForHost, strings.Join(waiting, ", "))
 		}
 	}
-	if a.Kind == domain.KindCompose && c.agentHost(ctx, a.Host) {
+	if a.Kind == domain.KindCompose {
 		err := c.cfg.Agents.Remove(ctx, a.Host, a.Name, cascade && volumes, !cascade)
 		if errors.Is(err, agents.ErrOffline) || errors.Is(err, agents.ErrNotApproved) || errors.Is(err, agents.ErrDisconnected) {
 			if serr := c.cfg.Store.SetAppDeleting(ctx, a.Name, deleteHow(cascade, volumes)); serr != nil { // coverage: unreachable, the app was just read; only a delete racing this one
@@ -990,20 +708,6 @@ func (c *Controller) deleteAppLocked(ctx context.Context, a domain.Application, 
 			return fmt.Errorf("%w %s: its Agent removes %s when it connects", domain.ErrWaitingForHost, a.Host, a.Name)
 		}
 		if err != nil {
-			return err
-		}
-		cascade = false // done by the Agent; nothing of it is on the Control Plane's side
-	}
-	if cascade {
-		if a.Kind == domain.KindCompose {
-			if err := c.cfg.Engine.Remove(ctx, a, volumes); err != nil {
-				return err
-			}
-		}
-		if err := c.removeFiles(a, ""); err != nil {
-			return err
-		}
-		if err := os.Remove(c.decryptedList(a.Name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
 	}
@@ -1134,13 +838,6 @@ func (c *Controller) Diff(ctx context.Context, name string) (domain.DiffView, er
 	if dv.GitDiff, err = c.cfg.Source.Diff(ctx, a.RepoURL, dv.FromSHA, to, a.Path); err != nil {
 		return domain.DiffView{}, err
 	}
-
-	var keys []domain.HostKey
-	if a.Kind != domain.KindApps && !c.agentHost(ctx, a.Host) { // an Agent decrypts with its own key
-		if keys, err = c.syncKeys(ctx, a); err != nil {
-			return domain.DiffView{}, err
-		}
-	}
 	r, err := c.render(ctx, a, to)
 	if err != nil {
 		return domain.DiffView{}, err
@@ -1152,35 +849,8 @@ func (c *Controller) Diff(ctx context.Context, name string) (domain.DiffView, er
 		dv.Services, err = c.childDiff(ctx, a.Name, r.Apps)
 		return dv, err
 	}
-	if c.agentHost(ctx, a.Host) {
-		dv.Warnings = r.Warnings // the Source Server's (plain-text secrets), then the Agent's
-		return c.agentDiff(ctx, a, dv, r)
-	}
-	stage, done, err := c.stage(ctx, a, r)
-	if err != nil {
-		return domain.DiffView{}, err
-	}
-	defer done()
-	if err := c.decrypt(a, stage, keys); err != nil {
-		return domain.DiffView{}, err
-	}
-	if err := c.cfg.Engine.Validate(ctx, a, stage); err != nil {
-		return domain.DiffView{}, err
-	}
-	if dv.Services, err = c.cfg.Engine.Diff(ctx, a, stage, c.liveDir(a)); err != nil {
-		return domain.DiffView{}, err
-	}
-	if dv.Desired, err = composeText(a, stage); err != nil {
-		return domain.DiffView{}, err
-	}
-	dv.Warnings = r.Warnings
-	// Live: the copy of the deployed Revision on the Host (kept here too for remote Hosts)
-	if live := c.liveDir(a); dirExists(live) {
-		if dv.Live, err = composeText(a, live); err != nil {
-			c.cfg.Log.Warn("read live compose files", "app", name, "err", err)
-		}
-	}
-	return dv, nil
+	dv.Warnings = r.Warnings // the Source Server's (plain-text secrets), then the Agent's
+	return c.agentDiff(ctx, a, dv, r)
 }
 
 func (c *Controller) Resources(ctx context.Context, name string) (domain.LiveState, error) {
@@ -1192,27 +862,7 @@ func (c *Controller) Resources(ctx context.Context, name string) (domain.LiveSta
 		// its children are Applications of their own, listed with ListApps
 		return domain.LiveState{Services: []string{}, Containers: []domain.Container{}, Resources: []domain.Resource{}, Health: c.cachedView(ctx, a).Health}, nil
 	}
-	if c.agentHost(ctx, a.Host) {
-		return c.agentLive(ctx, a), nil
-	}
-	live, err := c.cfg.Engine.Status(ctx, a)
-	if err != nil {
-		return domain.LiveState{}, err
-	}
-	dir := c.liveDir(a)
-	if _, err := os.Stat(dir); err != nil {
-		return live, nil // never synced
-	}
-	files, err := c.cfg.Engine.ProjectFiles(ctx, a, dir)
-	if err != nil {
-		c.cfg.Log.Warn("list project files", "app", name, "err", err)
-	}
-	secret := c.readDecrypted(name)
-	for _, f := range files {
-		f.Secret = f.Secret || f.Kind == "secret" || secret[filepath.ToSlash(f.Name)] || decrypted(filepath.Join(dir, f.Name))
-		live.Resources = append(live.Resources, f)
-	}
-	return live, nil
+	return c.agentLive(ctx, a), nil
 }
 
 const maxResourceContent = 256 << 10
@@ -1232,195 +882,7 @@ func (c *Controller) ResourceDetail(ctx context.Context, name, kind, resName str
 	if err != nil {
 		return domain.ResourceDetail{}, err
 	}
-	if c.agentHost(ctx, a.Host) {
-		return c.agentDetail(ctx, a, d)
-	}
-	if kind == "volume" || kind == "network" {
-		d.Info, err = c.cfg.Engine.Inspect(ctx, a, kind, resName)
-		return d, err
-	}
-
-	path, err := c.resolveInAppDir(a, resName)
-	if err != nil {
-		return domain.ResourceDetail{}, err
-	}
-	fi, err := os.Stat(path)
-	if err != nil {
-		return domain.ResourceDetail{}, err
-	}
-	d.Info["modified"] = fi.ModTime().Format(time.RFC3339)
-	if fi.IsDir() {
-		d.Info["type"] = "directory"
-		return d, nil
-	}
-	d.Info["type"] = "file"
-	d.Info["size"] = fmt.Sprintf("%d bytes", fi.Size())
-	if d.Secret && kind != "env_file" {
-		return d, nil
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		return domain.ResourceDetail{}, err
-	}
-	defer f.Close()
-	b, err := io.ReadAll(io.LimitReader(f, maxResourceContent+1))
-	if err != nil {
-		return domain.ResourceDetail{}, err
-	}
-	if len(b) > maxResourceContent {
-		b = b[:maxResourceContent]
-		d.Info["truncated"] = "showing the first 256 KiB"
-	}
-	d.Content = string(b)
-	if d.Secret {
-		d.Content, d.Masked = maskEnv(d.Content), true
-	}
-	return d, nil
-}
-
-// resolveInAppDir joins rel to the app's working dir and refuses anything resolving outside it, symlinks included.
-func (c *Controller) resolveInAppDir(a domain.Application, rel string) (string, error) {
-	dir, err := filepath.EvalSymlinks(c.liveDir(a))
-	if err != nil {
-		return "", err
-	}
-	outside := func(path string) bool {
-		r, err := filepath.Rel(dir, path)
-		return err != nil || r == ".." || strings.HasPrefix(r, "../")
-	}
-	path := filepath.Join(dir, rel)
-	if outside(path) {
-		return "", fmt.Errorf("%w: %q is outside the working directory", domain.ErrInvalid, rel)
-	}
-	if path, err = filepath.EvalSymlinks(path); err != nil {
-		return "", err
-	}
-	if outside(path) {
-		return "", fmt.Errorf("%w: %q links outside the working directory", domain.ErrInvalid, rel)
-	}
-	return path, nil
-}
-
-// composeText is the app's compose files in dir as written, one after another when there are several.
-func composeText(a domain.Application, dir string) (string, error) {
-	var b strings.Builder
-	files := a.ComposeFilesIn(dir)
-	for _, f := range files {
-		content, err := os.ReadFile(filepath.Join(dir, f))
-		if err != nil {
-			return "", err
-		}
-		if len(files) > 1 {
-			fmt.Fprintf(&b, "# ---- %s ----\n", f)
-		}
-		b.Write(content)
-		if len(content) > 0 && content[len(content)-1] != '\n' {
-			b.WriteByte('\n')
-		}
-	}
-	return b.String(), nil
-}
-
-func dirExists(path string) bool {
-	fi, err := os.Stat(path)
-	return err == nil && fi.IsDir()
-}
-
-// dropSopsCopies tidies a work dir written before *.sops.* copies were deleted after decrypting: each copy whose
-// decrypted file is there goes, and that file joins the decrypted list. The list is written first, so a decrypted
-// file is never unlisted; a copy without its decrypted file stays.
-func (c *Controller) dropSopsCopies(a domain.Application) {
-	name, dir := a.Name, c.appDir(a)
-	var copies, plain []string
-	_ = filepath.WalkDir(dir, func(p string, e fs.DirEntry, err error) error {
-		if err != nil || !e.Type().IsRegular() || !strings.Contains(e.Name(), ".sops.") {
-			return nil
-		}
-		out := filepath.Join(filepath.Dir(p), strings.Replace(e.Name(), ".sops.", ".", 1))
-		if _, err := os.Stat(out); err == nil {
-			copies, plain = append(copies, p), append(plain, out)
-		}
-		return nil
-	})
-	if len(copies) == 0 {
-		return
-	}
-	for rel := range c.readDecrypted(name) {
-		plain = append(plain, filepath.Join(dir, filepath.FromSlash(rel)))
-	}
-	slices.Sort(plain)
-	if err := c.writeDecrypted(name, dir, slices.Compact(plain)); err != nil {
-		c.cfg.Log.Error("record decrypted files", "app", name, "err", err)
-		return
-	}
-	for _, p := range copies {
-		if err := os.Remove(p); err != nil {
-			c.cfg.Log.Error("remove encrypted copy", "app", name, "file", p, "err", err)
-		}
-	}
-	c.cfg.Log.Info("removed encrypted copies from the work dir", "app", name, "files", len(copies))
-}
-
-// decryptedList records which files in the app dir were decrypted from SOPS (their *.sops.* copies are
-// deleted after decrypting). It sits outside the app dir, so Export's pruning and the copy to a remote
-// Host never touch it.
-func (c *Controller) decryptedList(name string) string {
-	return filepath.Join(c.cfg.WorkDir, ".decrypted", name)
-}
-
-func (c *Controller) writeDecrypted(name, dir string, written []string) error {
-	var b strings.Builder
-	for _, p := range written {
-		rel, err := filepath.Rel(dir, p)
-		if err != nil {
-			return err
-		}
-		b.WriteString(filepath.ToSlash(rel) + "\n")
-	}
-	list := c.decryptedList(name)
-	if err := os.MkdirAll(filepath.Dir(list), 0o700); err != nil {
-		return err
-	}
-	if err := os.WriteFile(list+".tmp", []byte(b.String()), 0o600); err != nil {
-		return err
-	}
-	return os.Rename(list+".tmp", list)
-}
-
-func (c *Controller) readDecrypted(name string) map[string]bool {
-	b, err := os.ReadFile(c.decryptedList(name))
-	if errors.Is(err, fs.ErrNotExist) { // the old layout's list, until the app's next Sync
-		b, _ = os.ReadFile(filepath.Join(c.cfg.WorkDir, domain.LegacyDir, "."+name+".decrypted"))
-	}
-	set := map[string]bool{}
-	for line := range strings.Lines(string(b)) {
-		if line = strings.TrimSpace(line); line != "" {
-			set[line] = true
-		}
-	}
-	return set
-}
-
-// decrypted reports whether path was written by Secrets.DecryptDir from a sibling "x.sops.ext" — the fallback
-// for work dirs from before the decrypted list.
-func decrypted(path string) bool {
-	entries, _ := os.ReadDir(filepath.Dir(path))
-	return slices.ContainsFunc(entries, func(e os.DirEntry) bool {
-		return strings.Contains(e.Name(), ".sops.") && strings.Replace(e.Name(), ".sops.", ".", 1) == filepath.Base(path)
-	})
-}
-
-var envKey = regexp.MustCompile(`^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_.-]*)\s*=`)
-
-// maskEnv keeps only the keys of an env file; any other line could be part of a multi-line value.
-func maskEnv(s string) string {
-	var out []string
-	for line := range strings.Lines(s) {
-		if m := envKey.FindStringSubmatch(line); m != nil {
-			out = append(out, m[1]+"=••••")
-		}
-	}
-	return strings.Join(out, "\n")
+	return c.agentDetail(ctx, a, d)
 }
 
 func (c *Controller) Logs(ctx context.Context, name, containerID string, follow bool, tail int, w io.Writer) error {
@@ -1428,10 +890,7 @@ func (c *Controller) Logs(ctx context.Context, name, containerID string, follow 
 	if err != nil {
 		return err
 	}
-	if c.agentHost(ctx, a.Host) {
-		return c.cfg.Agents.Logs(ctx, a.Host, a.Name, containerID, follow, tail, w)
-	}
-	return c.cfg.Engine.Logs(ctx, a, containerID, follow, tail, w)
+	return c.cfg.Agents.Logs(ctx, a.Host, a.Name, containerID, follow, tail, w)
 }
 
 func (c *Controller) RepoChanged(ctx context.Context, repoURL string) {
@@ -1499,12 +958,14 @@ func normalize(a *domain.Application) error {
 	if a.TargetRevision == "" {
 		a.TargetRevision = "main"
 	}
-	a.Host = cmp.Or(strings.TrimSpace(a.Host), domain.LocalHost)
+	a.Host = strings.TrimSpace(a.Host)
 	// Prune volumes is a sub-option of Prune, and an App of Apps has no volumes of its own
 	a.PruneVolumes = a.PruneVolumes && a.Prune && a.Kind == domain.KindCompose
 	if a.Kind == domain.KindApps {
 		// an App of Apps deploys nothing itself: no Host; its Child Applications each name their own
 		a.ComposeFiles, a.Profiles, a.Host = nil, nil, ""
+	} else if a.Host == "" {
+		return fmt.Errorf("%w: host is required: name the Host whose Agent deploys it", domain.ErrInvalid)
 	}
 	for _, f := range a.ComposeFiles {
 		if filepath.IsAbs(f) || strings.Contains(f, "..") {
@@ -1524,12 +985,6 @@ func normalize(a *domain.Application) error {
 }
 
 func (c *Controller) checkHost(ctx context.Context, name string) error {
-	if name == domain.LocalHost {
-		if c.cfg.NoLocalHost {
-			return domain.ErrLocalHostDisabled
-		}
-		return nil
-	}
 	_, err := c.cfg.Store.GetHost(ctx, name)
 	if errors.Is(err, domain.ErrNotFound) {
 		return fmt.Errorf("%w: host %q does not exist", domain.ErrInvalid, name)
@@ -1550,7 +1005,7 @@ var healthOrder = []domain.HealthStatus{domain.Healthy, domain.Progressing, doma
 func childHosts(children []domain.Application) []string {
 	var hosts []string
 	for _, ch := range children {
-		hosts = append(hosts, cmp.Or(ch.Host, domain.LocalHost))
+		hosts = append(hosts, ch.Host)
 	}
 	slices.Sort(hosts)
 	return slices.Compact(hosts)
@@ -1781,9 +1236,6 @@ func (c *Controller) ListHosts(ctx context.Context) ([]domain.HostView, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !c.cfg.NoLocalHost {
-		hosts = append([]domain.Host{{Name: domain.LocalHost, WorkDir: c.cfg.WorkDir}}, hosts...)
-	}
 	views := make([]domain.HostView, len(hosts))
 	var wg sync.WaitGroup
 	for i, h := range hosts {
@@ -1798,20 +1250,12 @@ func (c *Controller) hostView(ctx context.Context, h domain.Host, apps []string)
 		apps = []string{}
 	}
 	v := domain.HostView{Host: h, Status: domain.HostStatus{Name: h.Name}, Apps: apps}
-	switch {
-	case h.URL != "" || h.Name == domain.LocalHost:
-		v.Status = c.cfg.Engine.HostStatus(ctx, h.Name)
-	case c.cfg.Agents != nil && h.Agent != nil: // a Host with an Agent: as its Agent reported (M4-02)
+	if h.Agent != nil { // as its Agent reported (M4-02); nothing before an Agent enrolled
 		v.Status.Connected = c.cfg.Agents.Online(h.Name)
 		v.Status.ServerVersion, v.Status.OS = h.Agent.EngineVersion, h.Agent.OS
 		if !v.Status.Connected && !h.Agent.LeftAt.IsZero() {
 			v.Status.Error = "offline since " + h.Agent.LeftAt.Local().Format(time.DateTime)
 		}
-	}
-	if keys, err := c.hostKeys(ctx, h.Name); err != nil {
-		c.cfg.Log.Warn("list host keys", "host", h.Name, "err", err)
-	} else if len(keys) > 0 && keys[0].Current {
-		v.KeyRecipient = keys[0].Recipient
 	}
 	return v
 }
@@ -1835,9 +1279,6 @@ func (c *Controller) InviteHost(ctx context.Context, name string) (string, time.
 	if !nameRE.MatchString(name) {
 		return "", time.Time{}, fmt.Errorf("%w: name must be lowercase letters, digits, '-' or '_'", domain.ErrInvalid)
 	}
-	if name == domain.LocalHost {
-		return "", time.Time{}, fmt.Errorf("%w: %q is the built-in Host", domain.ErrInvalid, domain.LocalHost)
-	}
 	expires := time.Now().Add(inviteValidity).Truncate(time.Second)
 	invite, err := c.cfg.Store.CreateInvite(ctx, name, expires)
 	if err == nil {
@@ -1849,53 +1290,7 @@ func (c *Controller) InviteHost(ctx context.Context, name string) (string, time.
 // inviteValidity is how long an invite lasts (Q73): long enough to install an Agent, and a new one is a click away.
 const inviteValidity = time.Hour
 
-func (c *Controller) SaveHost(ctx context.Context, h domain.Host, create bool) (domain.HostView, error) {
-	h.Name, h.URL, h.WorkDir = strings.TrimSpace(h.Name), strings.TrimSpace(h.URL), strings.TrimSpace(h.WorkDir)
-	if !nameRE.MatchString(h.Name) {
-		return domain.HostView{}, fmt.Errorf("%w: name must be lowercase letters, digits, '-' or '_'", domain.ErrInvalid)
-	}
-	if h.Name == domain.LocalHost {
-		return domain.HostView{}, fmt.Errorf("%w: %q is the built-in Host", domain.ErrInvalid, domain.LocalHost)
-	}
-	if !strings.HasPrefix(h.URL, "ssh://") && !strings.HasPrefix(h.URL, "tcp://") {
-		return domain.HostView{}, fmt.Errorf("%w: URL must start with ssh:// or tcp://", domain.ErrInvalid)
-	}
-	if h.WorkDir != "" && !strings.HasPrefix(h.WorkDir, "/") {
-		return domain.HostView{}, fmt.Errorf("%w: work dir must be an absolute path", domain.ErrInvalid)
-	}
-	old, err := c.cfg.Store.GetHost(ctx, h.Name)
-	switch {
-	case err == nil && create:
-		return domain.HostView{}, fmt.Errorf("host %q: %w", h.Name, domain.ErrAlreadyExists)
-	case errors.Is(err, domain.ErrNotFound) && !create:
-		return domain.HostView{}, fmt.Errorf("host %q: %w", h.Name, domain.ErrNotFound)
-	case err != nil && !errors.Is(err, domain.ErrNotFound):
-		return domain.HostView{}, err
-	}
-	h.CreatedAt = old.CreatedAt
-	if err := c.cfg.Store.SaveHost(ctx, h); err != nil {
-		return domain.HostView{}, err
-	}
-	c.cfg.Engine.HostChanged(h.Name)
-	if create {
-		if _, err := c.GenerateHostKey(ctx, h.Name); err != nil {
-			return domain.HostView{}, err
-		}
-	}
-	if h, err = c.cfg.Store.GetHost(ctx, h.Name); err != nil {
-		return domain.HostView{}, err
-	}
-	byHost, err := c.appsByHost(ctx)
-	if err != nil {
-		return domain.HostView{}, err
-	}
-	return c.hostView(ctx, h, byHost[h.Name]), nil
-}
-
 func (c *Controller) DeleteHost(ctx context.Context, name string) error {
-	if name == domain.LocalHost {
-		return fmt.Errorf("%w: the built-in Host cannot be deleted", domain.ErrInvalid)
-	}
 	byHost, err := c.appsByHost(ctx)
 	if err != nil {
 		return err
@@ -1903,20 +1298,7 @@ func (c *Controller) DeleteHost(ctx context.Context, name string) error {
 	if apps := byHost[name]; len(apps) > 0 {
 		return fmt.Errorf("%w: host %q is used by Applications %s", domain.ErrInvalid, name, strings.Join(apps, ", "))
 	}
-	if err := c.cfg.Store.DeleteHost(ctx, name); err != nil {
-		return err
-	}
-	c.cfg.Engine.HostChanged(name)
-	return nil
-}
-
-func (c *Controller) TestHost(ctx context.Context, name string) (domain.HostStatus, error) {
-	if name != domain.LocalHost {
-		if _, err := c.cfg.Store.GetHost(ctx, name); err != nil {
-			return domain.HostStatus{}, err
-		}
-	}
-	return c.cfg.Engine.HostStatus(ctx, name), nil
+	return c.cfg.Store.DeleteHost(ctx, name)
 }
 
 func (c *Controller) CheckRepo(ctx context.Context, repoURL string) (domain.RepoAccess, error) {
@@ -1929,125 +1311,11 @@ func (c *Controller) CheckRepo(ctx context.Context, repoURL string) (domain.Repo
 
 // ---- Host Keys ----
 
-// hostKeys returns a Host's keys with their private keys, current first: the Master Key for LocalHost.
-func (c *Controller) hostKeys(ctx context.Context, host string) ([]domain.HostKey, error) {
-	if host == "" || host == domain.LocalHost {
-		return []domain.HostKey{{Host: domain.LocalHost, Recipient: c.cfg.MasterKey.Recipient().String(),
-			PrivateKey: c.cfg.MasterKey.String(), Current: true, Master: true}}, nil
-	}
-	return c.cfg.Store.ListHostKeys(ctx, host)
-}
-
-// syncKeys returns the keys a Sync of a decrypts with; nothing deploys to a remote Host without a Host Key.
-func (c *Controller) syncKeys(ctx context.Context, a domain.Application) ([]domain.HostKey, error) {
-	keys, err := c.hostKeys(ctx, a.Host)
-	if err == nil && len(keys) == 0 {
-		err = fmt.Errorf("Host %q has no Host Key — generate or import one in Settings → Hosts", a.Host)
-	}
-	return keys, err
-}
-
-// decrypt decrypts the Encrypted Secrets in dir with keys (from syncKeys), explaining a key mismatch.
-func (c *Controller) decrypt(a domain.Application, dir string, keys []domain.HostKey) error {
-	ids, recipients := make([]string, len(keys)), make([]string, len(keys))
-	for i, k := range keys {
-		ids[i], recipients[i] = k.PrivateKey, k.Recipient
-	}
-	written, err := c.cfg.Secrets.DecryptDir(dir, ids)
-	if dir == c.appDir(a) {
-		// recorded even after an error: whatever was decrypted is in the app dir now and must stay masked
-		if werr := c.writeDecrypted(a.Name, dir, written); werr != nil {
-			return fmt.Errorf("record decrypted files: %w", werr)
-		}
-	}
-	var wk *domain.WrongKeyError
-	switch {
-	case err == nil:
-		return nil
-	case !errors.As(err, &wk):
-		return fmt.Errorf("decrypt secrets: %w", err)
-	case keys[0].Master:
-		return fmt.Errorf("%w; Host %q uses the Master Key %s — re-encrypt it for this Host (sops updatekeys)", wk, domain.LocalHost, recipients[0])
-	case len(keys) == 1:
-		return fmt.Errorf("%w; Host %q has key %s — re-encrypt it for this Host (sops updatekeys)", wk, a.Host, recipients[0])
-	default:
-		return fmt.Errorf("%w; Host %q has keys %s — re-encrypt it for this Host (sops updatekeys)", wk, a.Host, strings.Join(recipients, ", "))
-	}
-}
-
-// remoteHost checks that host is a stored Host: LocalHost's key is the Master Key, which is not managed here.
-func (c *Controller) remoteHost(ctx context.Context, host string) error {
-	if host == domain.LocalHost {
-		return fmt.Errorf("%w: the local Host uses the Master Key (OMEGACD_AGE_KEY_FILE)", domain.ErrInvalid)
-	}
-	_, err := c.cfg.Store.GetHost(ctx, host)
-	return err
-}
-
+// HostKeys is the public half of the Host's Host Key, which its Agent reported at enrollment (Q108).
 func (c *Controller) HostKeys(ctx context.Context, host string) ([]domain.HostKey, error) {
-	if host != domain.LocalHost {
-		if _, err := c.cfg.Store.GetHost(ctx, host); err != nil {
-			return nil, err
-		}
+	h, err := c.cfg.Store.GetHost(ctx, host)
+	if err != nil || h.AgeRecipient == "" {
+		return []domain.HostKey{}, err
 	}
-	keys, err := c.hostKeys(ctx, host)
-	for i := range keys {
-		keys[i].PrivateKey = ""
-	}
-	return keys, err
-}
-
-func (c *Controller) GenerateHostKey(ctx context.Context, host string) (domain.HostKey, error) {
-	if err := c.remoteHost(ctx, host); err != nil {
-		return domain.HostKey{}, err
-	}
-	id, err := age.GenerateX25519Identity()
-	if err != nil {
-		return domain.HostKey{}, err
-	}
-	return c.addHostKey(ctx, host, id)
-}
-
-func (c *Controller) ImportHostKey(ctx context.Context, host, privateKey string) (domain.HostKey, error) {
-	if err := c.remoteHost(ctx, host); err != nil {
-		return domain.HostKey{}, err
-	}
-	// accepts a whole age-keygen file (with its "# public key" comments); the parse error is dropped so no key material is echoed
-	ids, err := age.ParseIdentities(strings.NewReader(privateKey))
-	var id *age.X25519Identity
-	if err == nil && len(ids) == 1 {
-		id, _ = ids[0].(*age.X25519Identity)
-	}
-	if id == nil {
-		return domain.HostKey{}, fmt.Errorf("%w: expected one age private key (AGE-SECRET-KEY-1...)", domain.ErrInvalid)
-	}
-	return c.addHostKey(ctx, host, id)
-}
-
-func (c *Controller) addHostKey(ctx context.Context, host string, id *age.X25519Identity) (domain.HostKey, error) {
-	k := domain.HostKey{Host: host, Recipient: id.Recipient().String(), PrivateKey: id.String(), Current: true, CreatedAt: time.Now().UTC()}
-	if err := c.cfg.Store.AddHostKey(ctx, k); err != nil {
-		return domain.HostKey{}, err
-	}
-	go c.reconcileHost(context.Background(), host) // clears "no Host Key" and lets Auto-Sync proceed
-	k.PrivateKey = ""
-	return k, nil
-}
-
-func (c *Controller) RemoveHostKey(ctx context.Context, host, recipient string) error {
-	if err := c.remoteHost(ctx, host); err != nil {
-		return err
-	}
-	keys, err := c.cfg.Store.ListHostKeys(ctx, host)
-	if err != nil {
-		return err
-	}
-	i := slices.IndexFunc(keys, func(k domain.HostKey) bool { return k.Recipient == recipient })
-	switch {
-	case i < 0:
-		return fmt.Errorf("host key %s: %w", recipient, domain.ErrNotFound)
-	case keys[i].Current:
-		return fmt.Errorf("%w: the current Host Key can't be removed — generate or import a new one first", domain.ErrInvalid)
-	}
-	return c.cfg.Store.DeleteHostKey(ctx, host, recipient)
+	return []domain.HostKey{{Recipient: h.AgeRecipient, Current: true}}, nil
 }

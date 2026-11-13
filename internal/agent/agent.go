@@ -25,6 +25,7 @@ type Agent struct {
 	secrets *Secrets
 	engine  domain.Engine // on this Host only
 	log     *slog.Logger
+	self    string // the Agent's own container (its hostname in one), whose project it refuses (Q109); "" outside one
 
 	// mu (and lock's file lock, across processes) makes Deploy, Remove, a restore, a Self-Heal and a rollback run one
 	// at a time: two at once could bring an app up twice or back after its Remove, or a Self-Heal of the running
@@ -59,6 +60,9 @@ func (ag *Agent) lock() (unlock func(), err error) {
 func New(db *DB, cache *Cache, work *WorkDir, secrets *Secrets, engine domain.Engine, log *slog.Logger) *Agent {
 	ag := &Agent{db: db, cache: cache, work: work, secrets: secrets, engine: engine, log: cmp.Or(log, logging.Discard),
 		recorded: make(chan struct{}, 1)}
+	if inContainer() {
+		ag.self, _ = os.Hostname() // a container's hostname is its ID's prefix
+	}
 	ag.reports = &reporter{ag: ag, pending: map[string]bool{}}
 	return ag
 }
@@ -185,7 +189,7 @@ func (ag *Agent) Logs(ctx context.Context, name, service string, follow bool, ta
 // Watch calls changed with an Application's name whenever its containers change: the start of drift detection. After
 // the engine's event stream reconnects, events may have been lost, so it calls changed for every Application.
 func (ag *Agent) Watch(ctx context.Context, changed func(app string)) error {
-	return ag.engine.Watch(ctx, func(_, project string) {
+	return ag.engine.Watch(ctx, func(project string) {
 		if project != "" {
 			changed(project)
 			return

@@ -137,31 +137,31 @@ export interface RegistryCredential {
 	hasPassword: boolean;
 }
 
+/** A Host's state as its Agent last reported it. */
 export interface HostStatus {
 	name: string;
 	connected: boolean;
 	error?: string;
 	serverVersion?: string;
 	os?: string;
-	containers: number;
 }
 
+/** A Host and its Agent (Q9): every Host is reached through one. */
 export interface HostView {
 	name: string;
-	url: string; // "" for the built-in local Host
-	workDir: string;
-	hasSSHKey: boolean;
-	hasTLS: boolean;
+	fingerprint?: string; // the Agent's signing key; none while the Host is only invited
+	ageRecipient?: string; // the public half of its Host Key, born on its Agent (Q108)
+	approved: boolean;
+	locked?: { address: string; since: string }[];
+	agent?: { version: string };
 	status: HostStatus;
 	apps: string[];
-	keyRecipient: string; // current Host Key (the Master Key for local); "" if none
 }
 
-/** A Host Key's public half; private keys never leave the server. */
+/** A Host Key's public half; the private half never leaves its Agent. */
 export interface HostKey {
 	recipient: string;
 	current: boolean;
-	master?: boolean; // the Master Key: local's Host Key
 	createdAt?: string;
 }
 

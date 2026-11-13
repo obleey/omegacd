@@ -7,7 +7,7 @@ set -u # no pipefail: grep -q closing the pipe early must not fail a check
 BIN=${OMEGACD_BIN:-$(cd "$(dirname "$0")/../.." && pwd)/bin/omegacd}
 T=$(mktemp -d "${TMPDIR:-/tmp}/omegacd-e2eg.XXXX")
 REPO=$T/repo API=http://127.0.0.1:18080/api APP=e2e-agentsync
-mkdir -p "$REPO/web" "$T/data" "$T/work"
+mkdir -p "$REPO/web" "$T/data"
 fail=0
 check() { if eval "$2"; then echo "PASS  $1"; else echo "FAIL  $1"; fail=1; fi; }
 gitc() { git -C "$REPO" -c user.name=e2e -c user.email=e2e@local "$@"; }
@@ -20,7 +20,7 @@ cleanup() {
 trap cleanup EXIT
 
 age-keygen -o "$T/age.key" 2>/dev/null
-OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_WORKDIR=$T/work OMEGACD_AGE_KEY_FILE=$T/age.key \
+OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_AGE_KEY_FILE=$T/age.key \
   OMEGACD_ADMIN_PASSWORD=e2e-password-123 OMEGACD_POLL_INTERVAL=1h "$BIN" > "$T/server.log" 2>&1 &
 PIDS+=($!)
 for _ in $(seq 50); do curl -sf $API/version >/dev/null && break; sleep 0.2; done
@@ -67,8 +67,8 @@ check "a Sync through the Agent succeeds, --wait waiting for the Health its Agen
 check "its container runs on the Agent's Host, the secret decrypted by the Agent" \
   '[ -n "$(ctr)" ] && docker logs $(ctr) 2>&1 | grep -q "secret=only-the-agent-reads-this" && docker logs $(ctr) 2>&1 | grep -q "conf v1"'
 check "the Agent's work dir has the app's files" '[ -f "$T/edge/run/omegacd/$APP/conf.txt" ]'
-check "the Control Plane wrote no file of it" '[ -z "$(find "$T/work" -path "*$APP*" 2>/dev/null)" ]'
-check "and decrypted nothing: the secret is nowhere on its side" '! grep -rqaF only-the-agent-reads-this "$T/data" "$T/work" "$T/server.log"'
+check "the Control Plane wrote no file of it" '[ -z "$(find "$T/data" -path "*$APP*" 2>/dev/null)" ]'
+check "and decrypted nothing: the secret is nowhere on its side" '! grep -rqaF only-the-agent-reads-this "$T/data" "$T/server.log"'
 check "nor in the Agent's log (Q62)" '! grep -qF only-the-agent-reads-this "$T/agent.log"'
 OP=$("$BIN" app history $APP -o json | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["id"])')
 check "one Sync followed by its op from the Control Plane's log into the Agent's (Q62)" \

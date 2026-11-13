@@ -19,7 +19,7 @@ An Application declared in an App of Apps' path; its settings are owned by Git, 
 _Avoid_: Sub-app, managed app
 
 **Host**:
-A Docker engine that omegacd deploys Applications to.
+A machine omegacd deploys Applications to, through its Agent; the machine the Control Plane runs on is a Host like any other.
 _Avoid_: Server, node, cluster, target, edge host, workload node
 
 **Agent**:
@@ -105,15 +105,15 @@ _Avoid_: Volume cleanup, remove volumes
 ### Secrets
 
 **Encrypted Secret**:
-A SOPS-encrypted file in a Repository that is decrypted only at Sync time.
+A SOPS-encrypted file in a Repository that is decrypted only at Sync time, on its Host, by its Agent.
 _Avoid_: Secret file, vault, credential
 
 **Host Key**:
-The age key pair of one Host, used to decrypt the Encrypted Secrets of Applications deployed there; its public key is what you encrypt to.
+The age key pair of one Host, made by its Agent and kept there, used to decrypt the Encrypted Secrets of Applications deployed there; its public key is what you encrypt to.
 _Avoid_: Sealing key, cluster key, server key
 
 **Master Key**:
-The age key OmegaCD starts with; it encrypts OmegaCD's stored credentials and Host Keys, and is the Host Key of the local Host.
+The age key the Control Plane starts with; it seals the credentials OmegaCD stores. It decrypts no Application's secret.
 _Avoid_: Root key, admin key, OmegaCD key
 
 **Secret Source**:

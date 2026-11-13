@@ -24,7 +24,11 @@ import (
 
 const historyLimit = 20
 
-// migrations are applied in order; PRAGMA user_version records how many ran.
+// schemaBase is PRAGMA user_version of v0.2's first schema (Q105): v0.1, and v0.2 before M4-05, counted their
+// migrations from 1, so any version below it is a database this version can't read.
+const schemaBase = 1000
+
+// migrations are applied in order from v0.2's fresh schema; PRAGMA user_version records schemaBase plus how many ran.
 var migrations = []string{`
 CREATE TABLE apps (
 	name TEXT PRIMARY KEY,
@@ -37,8 +41,14 @@ CREATE TABLE apps (
 	auto_sync INTEGER NOT NULL,
 	self_heal INTEGER NOT NULL,
 	prune INTEGER NOT NULL,
+	prune_volumes INTEGER NOT NULL,
 	adopt INTEGER NOT NULL,
 	rolled_back INTEGER NOT NULL,
+	kind TEXT NOT NULL,
+	parent TEXT NOT NULL,
+	not_in_git INTEGER NOT NULL,
+	work_dir TEXT NOT NULL,
+	deleting TEXT NOT NULL DEFAULT '',
 	created_at INTEGER NOT NULL
 );
 CREATE TABLE ops (
@@ -53,13 +63,6 @@ CREATE TABLE ops (
 	finished_at INTEGER NOT NULL
 );
 CREATE INDEX ops_app ON ops(app, id);
-CREATE TABLE repo_credentials (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	url_prefix TEXT NOT NULL UNIQUE,
-	username TEXT NOT NULL,
-	password TEXT NOT NULL,
-	ssh_private_key TEXT NOT NULL
-);
 CREATE TABLE registry_credentials (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	registry TEXT NOT NULL UNIQUE,
@@ -78,68 +81,31 @@ CREATE TABLE admin (
 	password_hash TEXT NOT NULL,
 	must_change INTEGER NOT NULL
 );
-`, `
 CREATE TABLE sessions (
 	hash TEXT PRIMARY KEY,
 	expires_at INTEGER NOT NULL
 );
-`, `
 CREATE TABLE hosts (
 	name TEXT PRIMARY KEY,
-	url TEXT NOT NULL,
-	work_dir TEXT NOT NULL,
-	ssh_private_key TEXT NOT NULL,
-	tls_ca TEXT NOT NULL,
-	tls_cert TEXT NOT NULL,
-	tls_key TEXT NOT NULL,
-	created_at INTEGER NOT NULL
-);
-`, `
-ALTER TABLE apps ADD COLUMN kind TEXT NOT NULL DEFAULT 'compose';
-ALTER TABLE apps ADD COLUMN parent TEXT NOT NULL DEFAULT '';
-ALTER TABLE apps ADD COLUMN not_in_git INTEGER NOT NULL DEFAULT 0;
-`, `
-ALTER TABLE apps ADD COLUMN prune_volumes INTEGER NOT NULL DEFAULT 0;
-`, `
-CREATE TABLE host_keys (
-	host TEXT NOT NULL REFERENCES hosts(name) ON DELETE CASCADE,
-	recipient TEXT NOT NULL,
-	private_key TEXT NOT NULL,
-	current INTEGER NOT NULL,
 	created_at INTEGER NOT NULL,
-	PRIMARY KEY (host, recipient)
+	signing_key BLOB UNIQUE,
+	previous_signing_key BLOB,
+	age_recipient TEXT NOT NULL DEFAULT '',
+	approved INTEGER NOT NULL DEFAULT 0,
+	locked TEXT NOT NULL DEFAULT '',
+	agent TEXT NOT NULL DEFAULT '',
+	allow_ips TEXT NOT NULL DEFAULT '[]',
+	outbox_seq INTEGER NOT NULL DEFAULT 0
 );
-`, `
-ALTER TABLE apps ADD COLUMN dirs TEXT NOT NULL DEFAULT '[]';
-`, `
-ALTER TABLE apps ADD COLUMN work_dir TEXT NOT NULL DEFAULT '';
-`, `
-ALTER TABLE hosts ADD COLUMN signing_key BLOB;
-ALTER TABLE hosts ADD COLUMN age_recipient TEXT NOT NULL DEFAULT '';
-ALTER TABLE hosts ADD COLUMN approved INTEGER NOT NULL DEFAULT 0;
-CREATE UNIQUE INDEX hosts_signing_key ON hosts(signing_key);
 CREATE TABLE invites (
 	host TEXT PRIMARY KEY REFERENCES hosts(name) ON DELETE CASCADE,
 	hash TEXT NOT NULL UNIQUE,
 	expires_at INTEGER NOT NULL
 );
-`, `
-ALTER TABLE hosts ADD COLUMN previous_signing_key BLOB;
-ALTER TABLE hosts ADD COLUMN locked TEXT NOT NULL DEFAULT '';
-`, `
-ALTER TABLE hosts ADD COLUMN agent TEXT NOT NULL DEFAULT '';
-`, `
-ALTER TABLE hosts ADD COLUMN allow_ips TEXT NOT NULL DEFAULT '[]';
-`, `
-ALTER TABLE hosts ADD COLUMN outbox_seq INTEGER NOT NULL DEFAULT 0;
-`, `
-ALTER TABLE apps ADD COLUMN deleting TEXT NOT NULL DEFAULT '';
-`, `
 CREATE TABLE agent_status (
 	app TEXT PRIMARY KEY REFERENCES apps(name) ON DELETE CASCADE,
 	status TEXT NOT NULL
 );
-`, `
 CREATE TABLE agent_diff (
 	app TEXT PRIMARY KEY REFERENCES apps(name) ON DELETE CASCADE,
 	diff TEXT NOT NULL
@@ -154,6 +120,9 @@ type Store struct {
 var _ domain.Store = (*Store)(nil)
 
 func Open(path string, sealer *crypto.Sealer) (*Store, error) {
+	if err := checkVersion(path); err != nil {
+		return nil, err
+	}
 	dsn := "file:" + (&url.URL{Path: path}).EscapedPath() +
 		"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=secure_delete(1)&_txlock=immediate"
 	db, err := sql.Open("sqlite", dsn)
@@ -168,12 +137,38 @@ func Open(path string, sealer *crypto.Sealer) (*Store, error) {
 	return s, nil
 }
 
+// ErrOldDatabase: the database is v0.1's, or v0.2's from before its fresh schema (Q90, Q105).
+var ErrOldDatabase = errors.New("this database is from OmegaCD v0.1 (or a v0.2 development build before v0.2's schema), " +
+	"which this version can't read and won't change: export the Application definitions with v0.1's omegacd app export, " +
+	"then start this version with a new, empty data directory and create them again (there is no migration)")
+
+// checkVersion refuses an older database before anything opens it for writing: opening it read-write could change it
+// (its journal mode), and it must be left as it was (Q90). A file that isn't there yet is a new database.
+func checkVersion(path string) error {
+	db, err := sql.Open("sqlite", "file:"+(&url.URL{Path: path}).EscapedPath()+"?mode=ro")
+	if err != nil { // coverage: unreachable, sql.Open only checks the driver name, which is registered
+		return err
+	}
+	defer db.Close()
+	var v int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil {
+		return nil // no file: a new database; a broken one fails at Open with its own error
+	}
+	if v > 0 && v < schemaBase {
+		return fmt.Errorf("%s (user_version %d): %w", path, v, ErrOldDatabase)
+	}
+	return nil
+}
+
 func (s *Store) migrate() error {
 	var v int
 	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil {
 		return err
 	}
-	for i := v; i < len(migrations); i++ {
+	if v == 0 {
+		v = schemaBase
+	}
+	for i := v - schemaBase; i < len(migrations); i++ {
 		tx, err := s.db.Begin()
 		if err != nil {
 			return err
@@ -182,7 +177,7 @@ func (s *Store) migrate() error {
 			tx.Rollback()
 			return fmt.Errorf("migration %d: %w", i+1, err)
 		}
-		if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, i+1)); err != nil {
+		if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, schemaBase+i+1)); err != nil { // coverage: unreachable, setting user_version in a healthy transaction that just ran its migration can't fail
 			tx.Rollback()
 			return err
 		}
@@ -242,22 +237,19 @@ type scanner interface{ Scan(...any) error }
 
 const appCols = `name, repo_url, path, target_revision, compose_files, profiles, host, auto_sync, self_heal, prune, adopt, rolled_back, kind, parent, not_in_git, prune_volumes, work_dir, created_at`
 
-// appRead is appCols plus what only SetAppDirs and SetAppDeleting write.
-const appRead = appCols + `, dirs, deleting`
+// appRead is appCols plus what only SetAppDeleting writes.
+const appRead = appCols + `, deleting`
 
 func scanApp(r scanner) (domain.Application, error) {
 	var a domain.Application
-	var files, profiles, dirs string
+	var files, profiles string
 	var created int64
 	if err := r.Scan(&a.Name, &a.RepoURL, &a.Path, &a.TargetRevision, &files, &profiles, &a.Host,
-		&a.AutoSync, &a.SelfHeal, &a.Prune, &a.Adopt, &a.RolledBack, &a.Kind, &a.Parent, &a.NotInGit, &a.PruneVolumes, &a.WorkDir, &created, &dirs, &a.Deleting); err != nil {
+		&a.AutoSync, &a.SelfHeal, &a.Prune, &a.Adopt, &a.RolledBack, &a.Kind, &a.Parent, &a.NotInGit, &a.PruneVolumes, &a.WorkDir, &created, &a.Deleting); err != nil {
 		return a, mapErr(err)
 	}
 	a.CreatedAt = fromUnix(created)
 	if err := json.Unmarshal([]byte(files), &a.ComposeFiles); err != nil {
-		return a, err
-	}
-	if err := json.Unmarshal([]byte(dirs), &a.Dirs); err != nil {
 		return a, err
 	}
 	return a, json.Unmarshal([]byte(profiles), &a.Profiles)
@@ -306,11 +298,6 @@ func (s *Store) UpdateApp(ctx context.Context, a domain.Application) error {
 	return affected(s.db.ExecContext(ctx, `UPDATE apps SET repo_url=?, path=?, target_revision=?, compose_files=?,
 		profiles=?, host=?, auto_sync=?, self_heal=?, prune=?, adopt=?, rolled_back=?, kind=?, parent=?, not_in_git=?, prune_volumes=?,
 		work_dir=? WHERE name=?`, append(args[1:], a.Name)...))
-}
-
-func (s *Store) SetAppDirs(ctx context.Context, name string, dirs []string) error {
-	b, _ := json.Marshal(dirs)
-	return affected(s.db.ExecContext(ctx, `UPDATE apps SET dirs=? WHERE name=?`, string(b), name))
 }
 
 func (s *Store) DeleteApp(ctx context.Context, name string) error {
@@ -404,57 +391,6 @@ func (s *Store) LastSucceededOp(ctx context.Context, app string) (domain.SyncOpe
 
 // ---- credentials ----
 
-func (s *Store) ListRepoCredentials(ctx context.Context) ([]domain.RepoCredential, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, url_prefix, username, password, ssh_private_key FROM repo_credentials ORDER BY id`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	creds := []domain.RepoCredential{}
-	for rows.Next() {
-		var c domain.RepoCredential
-		var pw, key string
-		if err := rows.Scan(&c.ID, &c.URLPrefix, &c.Username, &pw, &key); err != nil {
-			return nil, err
-		}
-		if c.Password, err = s.sealer.Open(pw); err != nil {
-			return nil, fmt.Errorf("open repo credential %d: %w", c.ID, err)
-		}
-		if c.SSHPrivateKey, err = s.sealer.Open(key); err != nil {
-			return nil, fmt.Errorf("open repo credential %d: %w", c.ID, err)
-		}
-		c.HasPassword, c.HasSSHKey = c.Password != "", c.SSHPrivateKey != ""
-		creds = append(creds, c)
-	}
-	return creds, rows.Err()
-}
-
-func (s *Store) SaveRepoCredential(ctx context.Context, c domain.RepoCredential) (int64, error) {
-	pw, err := s.sealer.Seal(c.Password)
-	if err != nil {
-		return 0, err
-	}
-	key, err := s.sealer.Seal(c.SSHPrivateKey)
-	if err != nil {
-		return 0, err
-	}
-	if c.ID == 0 {
-		res, err := s.db.ExecContext(ctx, `INSERT INTO repo_credentials (url_prefix, username, password, ssh_private_key)
-			VALUES (?,?,?,?)`, c.URLPrefix, c.Username, pw, key)
-		if err != nil {
-			return 0, mapErr(err)
-		}
-		return res.LastInsertId()
-	}
-	return c.ID, affected(s.db.ExecContext(ctx, `UPDATE repo_credentials SET url_prefix=?, username=?,
-		password=COALESCE(NULLIF(?, ''), password), ssh_private_key=COALESCE(NULLIF(?, ''), ssh_private_key) WHERE id=?`,
-		c.URLPrefix, c.Username, pw, key, c.ID))
-}
-
-func (s *Store) DeleteRepoCredential(ctx context.Context, id int64) error {
-	return affected(s.db.ExecContext(ctx, `DELETE FROM repo_credentials WHERE id = ?`, id))
-}
-
 func (s *Store) ListRegistryCredentials(ctx context.Context) ([]domain.RegistryCredential, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, registry, username, password FROM registry_credentials ORDER BY id`)
 	if err != nil {
@@ -500,20 +436,14 @@ func (s *Store) DeleteRegistryCredential(ctx context.Context, id int64) error {
 
 // ---- hosts ----
 
-// persistent, so bind-mounted files survive a reboot of the Host
-const defaultWorkDir = "/var/lib/omegacd"
-
-const hostCols = `name, url, work_dir, ssh_private_key, tls_ca, tls_cert, tls_key, created_at`
-
-// hostSelect reads a Host with its Agent's enrollment, which SaveHost never changes
-const hostSelect = `SELECT ` + hostCols + `, signing_key, age_recipient, approved, locked, agent, allow_ips FROM hosts`
+// hostSelect reads a Host with its Agent's enrollment
+const hostSelect = `SELECT name, created_at, signing_key, age_recipient, approved, locked, agent, allow_ips FROM hosts`
 
 func (s *Store) scanHost(r scanner) (domain.Host, error) {
 	var h domain.Host
-	var sealed [4]string
 	var created int64
 	var locked, agent, allow string
-	if err := r.Scan(&h.Name, &h.URL, &h.WorkDir, &sealed[0], &sealed[1], &sealed[2], &sealed[3], &created,
+	if err := r.Scan(&h.Name, &created,
 		&h.SigningKey, &h.AgeRecipient, &h.Approved, &locked, &agent, &allow); err != nil {
 		return h, mapErr(err)
 	}
@@ -535,13 +465,6 @@ func (s *Store) scanHost(r scanner) (domain.Host, error) {
 	if len(h.SigningKey) > 0 {
 		h.Fingerprint = domain.Fingerprint(h.SigningKey)
 	}
-	for i, dst := range []*string{&h.SSHPrivateKey, &h.TLSCA, &h.TLSCert, &h.TLSKey} {
-		var err error
-		if *dst, err = s.sealer.Open(sealed[i]); err != nil {
-			return h, fmt.Errorf("open host %s: %w", h.Name, err)
-		}
-	}
-	h.HasSSHKey, h.HasTLS = h.SSHPrivateKey != "", h.TLSCert != "" && h.TLSKey != ""
 	return h, nil
 }
 
@@ -753,19 +676,15 @@ func (s *Store) CreateInvite(ctx context.Context, host string, expires time.Time
 		return "", err
 	}
 	defer tx.Rollback()
-	var url string
 	var key []byte
-	err = tx.QueryRowContext(ctx, `SELECT url, signing_key FROM hosts WHERE name = ?`, host).Scan(&url, &key)
+	err = tx.QueryRowContext(ctx, `SELECT signing_key FROM hosts WHERE name = ?`, host).Scan(&key)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		if _, err := tx.ExecContext(ctx, `INSERT INTO hosts (`+hostCols+`) VALUES (?, '', ?, '', '', '', '', ?)`,
-			host, defaultWorkDir, toUnix(time.Now())); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO hosts (name, created_at) VALUES (?, ?)`, host, toUnix(time.Now())); err != nil { // coverage: unreachable, this transaction just found no Host by that name, and SQLite has one writer
 			return "", mapErr(err)
 		}
 	case err != nil:
 		return "", err
-	case url != "":
-		return "", fmt.Errorf("%w: Host %s is reached over SSH or TLS (%s), not through an Agent", domain.ErrInvalid, host, url)
 	case len(key) > 0:
 		return "", fmt.Errorf("%w: an Agent is enrolled for Host %s already", domain.ErrAlreadyExists, host)
 	}
@@ -828,89 +747,8 @@ func (s *Store) ApproveHost(ctx context.Context, host, fingerprint string) error
 	return affected(s.db.ExecContext(ctx, `UPDATE hosts SET approved = 1 WHERE name = ? AND signing_key = ?`, host, h.SigningKey))
 }
 
-func (s *Store) SaveHost(ctx context.Context, h domain.Host) error {
-	if h.WorkDir == "" {
-		h.WorkDir = defaultWorkDir
-	}
-	if h.CreatedAt.IsZero() {
-		h.CreatedAt = time.Now()
-	}
-	args := []any{h.Name, h.URL, h.WorkDir}
-	for _, v := range []string{h.SSHPrivateKey, h.TLSCA, h.TLSCert, h.TLSKey} {
-		sealed, err := s.sealer.Seal(v)
-		if err != nil {
-			return err
-		}
-		args = append(args, sealed)
-	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO hosts (`+hostCols+`) VALUES (?,?,?,?,?,?,?,?)
-		ON CONFLICT (name) DO UPDATE SET url = excluded.url, work_dir = excluded.work_dir,
-		ssh_private_key = COALESCE(NULLIF(excluded.ssh_private_key, ''), ssh_private_key),
-		tls_ca = COALESCE(NULLIF(excluded.tls_ca, ''), tls_ca),
-		tls_cert = COALESCE(NULLIF(excluded.tls_cert, ''), tls_cert),
-		tls_key = COALESCE(NULLIF(excluded.tls_key, ''), tls_key)`, append(args, toUnix(h.CreatedAt))...)
-	return mapErr(err)
-}
-
 func (s *Store) DeleteHost(ctx context.Context, name string) error {
 	return affected(s.db.ExecContext(ctx, `DELETE FROM hosts WHERE name = ?`, name))
-}
-
-// ---- host keys ----
-
-func (s *Store) ListHostKeys(ctx context.Context, host string) ([]domain.HostKey, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT recipient, private_key, current, created_at FROM host_keys
-		WHERE host = ? ORDER BY current DESC, rowid DESC`, host)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	keys := []domain.HostKey{}
-	for rows.Next() {
-		k := domain.HostKey{Host: host}
-		var sealed string
-		var created int64
-		if err := rows.Scan(&k.Recipient, &sealed, &k.Current, &created); err != nil {
-			return nil, err
-		}
-		k.CreatedAt = fromUnix(created)
-		if k.PrivateKey, err = s.sealer.Open(sealed); err != nil {
-			return nil, fmt.Errorf("open host key %s of %s: %w", k.Recipient, host, err)
-		}
-		keys = append(keys, k)
-	}
-	return keys, rows.Err()
-}
-
-func (s *Store) AddHostKey(ctx context.Context, k domain.HostKey) error {
-	sealed, err := s.sealer.Seal(k.PrivateKey)
-	if err != nil {
-		return err
-	}
-	if k.CreatedAt.IsZero() {
-		k.CreatedAt = time.Now()
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `UPDATE host_keys SET current = 0 WHERE host = ?`, k.Host); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO host_keys (host, recipient, private_key, current, created_at) VALUES (?,?,?,1,?)`,
-		k.Host, k.Recipient, sealed, toUnix(k.CreatedAt)); err != nil {
-		var se *sqlite.Error
-		if errors.As(err, &se) && se.Code() == sqlite3.SQLITE_CONSTRAINT_FOREIGNKEY {
-			return domain.ErrNotFound
-		}
-		return mapErr(err)
-	}
-	return tx.Commit()
-}
-
-func (s *Store) DeleteHostKey(ctx context.Context, host, recipient string) error {
-	return affected(s.db.ExecContext(ctx, `DELETE FROM host_keys WHERE host = ? AND recipient = ?`, host, recipient))
 }
 
 // ---- tokens ----

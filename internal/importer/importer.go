@@ -5,7 +5,6 @@
 package importer
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -63,7 +62,7 @@ type Options struct {
 	Definitions string // the App of Apps file to append to, relative to Repo: platform/apps.yaml
 	RepoURL     string
 	Revision    string
-	HostName    string // the Host's name in OmegaCD; "" for the local Host
+	HostName    string // the Host's name in OmegaCD, whose Agent runs the stacks
 	// Recipients returns the age public keys to encrypt secrets for; asked only when a stack has secrets.
 	Recipients func() ([]string, error)
 	Only       []string // stack names; empty imports every stack not managed by OmegaCD yet
@@ -373,7 +372,7 @@ func importStack(ctx context.Context, h Host, o Options, s Stack) (report, error
 	}
 	def, err := appdef.MarshalAdopting(domain.Application{
 		Name: s.Name, RepoURL: o.RepoURL, Path: r.appDir, TargetRevision: o.Revision,
-		ComposeFiles: composeFiles, Host: cmp.Or(o.HostName, domain.LocalHost),
+		ComposeFiles: composeFiles, Host: o.HostName,
 	})
 	if err != nil {
 		return r, err

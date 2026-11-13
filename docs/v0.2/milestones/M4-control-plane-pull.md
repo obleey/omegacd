@@ -67,21 +67,25 @@ Agent's log, updated where they look at the old path (the Control Plane's work d
 with M4-05, which rewrites the README for Hosts without `local`.
 
 ### M4-05 · Delete push and legacy
-**Status:** todo
+**Status:** done (2026-11-12, PR #125)
 **Depends on:** M4-01, M4-02, M4-04
 
 Remove (Q9, Q18, Q104): SSH/TLS Hosts and their settings, the Host `local` and the default Host (every Application
 names its `host:`), the Control Plane's own deploy path and engine, `OMEGACD_LOCAL_HOST`, central decryption
 and stored private Host Keys (the Control Plane keeps Agents' public keys only), the old layouts and their fallbacks,
-`import --ssh`, and with them the image's `openssh-client` (the Dockerfile installs it only for the Docker client's
-`ssh://` Hosts; Git over SSH is go-git) and `OMEGACD_SSH_KNOWN_HOSTS` with its known_hosts handling. A fresh v0.2
-database schema; no migration.
+`import --ssh`, `host key generate|import|remove`, and the image's `openssh-client` (the Dockerfile installs it only
+for the Docker client's `ssh://` Hosts; Git over SSH is go-git). `OMEGACD_SSH_KNOWN_HOSTS` stays, for Git over SSH only
+(Q106). One public Host Key recipient per Host, from its Agent (Q108). A fresh v0.2 database schema; no migration
+(Q105). The UI parts that call removed endpoints go in the same PR, with no new UI (Q110).
+Decided before it: Q105–Q110.
 
 A v0.1 database is refused with a message (export with v0.1's `app export`, then reinstall) and left untouched (Q90).
 
 From M4-04: the check that OmegaCD doesn't Sync its own Compose project (`refuseSelf`, today the Control Plane's)
-moves into the Agent, which refuses only its own project: the Control Plane's is an Application like any other, OmegaCD
-managing itself (Q104). The README walkthrough and its e2e script install and enroll an Agent first.
+moves into the Agent, which refuses only the project containing its own container (Q109): the Control Plane's is an
+Application like any other, OmegaCD managing itself (Q104). The README is edited to be correct and its walkthrough, with
+its e2e script, installs and enrolls an Agent first; the deploy files lose the socket, the work dir and
+`OMEGACD_LOCAL_HOST` (Q110).
 
 **Done when:** none of it is left (grep), all tests pass, the binary is smaller, and a v0.1 database is refused
 without being changed.
@@ -160,3 +164,21 @@ out: it is deleted first, never tested (Q97). Then CI requires 100%: any uncover
 
 **Done when:** `make cover` shows 100% of the lines not marked unreachable, CI enforces it, and no error path is
 silent (reviewed package by package, the operator-facing ones tested by their log line).
+
+### M4-12 · Ubuntu 26.04: Podman green
+**Status:** deferred: after v0.2 (Q111, 2026-11-12; ROADMAP)
+**Depends on:** M4-05
+**Issue:** [#126](https://github.com/obleey/omegacd/issues/126)
+
+CI ran on `ubuntu-latest`. When GitHub moved it to Ubuntu 26.04, the current LTS (PR #125), the runner's own rootless
+Podman failed every container removal: `rootless netns: kill network process: permission denied`. Rootful and
+rootless Docker and Podman in a container passed. The cause isn't known yet (probably AppArmor and pasta). v0.2 is
+tested on Ubuntu 24.04 only: every CI job is pinned to `ubuntu-24.04` (PR #125). After v0.2.0, to do:
+- find the cause; fix it in the Agent if an Agent can hit it, otherwise in the tests' setup, and document what a Host
+  needs;
+- CI's jobs on `ubuntu-26.04`, Agent engines green there;
+- Ubuntu 26.04 machines (amd64 and arm64) in `make test-linux` (omegacd-testinfra) and M7-07's runner labels; Q61 and
+  TESTING.md name 26.04 as tested.
+
+**Done when:** CI is green on `ubuntu-26.04` and `make test-linux` on Ubuntu 26.04 on both architectures,
+with the runner's own Podman.

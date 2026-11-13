@@ -3,7 +3,6 @@
 package domain
 
 import (
-	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -18,12 +17,6 @@ import (
 	"strings"
 	"time"
 )
-
-// LocalHost is the built-in Host: the Docker engine omegacd talks to via DOCKER_HOST / the socket.
-const LocalHost = "local"
-
-// ErrLocalHostDisabled: OMEGACD_LOCAL_HOST=false, there is no local Docker engine (e.g. in Kubernetes).
-var ErrLocalHostDisabled = fmt.Errorf("%w: the local Host is disabled (OMEGACD_LOCAL_HOST=false): choose a remote Host", ErrInvalid)
 
 // Application kinds.
 const (
@@ -57,7 +50,7 @@ type Application struct {
 	TargetRevision string   `json:"targetRevision"` // branch, tag or commit SHA; default "main"
 	ComposeFiles   []string `json:"composeFiles"`   // relative to Path; empty: the first of DefaultComposeFiles found
 	Profiles       []string `json:"profiles"`
-	Host           string   `json:"host"` // a Host name; default LocalHost
+	Host           string   `json:"host"` // the Host whose Agent deploys it; none for an App of Apps
 	AutoSync       bool     `json:"autoSync"`
 	SelfHeal       bool     `json:"selfHeal"`
 	Prune          bool     `json:"prune"`
@@ -71,9 +64,6 @@ type Application struct {
 	NotInGit   bool      `json:"notInGit"`          // a Child Application its parent no longer declares (kept because Prune is off)
 	WorkDir    string    `json:"workDir,omitempty"` // absolute root for its folder on the Host (Q57); "": the Host's work dir
 	CreatedAt  time.Time `json:"createdAt"`
-	// Dirs is the folders (HostDir) Syncs wrote the Application's files to and that may still hold them: a Sync may
-	// write into them again, and deletes the ones it moved away from. Only Store.SetAppDirs changes it.
-	Dirs []string `json:"-"`
 }
 
 type SyncStatus string
@@ -163,28 +153,14 @@ func (a Application) ComposeFilesIn(dir string) []string {
 // Child Application. Names are unique, so no two Applications share a folder; an App of Apps has no files.
 func (a Application) Dir() string { return path.Join(a.Parent, a.Name) }
 
-// HostDir names folder dir on host ("" = LocalHost), as Application.Dirs holds it.
-func HostDir(host, dir string) string { return cmp.Or(host, LocalHost) + ":" + dir }
-
-// MarkerFile marked the folders OmegaCD created, holding the name of their Application, before Application.Dirs.
+// MarkerFile marked the folders OmegaCD created, holding the name of their Application, before an Agent recorded them.
 // A Sync still takes a folder marked for its Application (and deletes the marker) and refuses one marked for another.
 const MarkerFile = ".omegacd"
 
-// LegacyDir held every Application's files before Dir (<work dir>/apps/<name>); a Sync removes the old folder.
-const LegacyDir = "apps"
-
-// Host is a Docker engine Applications deploy to. LocalHost is built in and not stored.
+// Host is a machine Applications deploy to, through its Agent (Q9).
 type Host struct {
-	Name          string    `json:"name"`
-	URL           string    `json:"url"`     // ssh://user@server[:port] or tcp://server:2376
-	WorkDir       string    `json:"workDir"` // Application files are copied here on the host; default /var/lib/omegacd (persistent across reboots)
-	SSHPrivateKey string    `json:"-"`
-	TLSCA         string    `json:"-"` // PEM; TLS is used when TLSCert and TLSKey are set
-	TLSCert       string    `json:"-"`
-	TLSKey        string    `json:"-"`
-	HasSSHKey     bool      `json:"hasSSHKey"`
-	HasTLS        bool      `json:"hasTLS"`
-	CreatedAt     time.Time `json:"createdAt"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"createdAt"`
 	// an enrolled Agent's (Q22): its ed25519 public key, empty until it enrolls; its age Host Key's recipient; and
 	// whether an admin approved the key, comparing Fingerprint (Q28, Q74)
 	SigningKey   []byte `json:"-"`
@@ -284,14 +260,13 @@ func Fingerprint(publicKey []byte) string {
 	return "SHA256:" + base64.RawStdEncoding.EncodeToString(sum[:])
 }
 
-// HostStatus is the result of contacting a Host's Docker engine.
+// HostStatus is a Host's state as its Agent last reported it.
 type HostStatus struct {
 	Name          string `json:"name"`
 	Connected     bool   `json:"connected"`
 	Error         string `json:"error,omitempty"`
 	ServerVersion string `json:"serverVersion,omitempty"`
 	OS            string `json:"os,omitempty"`
-	Containers    int    `json:"containers"`
 }
 
 // HostView is a Host plus its connection status and the Applications deployed to it, as returned by the API.
@@ -299,20 +274,14 @@ type HostView struct {
 	Host
 	Status HostStatus `json:"status"`
 	Apps   []string   `json:"apps"`
-	// KeyRecipient is the public key of the Host's current Host Key (the Master Key for LocalHost), "" if it has none.
-	KeyRecipient string `json:"keyRecipient"`
 }
 
-// HostKey is an age X25519 key pair Encrypted Secrets for one Host are decrypted with.
-// A Host has at most one Current key; the others are previous keys kept for decryption during a rotation.
-// PrivateKey (AGE-SECRET-KEY-1...) is sealed at rest and never leaves the control plane.
+// HostKey is the public half of a Host's age Host Key, born on its Agent (Q4, Q108): its Encrypted Secrets are
+// encrypted for Recipient. The private key never leaves the Agent.
 type HostKey struct {
-	Host       string    `json:"-"`
-	Recipient  string    `json:"recipient"` // age1...
-	PrivateKey string    `json:"-"`
-	Current    bool      `json:"current"`
-	Master     bool      `json:"master,omitempty"` // the Master Key, which is LocalHost's Host Key
-	CreatedAt  time.Time `json:"createdAt,omitzero"`
+	Recipient string    `json:"recipient"` // age1...
+	Current   bool      `json:"current"`
+	CreatedAt time.Time `json:"createdAt,omitzero"`
 }
 
 // WrongKeyError is returned by Secrets.DecryptDir when none of the given identities can decrypt File.
@@ -459,8 +428,6 @@ type Store interface {
 	ListOps(ctx context.Context, app string) ([]SyncOperation, error) // newest first
 	// LastSucceededOp returns the newest Succeeded op, or ErrNotFound.
 	LastSucceededOp(ctx context.Context, app string) (SyncOperation, error)
-	// SetAppDirs replaces the Application's Dirs; UpdateApp never changes them.
-	SetAppDirs(ctx context.Context, name string, dirs []string) error
 
 	// Secrets in credentials are encrypted at rest and decrypted on read. Repository credentials are the
 	// Source Server's (domain.Source).
@@ -471,8 +438,7 @@ type Store interface {
 	// Hosts: secrets are sealed at rest; empty secret fields on save keep the old value.
 	ListHosts(ctx context.Context) ([]Host, error)
 	GetHost(ctx context.Context, name string) (Host, error)
-	SaveHost(ctx context.Context, h Host) error        // create or update by Name
-	DeleteHost(ctx context.Context, name string) error // also deletes its Host Keys
+	DeleteHost(ctx context.Context, name string) error
 
 	// Enrollment (Q22, Q73): CreateInvite adds the Host by name if it's new and returns a single-use invite for it,
 	// valid until expires; a new one replaces the Host's previous. ErrAlreadyExists once an Agent enrolled for it.
@@ -517,12 +483,6 @@ type Store interface {
 	UnlockHost(ctx context.Context, host string) error
 	// ApproveHost approves the Host's key if fingerprint is the key's (ErrInvalid otherwise, or without a key).
 	ApproveHost(ctx context.Context, host, fingerprint string) error
-
-	// Host Keys: PrivateKey is sealed at rest. ListHostKeys returns the current key first, then the previous ones, newest first.
-	ListHostKeys(ctx context.Context, host string) ([]HostKey, error)
-	// AddHostKey stores k as the Host's current key; the old current key becomes previous. ErrAlreadyExists if the Host has it already.
-	AddHostKey(ctx context.Context, k HostKey) error
-	DeleteHostKey(ctx context.Context, host, recipient string) error
 
 	ListTokens(ctx context.Context) ([]APIToken, error)
 	CreateToken(ctx context.Context, name string) (APIToken, string, error) // returns plaintext once
@@ -614,11 +574,6 @@ type SyncOptions struct {
 	// ForceRecreate recreates every container even if its config is unchanged
 	// (after a restore, bind mounts must be re-attached to the restored files).
 	ForceRecreate bool
-	// Children is, for a Child Application on a remote Host, its App of Apps' children: their folders are all its
-	// App of Apps' folder may hold for a Sync to write there.
-	Children []string
-	// Wrote is called with the folder (HostDir) on a remote Host the files were just written to; an error fails the Sync.
-	Wrote func(dir string) error
 }
 
 // Engine runs Compose projects on a Host. dir is the Application's stable working directory
@@ -637,14 +592,8 @@ type Engine interface {
 	Remove(ctx context.Context, app Application, volumes bool) error
 	// Status returns the Live State, including Health per container and overall.
 	Status(ctx context.Context, app Application) (LiveState, error)
-	// WorkingDirs lists the folders (compose's working_dir label) app's containers created by OmegaCD run from.
-	WorkingDirs(ctx context.Context, app Application) ([]string, error)
-	// ProjectExists reports whether a Compose project with this name has containers on host, and whether omegacd manages it.
-	ProjectExists(ctx context.Context, host, name string) (exists, managed bool, err error)
-	// HostStatus contacts the host's Docker engine.
-	HostStatus(ctx context.Context, host string) HostStatus
-	// HostChanged drops cached connections after a Host is edited or deleted.
-	HostChanged(host string)
+	// ProjectExists reports whether a Compose project with this name has containers, and whether omegacd manages it.
+	ProjectExists(ctx context.Context, name string) (exists, managed bool, err error)
 	// Logs streams the logs (stdout+stderr, demultiplexed, with timestamps) of one of app's containers to w
 	// until ctx ends or, if !follow, EOF. A container of another project is ErrNotFound.
 	Logs(ctx context.Context, app Application, containerID string, follow bool, tail int, w io.Writer) error
@@ -652,10 +601,9 @@ type Engine interface {
 	ProjectFiles(ctx context.Context, app Application, dir string) ([]Resource, error)
 	// Inspect describes a volume or network of the project.
 	Inspect(ctx context.Context, app Application, kind, name string) (map[string]string, error)
-	// Watch calls changed with the Host and Compose project name whenever a container on any Host changes state,
-	// and with an empty project after reconnecting to a Host (events may have been missed: resync all of it).
-	// It blocks, reconnecting as needed, until ctx ends.
-	Watch(ctx context.Context, changed func(host, project string)) error
+	// Watch calls changed with the Compose project name whenever one of its containers changes state, and with an
+	// empty project after reconnecting (events may have been missed: resync all of it). It blocks until ctx ends.
+	Watch(ctx context.Context, changed func(project string)) error
 	Close() error
 }
 
@@ -688,23 +636,14 @@ type Controller interface {
 	RepoChanged(ctx context.Context, repoURL string)
 	Subscribe() (<-chan Event, func())
 
-	// ListHosts returns the built-in LocalHost first, then the stored Hosts.
 	ListHosts(ctx context.Context) ([]HostView, error)
-	// SaveHost creates (create=true, ErrAlreadyExists if taken) or updates a Host; LocalHost is reserved.
-	SaveHost(ctx context.Context, h Host, create bool) (HostView, error)
 	// DeleteHost refuses (ErrInvalid) while Applications use the Host.
 	DeleteHost(ctx context.Context, name string) error
-	TestHost(ctx context.Context, name string) (HostStatus, error)
 	// InviteHost adds a Host reached through an Agent, by name, and returns a single-use invite for it, valid an hour
 	// (Q22, Q73); for such a Host no Agent has enrolled for yet, a new invite that replaces the last.
 	InviteHost(ctx context.Context, name string) (invite string, expires time.Time, err error)
-	// HostKeys lists a Host's keys without private keys (LocalHost: just the Master Key).
+	// HostKeys is the public half of the Host's Host Key, from its Agent (Q108); none before an Agent enrolled.
 	HostKeys(ctx context.Context, host string) ([]HostKey, error)
-	// GenerateHostKey and ImportHostKey (an AGE-SECRET-KEY-1... string) add a new current key; the old one becomes previous.
-	GenerateHostKey(ctx context.Context, host string) (HostKey, error)
-	ImportHostKey(ctx context.Context, host, privateKey string) (HostKey, error)
-	// RemoveHostKey removes a previous key (ErrInvalid for the current one).
-	RemoveHostKey(ctx context.Context, host, recipient string) error
 	// CheckRepo reports whether repoURL can be read (ErrInvalid if empty).
 	CheckRepo(ctx context.Context, repoURL string) (RepoAccess, error)
 }

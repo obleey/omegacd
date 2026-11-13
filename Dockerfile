@@ -26,8 +26,8 @@ LABEL org.opencontainers.image.title="OmegaCD" \
       org.opencontainers.image.url="https://github.com/obleey/omegacd" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.version="${VERSION}"
-# openssh-client: the Docker client dials ssh:// Hosts through the ssh binary; Git over SSH goes through go-git
-RUN apk add --no-cache ca-certificates openssh-client
+# Git over SSH goes through go-git: no ssh binary (Q106)
+RUN apk add --no-cache ca-certificates
 COPY --from=go /omegacd /usr/local/bin/omegacd
 VOLUME /data
 EXPOSE 8080

@@ -7,14 +7,14 @@ set -u # no pipefail: grep -q closing the pipe early must not fail a check
 BIN=${OMEGACD_BIN:-$(cd "$(dirname "$0")/../.." && pwd)/bin/omegacd}
 T=$(mktemp -d "${TMPDIR:-/tmp}/omegacd-e2en.XXXX")
 API=http://127.0.0.1:18080/api
-mkdir -p "$T/data" "$T/work"
+mkdir -p "$T/data"
 fail=0
 check() { if eval "$2"; then echo "PASS  $1"; else echo "FAIL  $1"; fail=1; fi; }
 PIDS=()
 trap 'kill ${PIDS[@]+"${PIDS[@]}"} 2>/dev/null; wait 2>/dev/null; rm -rf "$T"' EXIT
 
 age-keygen -o "$T/age.key" 2>/dev/null
-OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_WORKDIR=$T/work OMEGACD_AGE_KEY_FILE=$T/age.key \
+OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_AGE_KEY_FILE=$T/age.key \
   OMEGACD_ADMIN_PASSWORD=e2e-password-123 OMEGACD_POLL_INTERVAL=1h "$BIN" > "$T/server.log" 2>&1 &
 PIDS+=($!)
 for _ in $(seq 50); do curl -sf $API/version >/dev/null && break; sleep 0.2; done
@@ -47,8 +47,11 @@ check "the Agent enrolls and waits for approval" 'waitfor "$T/web.log" "waiting 
 FP=$(grep -o 'fingerprint=SHA256:[A-Za-z0-9+/]*' "$T/web.log" | head -1 | cut -d= -f2)
 check "the Agent prints its key's fingerprint at start" '[ -n "$FP" ] && grep "msg=\"omegacd agent\"" "$T/web.log" | grep -qF "fingerprint=$FP"'
 check "the fingerprint the Control Plane shows is the Agent's" '"$BIN" host list | grep -qF "to approve $FP"'
-check "and so is the Host Key the Agent registered" \
-  '"$BIN" host list | grep -q "^web .*$(grep -o "hostKey=age1[a-z0-9]*" "$T/web.log" | head -1 | cut -d= -f2)"'
+HK=$(grep -o "hostKey=age1[a-z0-9]*" "$T/web.log" | head -1 | cut -d= -f2)
+check "and so is the Host Key the Agent registered" '[ -n "$HK" ] && "$BIN" host list | grep -q "^web .*$HK"'
+check "host key show prints it: its public half, all the Control Plane has (Q108)" '[ "$("$BIN" host key show web)" = "$HK" ]'
+out=$("$BIN" host key generate web 2>&1); rc=$?
+check "no Host Key is made or taken on the Control Plane" '[ $rc -ne 0 ] && echo "$out" | grep -q "Usage\|unknown"'
 check "its signing key is owner-only in its state dir" '[ "$(ls -l "$T/web/.local/share/omegacd-agent/signing.key" | cut -c1-10)" = -rw------- ]'
 
 out=$("$BIN" host approve web SHA256:not-the-agents-key 2>&1); rc=$?
@@ -78,7 +81,9 @@ check "the refused Agents enrolled nowhere" '[ "$("$BIN" host list | grep -c "SH
 out=$("$BIN" host add web 2>&1); rc=$?
 check "an enrolled Host gets no new invite" '[ $rc -ne 0 ] && echo "$out" | grep -q "enrolled for Host web already"'
 out=$("$BIN" host add local 2>&1); rc=$?
-check "the built-in Host can't be invited" '[ $rc -ne 0 ] && echo "$out" | grep -q "built-in Host"'
+check "local is an ordinary name, invited like any (Q110)" '[ $rc -eq 0 ] && echo "$out" | grep -q "OMEGACD_AGENT_INVITE=omegacd-invite-"'
+out=$("$BIN" app create nohost --repo https://example.com/r.git 2>&1); rc=$?
+check "an Application without a Host is refused: there is no default (Q104)" '[ $rc -ne 0 ] && echo "$out" | grep -q "host is required"'
 
 # M3-03: rotation, locking, revocation
 KEY=$T/web/.local/share/omegacd-agent/signing.key

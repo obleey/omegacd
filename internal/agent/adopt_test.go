@@ -15,7 +15,7 @@ type projects struct {
 	err error
 }
 
-func (p projects) ProjectExists(_ context.Context, _, name string) (bool, bool, error) {
+func (p projects) ProjectExists(_ context.Context, name string) (bool, bool, error) {
 	return name == "hand", false, p.err
 }
 
@@ -46,5 +46,44 @@ func TestAdoptable(t *testing.T) {
 	db.Close()
 	if err := ag.adoptable(ctx, &agentv1.DesiredState{App: "new"}); err == nil || errors.Is(err, domain.ErrNotFound) {
 		t.Errorf("a database that can't answer: %v", err)
+	}
+}
+
+// selfEngine is an engine whose project "omegacd" holds the container cafe1234beef, the Agent's own.
+type selfEngine struct {
+	domain.Engine
+	err error
+}
+
+func (r selfEngine) Status(_ context.Context, a domain.Application) (domain.LiveState, error) {
+	if a.Name != "omegacd" {
+		return domain.LiveState{}, r.err
+	}
+	return domain.LiveState{Containers: []domain.Container{{ID: "cafe1234beef00", Name: "omegacd-agent-1"}}}, r.err
+}
+
+// Q109: an Agent in a container refuses the project it runs in, found by its hostname (the container ID's prefix) or
+// its container's name; any other, the Control Plane's included, deploys; outside a container nothing is refused.
+func TestRefuseSelf(t *testing.T) {
+	ctx := t.Context()
+	ag := New(nil, nil, nil, nil, selfEngine{}, nil)
+	ag.self = "cafe1234beef"
+	if err := ag.refuseSelf(ctx, "omegacd"); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("its own project: %v", err)
+	}
+	if err := ag.refuseSelf(ctx, "controlplane"); err != nil {
+		t.Fatalf("another project: %v", err)
+	}
+	ag.self = "omegacd-agent-1"
+	if err := ag.refuseSelf(ctx, "omegacd"); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("by its container's name: %v", err)
+	}
+	ag.engine = selfEngine{err: errors.New("engine down")}
+	if err := ag.refuseSelf(ctx, "web"); err == nil {
+		t.Fatal("an engine that can't answer let it deploy")
+	}
+	ag.self = ""
+	if err := ag.refuseSelf(ctx, "omegacd"); err != nil {
+		t.Fatalf("outside a container: %v", err)
 	}
 }

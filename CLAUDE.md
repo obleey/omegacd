@@ -6,7 +6,7 @@ https://github.com/obleey/omegacd.
 ## Where things stand
 
 - **`main` is v0.2 in development**: a breaking redesign to pull-based Agents and a separate Source Server. Read
-  [docs/v0.2/README.md](docs/v0.2/README.md) first: architecture, every design decision (Q1–Q104), and the work as
+  [docs/v0.2/README.md](docs/v0.2/README.md) first: architecture, every design decision (Q1–Q111), and the work as
   tickets in [docs/v0.2/milestones/](docs/v0.2/milestones/). Work milestones in order (M1 → M8).
 - **v0.1 is deprecated** (Q97): `release-0.1` (push over SSH/TLS, last tag `v0.1.0-rc.10`) is frozen, no fixes; there
   is no v0.1.0 release. v0.2.0 is OmegaCD's first stable release. Write no tests or features for v0.1-only code: M4-05
@@ -76,13 +76,13 @@ https://github.com/obleey/omegacd.
 make build              # web UI, then bin/omegacd
 make proto              # protobuf → internal/proto (commit the result; rules in proto/README.md)
 make test               # unit tests (go test ./...); cd web && npm run check && npm test for the UI
-make test-integration   # against the local Docker engine (docker:dind for remote Hosts; ~6 min)
+make test-integration   # against the local Docker engine (~6 min)
 make test-engines       # the Agent against rootful Docker, rootless Docker and rootless Podman (test/engines.sh)
 make test-all           # the whole suite: vet, unit -race, integration, test-engines, e2e with Forgejo
 make test-linux         # test-all on Ubuntu 24.04 and Debian 13, amd64 and arm64: Hetzner servers (test/linux.sh, ../omegacd-testinfra)
 make gate               # the gate before a push: test-linux with coverage, merged and checked; summary in cover/gate-summary.txt
 make e2e                # end-to-end: throwaway OmegaCDs driven through the CLI (needs age-keygen, sops)
-make run                # run locally with data in ./data (OMEGACD_WORKDIR=… to move the work dir)
+make run                # run locally with data in ./data
 make stop               # stop it (only the listener)
 docs/v0.2/create-issues.sh [--apply]   # tickets → GitHub issues (needs gh auth login)
 ```

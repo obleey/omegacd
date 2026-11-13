@@ -9,7 +9,6 @@ import (
 
 	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/distribution/reference"
-	"github.com/docker/compose/v5/pkg/api"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 
@@ -128,21 +127,6 @@ func TestResolveRefsMissingContainer(t *testing.T) {
 	}
 }
 
-func TestNoLocalHost(t *testing.T) {
-	e, err := New(Config{NoLocalHost: true}) // no Docker CLI set up at all
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, host := range []string{"", domain.LocalHost} {
-		if _, err := e.conn(context.Background(), host); !errors.Is(err, domain.ErrLocalHostDisabled) {
-			t.Fatalf("conn(%q) = %v", host, err)
-		}
-	}
-	if _, err := e.Status(context.Background(), domain.Application{Name: "web"}); !errors.Is(err, domain.ErrLocalHostDisabled) {
-		t.Fatalf("Status on local = %v", err)
-	}
-}
-
 type listClient struct {
 	client.APIClient
 	items []container.Summary
@@ -150,26 +134,6 @@ type listClient struct {
 
 func (c listClient) ContainerList(context.Context, client.ContainerListOptions) (client.ContainerListResult, error) {
 	return client.ContainerListResult{Items: c.items}, nil
-}
-
-// Only containers OmegaCD created for the app vouch for their folder: not an adopted project's (doco-cd's alloy).
-func TestWorkingDirs(t *testing.T) {
-	ctr := func(dir string, labels ...string) container.Summary {
-		l := map[string]string{api.WorkingDirLabel: dir}
-		for i := 0; i < len(labels); i += 2 {
-			l[labels[i]] = labels[i+1]
-		}
-		return container.Summary{Labels: l}
-	}
-	c := listClient{items: []container.Summary{
-		ctr("/opt/services/alloy"),
-		ctr("/opt/other", domain.ManagedLabel, "alloy"),
-		ctr("/opt/older", domain.ManagedByLabel, domain.ManagedByValue, domain.ManagedLabel, "other"),
-		ctr("/opt/omegacd/alloy", domain.ManagedByLabel, domain.ManagedByValue, domain.ManagedLabel, "alloy"),
-	}}
-	if got, err := workingDirs(t.Context(), c, "alloy"); err != nil || !slices.Equal(got, []string{"/opt/omegacd/alloy"}) {
-		t.Fatalf("workingDirs = %v, %v", got, err)
-	}
 }
 
 // M2-11: the init services are those another waits for to complete; a dependency waited on only to start or be

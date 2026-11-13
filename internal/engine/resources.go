@@ -74,10 +74,7 @@ func (e *Engine) ProjectFiles(ctx context.Context, app domain.Application, dir s
 }
 
 func (e *Engine) Inspect(ctx context.Context, app domain.Application, kind, name string) (map[string]string, error) {
-	hc, err := e.conn(ctx, app.Host)
-	if err != nil {
-		return nil, err
-	}
+	hc := e.hc
 	c := hc.cli.Client()
 	switch kind {
 	case "volume":
