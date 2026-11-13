@@ -1159,7 +1159,7 @@ func TestDeleteThroughAgent(t *testing.T) {
 	ag.mu.Lock()
 	ag.err = nil
 	ag.mu.Unlock()
-	r.c.Resynced(ctx, "edge", nil, nil)
+	r.c.Resynced(ctx, "edge", map[string]string{"old": "tree-aaaaaaaa"}, nil) // what its Agent runs: nothing to restore (Q123)
 	for deadline := time.Now().Add(2 * time.Second); ; time.Sleep(5 * time.Millisecond) {
 		if _, err := r.st.GetApp(ctx, "db"); errors.Is(err, domain.ErrNotFound) {
 			break
