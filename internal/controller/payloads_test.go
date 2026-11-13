@@ -217,3 +217,30 @@ func TestRestoreAfterLostSync(t *testing.T) {
 		t.Fatalf("restore: %+v, sent %d", op, len(ag.sent()))
 	}
 }
+
+// A Sync that can't start (here: its Sync Operation can't be recorded) is logged, by Auto-Sync and by an App of Apps
+// syncing its children alike.
+func TestSyncThatCantStartIsLogged(t *testing.T) {
+	r := newRig(t)
+	ctx := t.Context()
+	var logs lockedBuffer
+	r.c.cfg.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	r.st.mu.Lock()
+	r.st.createOpErr = errors.New("disk full")
+	r.st.mu.Unlock()
+	a := app("web")
+	a.AutoSync = true
+	r.c.CreateApp(ctx, a)
+	parent := app("platform")
+	parent.Kind = domain.KindApps
+	r.st.CreateApp(ctx, parent)
+	child := app("child")
+	child.Parent = "platform"
+	r.st.CreateApp(ctx, child)
+	r.c.syncPendingChildren(ctx, "platform")
+	for _, want := range []string{`msg="auto sync" err="disk full"`, `msg="sync child application" app=child parent=platform err="disk full"`} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("no %s:\n%s", want, logs.String())
+		}
+	}
+}

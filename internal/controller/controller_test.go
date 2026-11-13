@@ -39,6 +39,7 @@ type fakeStore struct {
 	renders      map[string][]domain.File      // kept renders by tree (Q120)
 	renderErr    error                         // Render fails with it
 	saveErr      error                         // SaveRender fails with it
+	createOpErr  error                         // CreateOp fails with it
 	mu           sync.Mutex
 	apps         map[string]domain.Application
 	ops          []domain.SyncOperation
@@ -112,6 +113,9 @@ func (s *fakeStore) DeleteApp(_ context.Context, n string) error {
 func (s *fakeStore) CreateOp(_ context.Context, op domain.SyncOperation) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.createOpErr != nil {
+		return 0, s.createOpErr
+	}
 	op.ID = int64(len(s.ops) + 1)
 	s.ops = append(s.ops, op)
 	return op.ID, nil
