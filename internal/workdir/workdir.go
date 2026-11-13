@@ -85,7 +85,7 @@ func writeEntry(dest string, f domain.File, content []byte) error {
 	if cerr := file.Close(); err == nil {
 		err = cerr
 	}
-	if err != nil {
+	if err != nil { // coverage: unreachable, a file just opened for writing; only a full disk fails
 		return err
 	}
 	return os.Chmod(target, perm)
@@ -121,15 +121,16 @@ func prune(dest string, keep map[string]bool) error {
 }
 
 // Claim creates dir if needed when it may be written for Application name, and refuses a folder someone else
-// owns (Q48): dir may be written if it it carries name's marker from before Dirs (deleted
-// now), or no marker and it is owned (the caller knows it wrote there or runs containers from it), holds nothing but directories (Docker re-creates missing bind-mount sources as
-// empty directories, which hold no one's data), or holds nothing but folders named in kids.
+// owns (Q48): dir may be written if it carries name's marker (from older OmegaCDs, removed here), or has no marker
+// and is owned (the caller knows it wrote there or runs containers from it), holds nothing but directories (Docker
+// re-creates missing bind-mount sources as empty directories, which hold no one's data), or holds nothing but
+// folders named in kids.
 func Claim(dir, name string, owned bool, kids []string) error {
 	marker := filepath.Join(dir, domain.MarkerFile)
 	b, err := os.ReadFile(marker)
 	if err == nil && string(b) == name || err != nil && (owned || !hasFiles(dir) || onlyDirs(dir, kids)) {
 		if err == nil {
-			os.Remove(marker)
+			os.Remove(marker) // a marker left behind is name's own, and the next Write deletes it (Q141)
 		}
 		return os.MkdirAll(dir, 0o750)
 	}

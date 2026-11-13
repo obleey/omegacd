@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net/url"
 	"time"
 
@@ -21,34 +22,43 @@ import (
 	sourcev1 "github.com/obleey/omegacd/internal/proto/source/v1"
 )
 
-// Serve registers s as the source/v1 service on g.
-func Serve(g *grpc.Server, s domain.Source) {
-	sourcev1.RegisterSourceServiceServer(g, &grpcServer{s: s})
+// Serve registers s as the source/v1 service on g; log gets the requests that fail.
+func Serve(g *grpc.Server, s domain.Source, log *slog.Logger) {
+	sourcev1.RegisterSourceServiceServer(g, &grpcServer{s: s, log: log})
 }
 
 type grpcServer struct {
 	sourcev1.UnimplementedSourceServiceServer
-	s domain.Source
+	s   domain.Source
+	log *slog.Logger
 }
 
-// toStatus keeps the domain errors callers test for across the wire.
-func toStatus(err error) error {
+// toStatus keeps the domain errors callers test for across the wire, and logs err (Q136): at Warn what the Control
+// Plane didn't cause (Git, the disk), at debug what it reports itself.
+func (g *grpcServer) toStatus(ctx context.Context, err error) error {
+	code := codes.Unknown
 	switch {
 	case err == nil:
 		return nil
 	case errors.Is(err, domain.ErrNotFound):
-		return status.Error(codes.NotFound, err.Error())
+		code = codes.NotFound
 	case errors.Is(err, domain.ErrInvalid):
-		return status.Error(codes.InvalidArgument, err.Error())
+		code = codes.InvalidArgument
 	case errors.Is(err, domain.ErrAlreadyExists):
-		return status.Error(codes.AlreadyExists, err.Error())
+		code = codes.AlreadyExists
 	}
-	return status.Error(codes.Unknown, err.Error())
+	call, _ := grpc.Method(ctx)
+	if code == codes.Unknown {
+		g.log.WarnContext(ctx, "source server request failed", "call", call, "err", err)
+	} else {
+		g.log.DebugContext(ctx, "source server request refused", "call", call, "err", err)
+	}
+	return status.Error(code, err.Error())
 }
 
 func (g *grpcServer) Resolve(ctx context.Context, r *sourcev1.ResolveRequest) (*sourcev1.ResolveResponse, error) {
 	rev, err := g.s.Resolve(ctx, r.RepoUrl, r.Ref)
-	return &sourcev1.ResolveResponse{Revision: rev}, toStatus(err)
+	return &sourcev1.ResolveResponse{Revision: rev}, g.toStatus(ctx, err)
 }
 
 func (g *grpcServer) Invalidate(_ context.Context, r *sourcev1.InvalidateRequest) (*sourcev1.InvalidateResponse, error) {
@@ -60,7 +70,7 @@ func (g *grpcServer) Render(ctx context.Context, r *sourcev1.RenderRequest) (*so
 	out, err := g.s.Render(ctx, domain.RenderSpec{RepoURL: r.RepoUrl, Revision: r.Revision, Path: r.Path,
 		ComposeFiles: r.ComposeFiles, Profiles: r.Profiles, Apps: r.Apps})
 	if err != nil {
-		return nil, toStatus(err)
+		return nil, g.toStatus(ctx, err)
 	}
 	resp := &sourcev1.RenderResponse{Checksum: out.Checksum, Warnings: out.Warnings}
 	if out.Invalid != nil {
@@ -80,13 +90,15 @@ func (g *grpcServer) Render(ctx context.Context, r *sourcev1.RenderRequest) (*so
 const chunkSize = 1 << 20
 
 func (g *grpcServer) Blob(r *sourcev1.BlobRequest, stream grpc.ServerStreamingServer[sourcev1.BlobResponse]) error {
-	b, err := g.s.Blob(stream.Context(), r.Sha256)
+	ctx := stream.Context()
+	b, err := g.s.Blob(ctx, r.Sha256)
 	if err != nil {
-		return toStatus(err)
+		return g.toStatus(ctx, err)
 	}
 	for len(b) > 0 {
 		n := min(chunkSize, len(b))
 		if err := stream.Send(&sourcev1.BlobResponse{Data: b[:n]}); err != nil {
+			g.log.DebugContext(ctx, "blob not sent: the Control Plane went away", "sha256", r.Sha256, "err", err)
 			return err
 		}
 		b = b[n:]
@@ -96,13 +108,13 @@ func (g *grpcServer) Blob(r *sourcev1.BlobRequest, stream grpc.ServerStreamingSe
 
 func (g *grpcServer) Diff(ctx context.Context, r *sourcev1.DiffRequest) (*sourcev1.DiffResponse, error) {
 	d, err := g.s.Diff(ctx, r.RepoUrl, r.FromRevision, r.ToRevision, r.Path)
-	return &sourcev1.DiffResponse{Diff: d}, toStatus(err)
+	return &sourcev1.DiffResponse{Diff: d}, g.toStatus(ctx, err)
 }
 
 func (g *grpcServer) CheckAccess(ctx context.Context, r *sourcev1.CheckAccessRequest) (*sourcev1.CheckAccessResponse, error) {
 	a, err := g.s.CheckAccess(ctx, r.RepoUrl)
 	return &sourcev1.CheckAccessResponse{Access: a.Access, CredentialPrefix: a.CredentialPrefix,
-		DefaultBranch: a.DefaultBranch, Message: a.Message}, toStatus(err)
+		DefaultBranch: a.DefaultBranch, Message: a.Message}, g.toStatus(ctx, err)
 }
 
 func (g *grpcServer) ListCredentials(ctx context.Context, _ *sourcev1.ListCredentialsRequest) (*sourcev1.ListCredentialsResponse, error) {
@@ -111,7 +123,7 @@ func (g *grpcServer) ListCredentials(ctx context.Context, _ *sourcev1.ListCreden
 	for _, c := range cs {
 		resp.Credentials = append(resp.Credentials, toCredential(c))
 	}
-	return resp, toStatus(err)
+	return resp, g.toStatus(ctx, err)
 }
 
 func (g *grpcServer) PutCredential(ctx context.Context, r *sourcev1.PutCredentialRequest) (*sourcev1.PutCredentialResponse, error) {
@@ -119,13 +131,13 @@ func (g *grpcServer) PutCredential(ctx context.Context, r *sourcev1.PutCredentia
 	saved, err := g.s.SaveCredential(ctx, domain.RepoCredential{ID: c.GetId(), URLPrefix: c.GetUrlPrefix(),
 		Username: c.GetUsername(), Password: c.GetPassword(), SSHPrivateKey: c.GetSshPrivateKey()})
 	if err != nil {
-		return nil, toStatus(err)
+		return nil, g.toStatus(ctx, err)
 	}
 	return &sourcev1.PutCredentialResponse{Credential: toCredential(saved)}, nil
 }
 
 func (g *grpcServer) DeleteCredential(ctx context.Context, r *sourcev1.DeleteCredentialRequest) (*sourcev1.DeleteCredentialResponse, error) {
-	return &sourcev1.DeleteCredentialResponse{}, toStatus(g.s.DeleteCredential(ctx, r.Id))
+	return &sourcev1.DeleteCredentialResponse{}, g.toStatus(ctx, g.s.DeleteCredential(ctx, r.Id))
 }
 
 // toCredential never carries secrets: they only go to the Source Server.
@@ -141,12 +153,13 @@ func fromCredential(c *sourcev1.Credential) domain.RepoCredential {
 type Client struct {
 	conn *grpc.ClientConn
 	c    sourcev1.SourceServiceClient
+	log  *slog.Logger
 }
 
 var _ domain.Source = (*Client)(nil)
 
 // Dial connects to the Source Server at rawURL (https://host:port) with the client certificate in tlsDir.
-func Dial(rawURL, tlsDir string) (*Client, error) {
+func Dial(rawURL, tlsDir string, log *slog.Logger) (*Client, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.Port() == "" {
 		return nil, fmt.Errorf("OMEGACD_SOURCE_SERVER=%q: want https://host:port", rawURL)
@@ -159,10 +172,10 @@ func Dial(rawURL, tlsDir string) (*Client, error) {
 	conn, err := grpc.NewClient(u.Host, grpc.WithTransportCredentials(credentials.NewTLS(cfg)),
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: backoff.Config{BaseDelay: time.Second, Multiplier: 1.6,
 			Jitter: 0.2, MaxDelay: 5 * time.Second}, MinConnectTimeout: 5 * time.Second}))
-	if err != nil {
+	if err != nil { // coverage: unreachable, grpc.NewClient fails only on bad options, and these are fixed
 		return nil, err
 	}
-	return &Client{conn: conn, c: sourcev1.NewSourceServiceClient(conn)}, nil
+	return &Client{conn: conn, c: sourcev1.NewSourceServiceClient(conn), log: log}, nil
 }
 
 func (c *Client) Close() error { return c.conn.Close() }
@@ -181,7 +194,7 @@ func fromStatus(err error) error {
 	switch {
 	case err == nil:
 		return nil
-	case !ok:
+	case !ok: // coverage: unreachable, a gRPC client returns only status errors
 		return err
 	case st.Code() == codes.NotFound:
 		return remoteErr{st.Message(), domain.ErrNotFound}
@@ -200,9 +213,12 @@ func (c *Client) Resolve(ctx context.Context, repoURL, rev string) (string, erro
 	return r.GetRevision(), fromStatus(err)
 }
 
-// Invalidate is fire and forget, like the in-process one: the next Resolve fetches, or fails and says why.
+// Invalidate is fire and forget, like the in-process one: the next Resolve fetches, or fails and says why (Q137).
 func (c *Client) Invalidate(repoURL string) {
-	c.c.Invalidate(context.Background(), &sourcev1.InvalidateRequest{RepoUrl: repoURL})
+	if _, err := c.c.Invalidate(context.Background(), &sourcev1.InvalidateRequest{RepoUrl: repoURL}); err != nil {
+		c.log.Debug("not invalidated on the Source Server: the next Resolve may use a fetch up to its cooldown old",
+			"repo", redact(repoURL), "err", fromStatus(err))
+	}
 }
 
 func (c *Client) Render(ctx context.Context, spec domain.RenderSpec) (domain.Rendered, error) {

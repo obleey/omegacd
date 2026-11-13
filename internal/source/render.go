@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -71,10 +72,12 @@ func NewServer(dir string) (*Server, error) {
 // right after rendering, well within it.
 const blobGrace = time.Hour
 
+var collectEvery = blobGrace // tests use less
+
 // CollectBlobs removes, every hour until ctx ends, the blobs no cached render uses that weren't put within the
 // last hour. They are only a cache: a later Render of their commit puts them again.
 func (s *Server) CollectBlobs(ctx context.Context) {
-	t := time.NewTicker(blobGrace)
+	t := time.NewTicker(collectEvery)
 	defer t.Stop()
 	for {
 		select {
@@ -150,14 +153,14 @@ func (s *Server) Render(ctx context.Context, spec domain.RenderSpec) (domain.Ren
 	switch err := workdir.Write(dir, r.Files, s.blobs.Get); {
 	case errors.Is(err, domain.ErrInvalid):
 		r.Invalid = err
-	case err != nil:
+	case err != nil: // coverage: unreachable, a new staging folder and blobs just put: only a full disk fails here
 		return r, err
 	case spec.Apps:
 		r.Apps, r.Invalid = appdef.Parse(dir)
 	default:
 		a := domain.Application{Name: "render", ComposeFiles: spec.ComposeFiles, Profiles: spec.Profiles}
-		r.Invalid = validate(ctx, a, dir)
-		r.Warnings = plainSecrets(a, dir)
+		r.Invalid = validate(ctx, s.Log, a, dir)
+		r.Warnings = plainSecrets(ctx, s.Log, a, dir)
 	}
 
 	s.Log.DebugContext(ctx, "rendered", "repo", redact(spec.RepoURL), "revision", spec.Revision, "path", spec.Path,
@@ -174,8 +177,8 @@ func (s *Server) Render(ctx context.Context, spec domain.RenderSpec) (domain.Ren
 }
 
 // validate refuses what can't be deployed safely. It sees the files as in Git, without secrets: compose files that
-// don't load without them are left to the final render on the Host, which reports their errors.
-func validate(ctx context.Context, a domain.Application, dir string) error {
+// don't load without them are left to the final render on the Host, which reports their errors (Q138).
+func validate(ctx context.Context, log *slog.Logger, a domain.Application, dir string) error {
 	files := a.ComposeFilesIn(dir)
 	paths := make([]string, len(files))
 	for i, f := range files {
@@ -191,11 +194,13 @@ func validate(ctx context.Context, a domain.Application, dir string) error {
 		cli.WithName(a.Name),
 		cli.WithResolvedPaths(false),
 		cli.WithLoadOptions(func(o *loader.Options) { o.SkipResolveEnvironment = true }))
-	if err != nil {
-		return nil
+	var p *types.Project
+	if err == nil {
+		p, err = opts.LoadProject(ctx)
 	}
-	p, err := opts.LoadProject(ctx)
 	if err != nil {
+		log.DebugContext(ctx, "not validated on the Source Server: the compose files don't load without their secrets; the Host's render checks them",
+			"err", err)
 		return nil
 	}
 	if err := checkNoBuild(p); err != nil {
@@ -238,20 +243,21 @@ func checkBindSources(p *types.Project, dir string) error {
 
 // plainSecrets warns about environment values in the compose files that look like secrets and are written out
 // in Git instead of coming from ${VAR} (a SOPS-encrypted .env) or an env_file. Files are read as written,
-// before interpolation; unreadable ones are skipped (the final render reports them).
-func plainSecrets(a domain.Application, dir string) []string {
+// before interpolation; unreadable ones are skipped (the final render reports them, Q138).
+func plainSecrets(ctx context.Context, log *slog.Logger, a domain.Application, dir string) []string {
 	var warnings []string
 	for _, f := range a.ComposeFilesIn(dir) {
-		b, err := os.ReadFile(filepath.Join(dir, f))
-		if err != nil {
-			continue
-		}
 		var doc struct {
 			Services map[string]struct {
 				Environment yaml.Node `yaml:"environment"`
 			} `yaml:"services"`
 		}
-		if yaml.Unmarshal(b, &doc) != nil {
+		b, err := os.ReadFile(filepath.Join(dir, f))
+		if err == nil {
+			err = yaml.Unmarshal(b, &doc)
+		}
+		if err != nil {
+			log.DebugContext(ctx, "not checked for plain-text secrets: the Host's render reports the file", "file", f, "err", err)
 			continue
 		}
 		for _, svc := range slices.Sorted(maps.Keys(doc.Services)) {

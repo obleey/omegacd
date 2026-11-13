@@ -80,7 +80,7 @@ func (c *creds) save(list []stored) error {
 	if err == nil {
 		err = tmp.Sync()
 	}
-	if err = errors.Join(err, tmp.Close()); err != nil {
+	if err = errors.Join(err, tmp.Close()); err != nil { // coverage: unreachable, encoding to a file just created
 		return err
 	}
 	if err := os.Rename(tmp.Name(), c.file); err != nil {

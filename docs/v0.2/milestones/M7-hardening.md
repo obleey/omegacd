@@ -32,6 +32,8 @@ start (a Debian container on the runners was rejected: no systemd or Docker of i
 
 Kill the Control Plane mid-Sync; kill the Source Server; reboot an Agent Host while offline; restore the Control Plane
 from a backup and rebuild it from nothing (Q24, Q30, Q31).
+Damage a Source Server's repo cache (`<data>/repos/<hash>`): it deletes and clones it again on its own (Q139; until
+then its errors name the folder to delete).
 
 **Done when:** in every case all apps run afterwards with their data, and nothing was recreated that didn't change.
 
