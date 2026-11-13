@@ -165,3 +165,55 @@ func TestRestoreOnHost(t *testing.T) {
 		t.Fatalf("logs:\n%s", logs.String())
 	}
 }
+
+// Q122: an App of Apps' children's definitions come from Git, so its Rollback renders through the Source Server and,
+// with it down, is refused with the reason and no Sync Operation recorded.
+func TestAppOfAppsRollbackNeedsSourceServer(t *testing.T) {
+	r := newRig(t)
+	ctx := t.Context()
+	r.g.define("aaaaaaaa", "name: child\nrepoURL: x\nhost: edge\n")
+	parent := app("platform")
+	parent.Kind = domain.KindApps
+	r.c.CreateApp(ctx, parent)
+	r.c.Sync(ctx, "platform", domain.SyncRequest{})
+	op := waitOp(t, r, "platform")
+	if op.Phase != domain.OpSucceeded {
+		t.Fatalf("sync: %+v", op)
+	}
+	r.g.mu.Lock()
+	r.g.renderErr = fmt.Errorf("source server unreachable: %w", domain.ErrUnavailable)
+	r.g.mu.Unlock()
+	if _, err := r.c.Rollback(ctx, "platform", op.ID); !errors.Is(err, domain.ErrUnavailable) {
+		t.Fatalf("rollback: %v, want ErrUnavailable", err)
+	}
+	if ops, _ := r.st.ListOps(ctx, "platform"); len(ops) != 1 {
+		t.Fatalf("%d Sync Operations, want no new one", len(ops))
+	}
+}
+
+// Q116 then Q123: a resync from a reinstalled Agent while the database (restored from a backup) still shows a Sync
+// Running first closes that Sync as Unknown; the next resync deploys the deployed Revision again. One resync later
+// (every 5 minutes), not lost.
+func TestRestoreAfterLostSync(t *testing.T) {
+	r, ag := agentRig(t)
+	ctx := t.Context()
+	r.c.CreateApp(ctx, app("web"))
+	r.c.Sync(ctx, "web", domain.SyncRequest{})
+	waitOp(t, r, "web")
+	lost, _ := r.st.CreateOp(ctx, domain.SyncOperation{App: "web", Revision: "bbbbbbbb", TreeHash: "tree-bbbbbbbb",
+		Phase: domain.OpRunning, Trigger: "manual", StartedAt: time.Now()})
+
+	r.c.Resynced(ctx, "edge", map[string]string{}, nil)
+	r.waitIdle(t, "web")
+	if op, _ := r.st.GetOp(ctx, lost); op.Phase != domain.OpUnknown {
+		t.Fatalf("lost: %+v", op)
+	}
+	if len(ag.sent()) != 1 {
+		t.Fatalf("sent %d, want nothing yet", len(ag.sent()))
+	}
+	r.c.Resynced(ctx, "edge", map[string]string{}, nil)
+	op := waitOp(t, r, "web")
+	if op.Trigger != "restore" || op.Phase != domain.OpSucceeded || op.Revision != "aaaaaaaa" || len(ag.sent()) != 2 {
+		t.Fatalf("restore: %+v, sent %d", op, len(ag.sent()))
+	}
+}
