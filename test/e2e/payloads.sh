@@ -70,7 +70,7 @@ V1=$("$BIN" app history pay-web -o json | python3 -c 'import json,sys; print(jso
 echo "web v2" > "$REPO/web/conf.txt"; gitc commit -qam v2
 "$BIN" app sync pay-web --wait --timeout 2m >/dev/null 2>&1
 check "synced to v2 through the Source Server" 'says "web v2"'
-check "the Control Plane keeps the files it delivered (Q121)" '[ "$(find "$T/data/payloads" -type f ! -path "*/tmp/*" | wc -l)" -ge 4 ]'
+check "the Control Plane keeps the files it delivered (Q121)" '[ "$(find "$T/data/payloads" -type f ! -path "$T/data/payloads/tmp/*" | wc -l)" -ge 4 ]'
 echo "web v3" > "$REPO/web/conf.txt"; gitc commit -qam v3
 
 stop $SRC # --- the Source Server down
@@ -101,7 +101,7 @@ check "the Source Server back, the new Revision syncs" \
   'waitfor "\"\$BIN\" app sync pay-web --wait --timeout 2m >/dev/null 2>&1" && says "web v3"'
 # --- pruned with the history (Q125): at start, past the files' hour of grace, keeping only the newest Sync Operation
 stop $SRV
-find "$T/data/payloads" -type f ! -path "*/tmp/*" -exec touch -t 202001010000 {} +
+find "$T/data/payloads" -type f ! -path "$T/data/payloads/tmp/*" -exec touch -t 202001010000 {} +
 start_control_plane OMEGACD_HISTORY_KEEP=1
 kept() { local h; h=$(printf '%s\n' "$1" | openssl dgst -sha256 | awk '{print $NF}'); [ -f "$T/data/payloads/${h:0:2}/$h" ]; }
 check "the payloads no kept Sync Operation uses are pruned, logged" \
