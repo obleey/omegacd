@@ -3,9 +3,11 @@ package importer
 import (
 	"bytes"
 	"context"
+	"math"
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -327,5 +329,15 @@ func TestHelpers(t *testing.T) {
 		if validName(n) != want {
 			t.Errorf("validName(%q) != %v", n, want)
 		}
+	}
+}
+
+// Q134: sizes in bytes (du's in KiB), and one du or stat couldn't tell (no permission) unknown, so never small enough
+// to be read as a config; lines that aren't "KIND SIZE PATH" are skipped.
+func TestParseInfo(t *testing.T) {
+	got := parseInfo([]byte("d 4 conf\nf 120 app.ini\nd  secret dir\n- 0 gone\nnonsense\n"))
+	want := map[string]Info{"conf": {'d', 4096}, "app.ini": {'f', 120}, "secret dir": {'d', math.MaxInt64}, "gone": {'-', 0}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v", got)
 	}
 }

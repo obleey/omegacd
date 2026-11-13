@@ -40,6 +40,7 @@ type fakeStore struct {
 	renderErr    error                         // Render fails with it
 	saveErr      error                         // SaveRender fails with it
 	createOpErr  error                         // CreateOp fails with it
+	statusErr    error                         // AgentStatus fails with it
 	mu           sync.Mutex
 	apps         map[string]domain.Application
 	ops          []domain.SyncOperation
@@ -1390,6 +1391,9 @@ func TestForgetLastChildFinishesParent(t *testing.T) {
 func (s *fakeStore) AgentStatus(_ context.Context, app string) (domain.AgentStatus, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.statusErr != nil {
+		return domain.AgentStatus{}, s.statusErr
+	}
 	st, ok := s.statuses[app]
 	if !ok {
 		return st, domain.ErrNotFound

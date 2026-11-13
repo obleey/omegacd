@@ -608,3 +608,19 @@ func TestDiffWarnings(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 }
+
+// Q134: on a detached HEAD there is no branch to follow: import says it uses main.
+func TestImportDetachedHead(t *testing.T) {
+	id, _ := age.GenerateX25519Identity()
+	repo := gitRepo(t)
+	for _, args := range [][]string{{"-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"}, {"checkout", "-q", "--detach"}} {
+		if out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	withHost := func(c *CLI) { c.ImportHost = func() (importer.Host, error) { return importHost{}, nil } }
+	r := runWith(t, nil, nil, withHost, "import", "--host", "edge", "--recipient", id.Recipient().String(), "--dry-run")
+	if r.code != 0 || !strings.Contains(r.stderr, "no current branch (a detached HEAD?): the Applications follow main") {
+		t.Fatalf("%+v", r)
+	}
+}

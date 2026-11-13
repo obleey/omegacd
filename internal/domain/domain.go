@@ -12,8 +12,8 @@ import (
 	"io/fs"
 	"net/netip"
 	"os"
-	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -32,6 +32,18 @@ const (
 	ManagedByLabel = "managed-by"
 	ManagedByValue = "omegacd"
 )
+
+// nameRE is what an Application's or Host's name may be: it names folders and Compose projects.
+var nameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
+
+// CheckName refuses a name that isn't an Application's or Host's. The Agent checks the names the Control Plane sends
+// too: they become its folders (Q57, Q134).
+func CheckName(name string) error {
+	if !nameRE.MatchString(name) {
+		return fmt.Errorf("%w: name must be lowercase letters, digits, '-' or '_', not %q", ErrInvalid, name)
+	}
+	return nil
+}
 
 var (
 	ErrNotFound      = errors.New("not found")
@@ -152,10 +164,6 @@ func (a Application) ComposeFilesIn(dir string) []string {
 	}
 	return DefaultComposeFiles[:1]
 }
-
-// Dir is where the Application's files live in a work dir, as a slash path: <name>, or <parent>/<name> for a
-// Child Application. Names are unique, so no two Applications share a folder; an App of Apps has no files.
-func (a Application) Dir() string { return path.Join(a.Parent, a.Name) }
 
 // MarkerFile marked the folders OmegaCD created, holding the name of their Application, before an Agent recorded them.
 // A Sync still takes a folder marked for its Application (and deletes the marker) and refuses one marked for another.

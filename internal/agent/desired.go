@@ -115,6 +115,18 @@ func fromDesired(ds *agentv1.DesiredState) (App, Revision) {
 	return a, r
 }
 
+// checkNames refuses an Application or App of Apps name the Control Plane shouldn't have sent: they become this
+// Agent's folders, which must stay under the work dir (Q57, Q134).
+func checkNames(app, parent string) error {
+	if err := domain.CheckName(app); err != nil {
+		return err
+	}
+	if parent != "" {
+		return domain.CheckName(parent)
+	}
+	return nil
+}
+
 // refuseSelf refuses an Application whose Compose project holds the Agent's own container (Q109): deploying it would
 // restart the Agent mid-deploy. The Control Plane's project is an Application like any other (Q104); an Agent outside
 // a container (systemd) has nothing to refuse.
@@ -238,7 +250,10 @@ func (ag *Agent) desired(ctx context.Context, conn *wire.Conn, b *blobs, q *requ
 	}
 	defer ag.deploying.Delete(ds.Op)
 	a, r := fromDesired(ds)
-	err := ag.refuseSelf(ctx, ds.App)
+	err := checkNames(ds.App, ds.Parent)
+	if err == nil {
+		err = ag.refuseSelf(ctx, ds.App)
+	}
 	if err == nil {
 		err = ag.adoptable(ctx, ds)
 	}
@@ -269,10 +284,12 @@ func (ag *Agent) desired(ctx context.Context, conn *wire.Conn, b *blobs, q *requ
 // restore, its containers and folder left alone. It answers; an answer that can't be sent goes to the outbox.
 func (ag *Agent) removeApp(ctx context.Context, conn *wire.Conn, id uint64, r *agentv1.RemoveApp) {
 	ctx = logging.With(ctx, "app", r.App)
-	var err error
-	if r.KeepContainers {
+	err := domain.CheckName(r.App)
+	switch {
+	case err != nil:
+	case r.KeepContainers:
 		err = ag.Forget(ctx, r.App)
-	} else {
+	default:
 		err = ag.Remove(ctx, r.App, r.Volumes)
 	}
 	if errors.Is(err, domain.ErrNotFound) {
@@ -323,7 +340,10 @@ func (ag *Agent) keepInSync(ctx context.Context, conn *wire.Conn) {
 		}
 		if !reported { // on connect, after the outbox: what runs now, for the Control Plane's views (M4-02)
 			reported = true
-			apps, _ := ag.db.ListApps(ctx)
+			apps, err := ag.db.ListApps(ctx)
+			if err != nil {
+				ag.log.ErrorContext(ctx, "list applications to report", "err", err)
+			}
 			for _, a := range apps {
 				ag.sendReport(ctx, conn, a.Name)
 			}

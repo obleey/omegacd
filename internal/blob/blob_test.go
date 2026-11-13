@@ -136,3 +136,54 @@ func age(t *testing.T, path string) {
 		t.Fatal(err)
 	}
 }
+
+// A store folder the process can't write to fails Put and GC with the filesystem's error, never a hash or a count
+// that isn't true.
+func TestUnwritable(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root writes anywhere") // the suite runs as a normal user
+	}
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, err := s.Put([]byte("old"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(dir, old[:2])
+	past := time.Now().Add(-2 * time.Hour)
+	os.Chtimes(filepath.Join(sub, old), past, past)
+	if err := os.Chmod(sub, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(sub, 0o700); os.Chmod(dir, 0o700); os.Chmod(filepath.Join(dir, "tmp"), 0o700) })
+	if _, err := s.GC(func(string) bool { return false }, time.Hour); !errors.Is(err, fs.ErrPermission) {
+		t.Errorf("GC in a read-only folder: %v", err)
+	}
+	if err := os.Chmod(filepath.Join(dir, "tmp"), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(filepath.Join(dir, old[:2], old, "x")); err == nil { // under a file
+		t.Error("opened a store under a file")
+	}
+	same := []byte("same prefix, new blob")
+	for Hash(same)[:2] != old[:2] { // a blob whose folder exists: Put gets as far as its temporary file
+		same = append(same, '.')
+	}
+	if _, err := s.Put(same); !errors.Is(err, fs.ErrPermission) {
+		t.Errorf("Put without a writable tmp: %v", err)
+	}
+	os.Chmod(sub, 0o700)
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	fresh := []byte("a new folder")
+	for _, err := os.Stat(filepath.Join(dir, Hash(fresh)[:2])); err == nil; _, err = os.Stat(filepath.Join(dir, Hash(fresh)[:2])) {
+		fresh = append(fresh, '.')
+	}
+	if _, err := s.Put(fresh); !errors.Is(err, fs.ErrPermission) {
+		t.Errorf("Put without a writable store folder: %v", err)
+	}
+}

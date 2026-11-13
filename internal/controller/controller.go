@@ -10,7 +10,6 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -32,8 +31,6 @@ const (
 	syncTimeout  = 30 * time.Minute
 	subscriberCh = 64
 )
-
-var nameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
 
 type Config struct {
 	Store  domain.Store
@@ -975,7 +972,8 @@ func (c *Controller) emit(e domain.Event) {
 	for ch := range c.subs {
 		select {
 		case ch <- e:
-		default:
+		default: // a subscriber (a UI's event stream) that isn't reading: it reloads what it missed
+			c.cfg.Log.Debug("event dropped: a subscriber is behind", "type", e.Type, "app", e.App)
 		}
 	}
 }
@@ -991,8 +989,8 @@ func normalize(a *domain.Application) error {
 	if a.Kind != domain.KindCompose && a.Kind != domain.KindApps {
 		return fmt.Errorf("%w: kind must be %q or %q", domain.ErrInvalid, domain.KindCompose, domain.KindApps)
 	}
-	if !nameRE.MatchString(a.Name) {
-		return fmt.Errorf("%w: name must be lowercase letters, digits, '-' or '_'", domain.ErrInvalid)
+	if err := domain.CheckName(a.Name); err != nil {
+		return err
 	}
 	if a.RepoURL == "" {
 		return fmt.Errorf("%w: repoURL is required", domain.ErrInvalid)
@@ -1321,8 +1319,8 @@ func (c *Controller) appsByHost(ctx context.Context) (map[string][]string, error
 
 func (c *Controller) InviteHost(ctx context.Context, name string) (string, time.Time, error) {
 	name = strings.TrimSpace(name)
-	if !nameRE.MatchString(name) {
-		return "", time.Time{}, fmt.Errorf("%w: name must be lowercase letters, digits, '-' or '_'", domain.ErrInvalid)
+	if err := domain.CheckName(name); err != nil {
+		return "", time.Time{}, err
 	}
 	expires := time.Now().Add(inviteValidity).Truncate(time.Second)
 	invite, err := c.cfg.Store.CreateInvite(ctx, name, expires)

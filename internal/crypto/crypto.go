@@ -30,7 +30,7 @@ func LoadIdentity(path string) (*age.X25519Identity, error) {
 			return x, nil
 		}
 	}
-	return nil, fmt.Errorf("no X25519 identity in %s", path)
+	return nil, fmt.Errorf("no X25519 identity in %s: a post-quantum key (age-keygen -pq) isn't supported; make one with age-keygen", path)
 }
 
 // LoadOrCreateIdentity reads the age key at path, creating it (owner-only, its folder too) when there is none; created
@@ -70,13 +70,13 @@ func (s *Sealer) Seal(plaintext string) (string, error) {
 	}
 	var buf bytes.Buffer
 	w, err := age.Encrypt(&buf, s.id.Recipient())
-	if err != nil {
+	if err != nil { // coverage: unreachable, encrypting in memory to an X25519 recipient
 		return "", err
 	}
-	if _, err := io.WriteString(w, plaintext); err != nil {
+	if _, err := io.WriteString(w, plaintext); err != nil { // coverage: unreachable, writing into a bytes.Buffer
 		return "", err
 	}
-	if err := w.Close(); err != nil {
+	if err := w.Close(); err != nil { // coverage: unreachable, flushing into a bytes.Buffer
 		return "", err
 	}
 	return base64.StdEncoding.EncodeToString(buf.Bytes()), nil

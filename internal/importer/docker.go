@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"math"
 	"path"
 	"slices"
 	"strconv"
@@ -68,9 +69,8 @@ func (h *DockerHost) Stacks(ctx context.Context) ([]Stack, error) {
 
 // Info stats paths under dir with du and stat in a helper container that mounts dir read-only.
 func (h *DockerHost) Info(ctx context.Context, dir string, paths []string) (map[string]Info, error) {
-	out := map[string]Info{}
 	if len(paths) == 0 {
-		return out, nil
+		return map[string]Info{}, nil
 	}
 	const script = `cd /src && for p in "$@"; do
   if [ -d "$p" ]; then echo "d $(du -sk "$p" | cut -f1) $p"
@@ -81,19 +81,29 @@ done > /tmp/out`
 	if err != nil {
 		return nil, err
 	}
+	return parseInfo(b), nil
+}
+
+// parseInfo reads the helper's "KIND SIZE PATH" lines. A size du or stat couldn't tell (no permission) is unknown:
+// as large as can be, so it is never taken for a small config file to copy (Q134).
+func parseInfo(b []byte) map[string]Info {
+	out := map[string]Info{}
 	sc := bufio.NewScanner(bytes.NewReader(b))
 	for sc.Scan() {
 		f := strings.SplitN(sc.Text(), " ", 3)
 		if len(f) != 3 {
 			continue
 		}
-		n, _ := strconv.ParseInt(f[1], 10, 64)
-		if f[0] == "d" {
+		n, err := strconv.ParseInt(f[1], 10, 64)
+		switch {
+		case err != nil:
+			n = math.MaxInt64
+		case f[0] == "d":
 			n *= 1024 // du -k
 		}
 		out[f[2]] = Info{f[0][0], n}
 	}
-	return out, nil
+	return out
 }
 
 // Read copies the files at or under paths from the host: tar in a helper container, then out of it.

@@ -146,6 +146,10 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	if os.Getenv("OMEGACD_WEBHOOK_SECRET") == "" { // Q134
+		log.Warn("OMEGACD_WEBHOOK_SECRET is unset: anyone who can reach /api/webhooks/ can make OmegaCD fetch Git and " +
+			"reconcile; set a secret, and the same one in your Git host's webhooks")
+	}
 	ui, err := fs.Sub(web.Build, "build")
 	if err != nil {
 		return err
@@ -181,6 +185,7 @@ func run(log *slog.Logger) error {
 	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
+	hub.Close() // the Agents' sessions end before the store closes: each records its Agent leaving
 	return nil
 }
 

@@ -3,6 +3,7 @@ package crypto
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"filippo.io/age"
@@ -86,5 +87,25 @@ func TestLoadOrCreateIdentity(t *testing.T) {
 		if _, _, err := LoadOrCreateIdentity(p); err == nil {
 			t.Fatalf("made %s in a read-only folder", p)
 		}
+	}
+}
+
+// A post-quantum age key is a valid key file OmegaCD can't use: refused, saying which to make; a sealed value that
+// isn't base64 (a column edited by hand) doesn't open.
+func TestUnusableKeyAndSealed(t *testing.T) {
+	pq, err := age.GenerateHybridIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "age.key")
+	if err := os.WriteFile(path, []byte(pq.String()+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadIdentity(path); err == nil || !strings.Contains(err.Error(), "post-quantum key (age-keygen -pq) isn't supported") {
+		t.Fatalf("pq key: %v", err)
+	}
+	id, _ := age.GenerateX25519Identity()
+	if _, err := NewSealer(id).Open("not base64!"); err == nil {
+		t.Fatal("opened what isn't base64")
 	}
 }

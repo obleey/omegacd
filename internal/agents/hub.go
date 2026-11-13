@@ -80,6 +80,11 @@ type Hub struct {
 
 	mu    sync.Mutex
 	conns map[string]*session // by Host
+
+	// every connection's session, which Close waits for: a session ends recording its Agent leaving, in the store
+	sessions  sync.WaitGroup
+	closing   chan struct{}
+	closeOnce sync.Once
 }
 
 type session struct {
@@ -107,17 +112,36 @@ type rotateReply struct {
 }
 
 func New(store domain.Store, log *slog.Logger) *Hub {
-	return &Hub{store: store, log: cmp.Or(log, logging.Discard), now: time.Now, version: version.String(), conns: map[string]*session{}}
+	return &Hub{store: store, log: cmp.Or(log, logging.Discard), now: time.Now, version: version.String(), conns: map[string]*session{},
+		closing: make(chan struct{})}
+}
+
+// Close ends every Agent connection and returns once their sessions are over, each having recorded its Agent leaving:
+// the server calls it after the HTTP server stopped and before the store closes (a hijacked connection outlives
+// http.Server.Shutdown).
+func (h *Hub) Close() {
+	h.closeOnce.Do(func() { close(h.closing) })
+	h.sessions.Wait()
+	h.log.Debug("every agent session ended")
 }
 
 // ServeHTTP is /api/agents/v1/connect.
 func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.sessions.Add(1)
+	defer h.sessions.Done()
 	c, err := wire.Accept(w, r)
 	if err != nil {
 		h.log.Warn("agent connection", "err", err)
 		return
 	}
 	defer c.Close()
+	go func() {
+		select {
+		case <-h.closing: // the server is stopping
+			c.Close()
+		case <-c.Done():
+		}
+	}()
 	ctx := r.Context()
 	addr := clientIP(r)
 	host, key, hello, enrolled, err := h.authenticate(ctx, c)

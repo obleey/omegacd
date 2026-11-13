@@ -227,6 +227,9 @@ func Backoff(n int) time.Duration {
 
 var backoff = Backoff // tests wait less
 
+// stable is how long a connection lasts before Keep counts it as good and starts the backoff over (tests wait less).
+var stable = time.Minute
+
 // Keep holds a connection open until ctx ends: it dials, serves it until it ends, and dials again after Backoff. A
 // connection that lasted a minute starts the backoff over.
 func Keep(ctx context.Context, dial func(context.Context) (*Conn, error), serve func(context.Context, *Conn) error, onDown func(error)) {
@@ -236,7 +239,7 @@ func Keep(ctx context.Context, dial func(context.Context) (*Conn, error), serve 
 			start := time.Now()
 			err = serve(ctx, c)
 			c.Close()
-			if time.Since(start) > time.Minute {
+			if time.Since(start) > stable {
 				n = 0
 			}
 		}

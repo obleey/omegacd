@@ -1,13 +1,11 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"log/slog"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -16,21 +14,9 @@ import (
 	"github.com/obleey/omegacd/internal/blob"
 	"github.com/obleey/omegacd/internal/crypto"
 	"github.com/obleey/omegacd/internal/domain"
+	"github.com/obleey/omegacd/internal/logging"
 	"github.com/obleey/omegacd/internal/store"
 )
-
-// lockedBuffer is a log written while the test reads it.
-type lockedBuffer struct {
-	mu sync.Mutex
-	b  bytes.Buffer
-}
-
-func (l *lockedBuffer) Write(p []byte) (int, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.b.Write(p)
-}
-func (l *lockedBuffer) String() string { l.mu.Lock(); defer l.mu.Unlock(); return l.b.String() }
 
 func TestHistorySettings(t *testing.T) {
 	if n, age, err := historySettings("", ""); err != nil || n != 0 || age != 0 {
@@ -47,7 +33,7 @@ func TestHistorySettings(t *testing.T) {
 }
 
 // waitLog waits until logs hold want.
-func waitLog(t *testing.T, logs *lockedBuffer, want string) {
+func waitLog(t *testing.T, logs *logging.Buffer, want string) {
 	t.Helper()
 	for deadline := time.Now().Add(5 * time.Second); !strings.Contains(logs.String(), want); time.Sleep(10 * time.Millisecond) {
 		if time.Now().After(deadline) {
@@ -82,7 +68,7 @@ func TestPrune(t *testing.T) {
 	gone, _ := blobs.Put([]byte("gone"))
 	st.SaveRender(ctx, "t1", []domain.File{{Path: "compose.yaml", SHA256: kept}})
 	st.SaveRender(ctx, "t2", []domain.File{{Path: "compose.yaml", SHA256: gone}}) // no Sync Operation uses it
-	logs := &lockedBuffer{}
+	logs := &logging.Buffer{}
 	log := slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	unset, stop := context.WithCancel(ctx)

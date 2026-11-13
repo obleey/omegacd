@@ -67,3 +67,16 @@ func TestSecretsAreRedacted(t *testing.T) {
 		}
 	}
 }
+
+// A logger with a group logs through the same handler, its attributes under the group.
+func TestGroupRedacts(t *testing.T) {
+	var b bytes.Buffer
+	log, err := New(&b, "debug", "text")
+	if err != nil {
+		t.Fatal(err)
+	}
+	log.WithGroup("req").Info("login", "user", "admin")
+	if !strings.Contains(b.String(), "req.user=admin") {
+		t.Fatalf("log: %s", b.String())
+	}
+}

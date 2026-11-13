@@ -12,7 +12,7 @@ import (
 )
 
 // maxBlob bounds one blob being put together, so a broken or hostile peer can't fill the memory.
-const maxBlob = 256 << 20
+var maxBlob = 256 << 20 // tests use less
 
 // Assembler puts blobs together from their chunks, which arrive in order. What arrived of a blob before its
 // connection dropped is kept, and Offset says where to resume on the next one.

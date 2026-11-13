@@ -14,8 +14,9 @@ func String() string {
 	if Version != "" {
 		return Version
 	}
-	if bi, ok := debug.ReadBuildInfo(); ok {
-		return cmp.Or(bi.Main.Version, "(devel)")
+	bi, ok := debug.ReadBuildInfo()
+	if !ok { // coverage: unreachable, every binary and test built with modules carries its build info
+		return "(devel)"
 	}
-	return "(devel)"
+	return cmp.Or(bi.Main.Version, "(devel)")
 }

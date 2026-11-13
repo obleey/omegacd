@@ -65,7 +65,7 @@ func (s *Store) Put(data []byte) (string, error) {
 	if err == nil {
 		err = os.Rename(f.Name(), p)
 	}
-	if err != nil {
+	if err != nil { // coverage: unreachable, writing, syncing and renaming a new file in the store's own folders fails only with a broken disk
 		os.Remove(f.Name())
 		return "", err
 	}
@@ -108,10 +108,10 @@ func (s *Store) GC(referenced func(hash string) bool, grace time.Duration) (int,
 			return err
 		}
 		info, err := d.Info()
-		if err != nil {
-			if errors.Is(err, fs.ErrNotExist) { // removed meanwhile
-				return nil
-			}
+		if errors.Is(err, fs.ErrNotExist) { // coverage: unreachable, only an entry deleted between listing and stat, and GC holds the store's lock
+			return nil
+		}
+		if err != nil { // coverage: unreachable, stat of an entry just listed in the store's own folder
 			return err
 		}
 		if info.ModTime().After(cutoff) {

@@ -6,12 +6,16 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
 
 	agentv1 "github.com/obleey/omegacd/internal/proto/agent/v1"
 )
@@ -257,5 +261,100 @@ func TestSendOnClosed(t *testing.T) {
 		if err := c.Send(t.Context(), hello("late")); err == nil {
 			t.Fatal("Send on a closed connection reported success")
 		}
+	}
+}
+
+// What a peer can get wrong: a plain HTTP request where a WebSocket is expected, a text frame, bytes that aren't an
+// Envelope, a blob larger than the limit, a resume past a blob's end.
+func TestPeerMistakes(t *testing.T) {
+	var accepted atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, err := Accept(w, r)
+		accepted.Store(fmt.Sprint(err))
+	}))
+	defer srv.Close()
+	resp, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if got, _ := accepted.Load().(string); got == "<nil>" || got == "" {
+		t.Fatalf("a plain request upgraded: %q", got)
+	}
+
+	ctx := t.Context()
+	for name, frame := range map[string]func(*websocket.Conn) error{
+		"text frame": func(ws *websocket.Conn) error { return ws.Write(ctx, websocket.MessageText, []byte("hi")) },
+		"not an Envelope": func(ws *websocket.Conn) error {
+			return ws.Write(ctx, websocket.MessageBinary, []byte{0xff, 0xff, 0xff})
+		},
+	} {
+		got := make(chan error, 1)
+		url := serve(t, func(c *Conn) { _, err := c.Recv(ctx); got <- err })
+		ws, _, err := websocket.Dial(ctx, url, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := frame(ws); err != nil {
+			t.Fatal(err)
+		}
+		if err := <-got; err == nil || !strings.HasPrefix(err.Error(), "wire:") {
+			t.Errorf("%s: %v", name, err)
+		}
+		ws.CloseNow()
+	}
+
+	maxBlob = 8
+	t.Cleanup(func() { maxBlob = 256 << 20 })
+	var a Assembler
+	sum := sha256.Sum256([]byte("more than eight bytes"))
+	if _, _, err := a.Add(&agentv1.BlobChunk{Sha256: sum[:], Data: []byte("more than eight bytes")}); err == nil ||
+		!strings.Contains(err.Error(), "larger than 8 bytes") {
+		t.Errorf("too large: %v", err)
+	}
+	c := &Conn{}
+	if err := c.SendBlob(ctx, sum[:], []byte("abc"), 4); err == nil || !strings.Contains(err.Error(), "past its 3 bytes") {
+		t.Errorf("resume past the end: %v", err)
+	}
+}
+
+// A connection that lasted long enough starts the backoff over: after it the next wait is the first one again.
+func TestKeepStartsBackoffOver(t *testing.T) {
+	var mu sync.Mutex
+	var waits []int
+	backoff = func(n int) time.Duration { mu.Lock(); waits = append(waits, n); mu.Unlock(); return time.Millisecond }
+	stable = 0
+	t.Cleanup(func() { backoff, stable = Backoff, time.Minute })
+	url := serve(t, func(c *Conn) { time.Sleep(5 * time.Millisecond); c.Close() })
+	ctx, cancel := context.WithCancel(t.Context())
+	dials := 0
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		Keep(ctx, func(ctx context.Context) (*Conn, error) {
+			if dials++; dials <= 2 {
+				return nil, errors.New("Control Plane unreachable")
+			}
+			if dials == 4 {
+				cancel()
+			}
+			return Dial(ctx, url, nil)
+		}, func(ctx context.Context, c *Conn) error { _, err := c.Recv(ctx); return err }, nil)
+	}()
+	<-done
+	mu.Lock()
+	defer mu.Unlock()
+	if len(waits) < 3 || waits[0] != 0 || waits[1] != 1 || waits[2] != 0 {
+		t.Fatalf("waits %v, want 0 1 then 0 again after a connection that lasted", waits)
+	}
+}
+
+// A send waiting for room in a full queue gives up when its context ends.
+func TestSendGivesUp(t *testing.T) {
+	c := &Conn{control: make(chan *agentv1.Envelope), done: make(chan struct{})} // no room, no writer
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := c.Send(ctx, hello("x")); !errors.Is(err, context.Canceled) {
+		t.Fatalf("got %v", err)
 	}
 }
