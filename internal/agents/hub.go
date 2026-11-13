@@ -66,8 +66,11 @@ type Hub struct {
 	Blob func(ctx context.Context, hash string) ([]byte, error)
 	// Reported is told an Application's Sync Operations changed by an Agent's report (M3-06); may be nil
 	Reported func(ctx context.Context, app string)
-	// Resynced is told a Host's Agent sent its checksums: Syncs waiting for the Host can go (Q81); may be nil
-	Resynced func(ctx context.Context, host string)
+	// Resynced is told a Host's Agent sent its checksums (Q78): each Application it runs with its deployed tree's
+	// checksum (hex), and the Sync Operations still going (deploying on it, or sent and not reported yet). Syncs
+	// waiting for the Host can go (Q81), the Applications the Control Plane doesn't know are listed (Q118), and one
+	// created over an app it runs at the target is taken over (Q119); may be nil
+	Resynced func(ctx context.Context, host string, apps map[string]string, active []uint64)
 	// Removed is told an Agent reported, from its outbox, an Application removed (Q83); may be nil
 	Removed func(ctx context.Context, host, app string)
 	// Progress is told of a Sync's progress on an Agent (Q87); may be nil
@@ -117,7 +120,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer c.Close()
 	ctx := r.Context()
 	addr := clientIP(r)
-	host, key, hello, err := h.authenticate(ctx, c)
+	host, key, hello, enrolled, err := h.authenticate(ctx, c)
 	if err == nil {
 		ctx = logging.With(ctx, "host", host.Name)
 		err = allowed(host, addr)
@@ -172,7 +175,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 	fingerprint := domain.Fingerprint(key)
 	h.log.InfoContext(ctx, "agent connected", "fingerprint", fingerprint, "approved", host.Approved, "remote", addr)
-	if err := status(ctx, c, 0, host.Name, fingerprint, host.Approved); err != nil {
+	if err := status(ctx, c, 0, host.Name, fingerprint, host.Approved, enrolled); err != nil {
 		return
 	}
 	go func() {
@@ -180,7 +183,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case <-s.approved:
 			if !host.Approved {
 				h.log.InfoContext(ctx, "agent approved", "fingerprint", fingerprint)
-				status(ctx, c, 0, host.Name, fingerprint, true)
+				status(ctx, c, 0, host.Name, fingerprint, true, false)
 			}
 		case <-c.Done():
 		}
@@ -372,27 +375,27 @@ func refuse(ctx context.Context, c *wire.Conn, replyTo uint64, err error) {
 	c.Close()
 }
 
-func status(ctx context.Context, c *wire.Conn, replyTo uint64, host, fingerprint string, approved bool) error {
+func status(ctx context.Context, c *wire.Conn, replyTo uint64, host, fingerprint string, approved, enrolledNow bool) error {
 	return c.Send(ctx, &agentv1.Envelope{ReplyTo: replyTo, Body: &agentv1.Envelope_EnrollmentStatus{EnrollmentStatus: &agentv1.EnrollmentStatus{
-		Host: host, Approved: approved, Fingerprint: fingerprint}}})
+		Host: host, Approved: approved, Fingerprint: fingerprint, EnrolledNow: enrolledNow}}})
 }
 
 // authenticate sends a fresh challenge and returns the Host whose key signed it, the key and the Agent's Hello,
-// enrolling the key first when the Agent brings an invite.
-func (h *Hub) authenticate(ctx context.Context, c *wire.Conn) (domain.Host, []byte, *agentv1.Hello, error) {
+// enrolling the key first when the Agent brings an invite (enrolled: it did, just now).
+func (h *Hub) authenticate(ctx context.Context, c *wire.Conn) (domain.Host, []byte, *agentv1.Hello, bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, authTimeout)
 	defer cancel()
 	nonce := make([]byte, 32)
 	rand.Read(nonce)
 	if err := c.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_Challenge{Challenge: &agentv1.Challenge{Nonce: nonce}}}); err != nil {
-		return domain.Host{}, nil, nil, err
+		return domain.Host{}, nil, nil, false, err
 	}
 	var enroll *agentv1.Enroll
 	var hello *agentv1.Hello
 	for {
 		e, err := c.Recv(ctx)
 		if err != nil {
-			return domain.Host{}, nil, nil, err
+			return domain.Host{}, nil, nil, false, err
 		}
 		switch {
 		case e.GetHello() != nil:
@@ -403,21 +406,21 @@ func (h *Hub) authenticate(ctx context.Context, c *wire.Conn) (domain.Host, []by
 			r := e.GetChallengeResponse()
 			if len(r.PublicKey) != ed25519.PublicKeySize ||
 				!ed25519.Verify(r.PublicKey, append([]byte(ChallengePrefix), nonce...), r.Signature) {
-				return domain.Host{}, nil, nil, errors.New("the challenge's signature doesn't verify")
+				return domain.Host{}, nil, nil, false, errors.New("the challenge's signature doesn't verify")
 			}
 			host, err := h.store.HostBySigningKey(ctx, r.PublicKey)
 			if enroll == nil || !errors.Is(err, domain.ErrNotFound) { // an enrolled key needs no invite, even if it brings one
 				if errors.Is(err, domain.ErrNotFound) {
-					return host, nil, nil, fmt.Errorf("no Host has the key %s: enroll with an invite (OMEGACD_AGENT_INVITE)", domain.Fingerprint(r.PublicKey))
+					return host, nil, nil, false, fmt.Errorf("no Host has the key %s: enroll with an invite (OMEGACD_AGENT_INVITE)", domain.Fingerprint(r.PublicKey))
 				}
-				return host, r.PublicKey, hello, err
+				return host, r.PublicKey, hello, false, err
 			}
 			// its Host Key is what secrets and registry credentials get encrypted to: a wrong one would fail them all later
 			if _, err := age.ParseX25519Recipient(enroll.AgeRecipient); err != nil {
-				return domain.Host{}, nil, nil, fmt.Errorf("the Host Key %q isn't an age recipient: %w", enroll.AgeRecipient, err)
+				return domain.Host{}, nil, nil, false, fmt.Errorf("the Host Key %q isn't an age recipient: %w", enroll.AgeRecipient, err)
 			}
 			host, err = h.store.Enroll(ctx, enroll.Invite, r.PublicKey, enroll.AgeRecipient, h.now())
-			return host, r.PublicKey, hello, err
+			return host, r.PublicKey, hello, err == nil, err
 		}
 	}
 }
@@ -499,7 +502,7 @@ func (h *Hub) rotated(ctx context.Context, host string, s *session, id uint64, r
 		s.key = r.PublicKey
 		s.mu.Unlock()
 		h.log.InfoContext(ctx, "agent key rotated", "fingerprint", fingerprint)
-		status(ctx, s.conn, id, host, fingerprint, true)
+		status(ctx, s.conn, id, host, fingerprint, true, false)
 	}
 	if reply != nil {
 		reply <- rotateReply{fingerprint, err}
@@ -611,9 +614,11 @@ func (h *Hub) outbox(ctx context.Context, host string, s *session, e *agentv1.Ou
 // resync takes the Agent's checksums (Q78): a Desired State in flight that the Agent doesn't have was lost on the way
 // and goes again; then Syncs waiting for the Host go (Resynced). It never deletes (Q91).
 func (h *Hub) resync(ctx context.Context, host string, s *session, r *agentv1.Resync) {
+	active := slices.Clone(r.Deploying)
 	s.mu.Lock()
 	var again []*agentv1.DesiredState
 	for _, ds := range s.sent {
+		active = append(active, ds.Op)
 		if hex.EncodeToString(r.Checksums[ds.App]) != ds.Checksum {
 			again = append(again, ds)
 		}
@@ -624,7 +629,11 @@ func (h *Hub) resync(ctx context.Context, host string, s *session, r *agentv1.Re
 		s.conn.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_DesiredState{DesiredState: ds}})
 	}
 	if h.Resynced != nil {
-		h.Resynced(ctx, host)
+		apps := map[string]string{}
+		for app, sum := range r.Checksums {
+			apps[app] = hex.EncodeToString(sum)
+		}
+		h.Resynced(ctx, host, apps, active)
 	}
 }
 

@@ -381,6 +381,9 @@ func (c *Controller) runSync(a domain.Application, op domain.SyncOperation) {
 	}
 
 	phase, msg := domain.OpSucceeded, "synced to "+short(op.Revision)
+	if errors.Is(err, errTakenOver) {
+		msg, err = err.Error(), nil
+	}
 	if err != nil {
 		phase, msg = domain.OpFailed, err.Error()
 	}
@@ -491,6 +494,9 @@ func (c *Controller) apply(ctx context.Context, a domain.Application, op domain.
 	}
 	if a.Kind == domain.KindApps {
 		return c.syncChildren(ctx, a, r.Apps) // an App of Apps has no files: its definitions are only read
+	}
+	if c.takenOver(ctx, a, r) {
+		return errTakenOver
 	}
 	return c.deploy(ctx, a, op, r)
 }

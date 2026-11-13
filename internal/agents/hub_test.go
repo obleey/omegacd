@@ -9,10 +9,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -111,8 +114,8 @@ func TestEnrollAndApprove(t *testing.T) {
 	fp := domain.Fingerprint(key.Public().(ed25519.PublicKey))
 	c, e := agent(t, url, key, invite, nil)
 	s := e.GetEnrollmentStatus()
-	if s == nil || s.Host != "web" || s.Approved || s.Fingerprint != fp {
-		t.Fatalf("want waiting for approval with the key's fingerprint %s, got %v", fp, e)
+	if s == nil || s.Host != "web" || s.Approved || s.Fingerprint != fp || !s.EnrolledNow {
+		t.Fatalf("want just enrolled, waiting for approval with the key's fingerprint %s, got %v", fp, e)
 	}
 	host, _ := st.GetHost(ctx, "web")
 	if host.Fingerprint != fp || host.AgeRecipient != testRecipient {
@@ -142,7 +145,7 @@ func TestEnrollAndApprove(t *testing.T) {
 
 	c.Close() // reconnecting needs no invite, and an approved Agent is told so at once
 	_, e = agent(t, url, key, "", nil)
-	if !e.GetEnrollmentStatus().GetApproved() {
+	if !e.GetEnrollmentStatus().GetApproved() || e.GetEnrollmentStatus().GetEnrolledNow() { // Q117: not enrolled again
 		t.Fatalf("reconnected: %v", e)
 	}
 }
@@ -594,7 +597,10 @@ func TestResyncHealsALostSignal(t *testing.T) {
 	h, st, url := newHub(t)
 	ctx := t.Context()
 	resynced := make(chan string, 4)
-	h.Resynced = func(_ context.Context, host string) { resynced <- host }
+	h.Resynced = func(_ context.Context, host string, apps map[string]string, active []uint64) {
+		slices.Sort(active)
+		resynced <- fmt.Sprintf("%s %v %v", host, slices.Sorted(maps.Keys(apps)), active)
+	}
 	key := approvedAgent(t, h, st, url, "web")
 	c, _ := agent(t, url, key, "", nil)
 	got := reading(c)
@@ -605,12 +611,14 @@ func TestResyncHealsALostSignal(t *testing.T) {
 	next(t, got) // the Agent never sees this one: lost on the way
 
 	old := sha256.Sum256([]byte("v1"))
-	c.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_Resync{Resync: &agentv1.Resync{Checksums: map[string][]byte{"app": old[:]}}}})
+	c.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_Resync{Resync: &agentv1.Resync{
+		Checksums: map[string][]byte{"app": old[:], "other": old[:]}, Deploying: []uint64{4}}}})
 	if e := next(t, got); e.GetDesiredState().GetOp() != 9 {
 		t.Fatalf("want the lost Desired State again, got %v", e)
 	}
-	if host := <-resynced; host != "web" {
-		t.Fatal(host)
+	// Q116, Q118: its Applications, and the Sync Operations still going: deploying on it, or sent and not reported
+	if r := <-resynced; r != "web [app other] [4 9]" {
+		t.Fatal(r)
 	}
 	c.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_SyncOperationReport{SyncOperationReport: &agentv1.SyncOperationReport{
 		App: "app", Op: 9, Phase: "Succeeded"}}})

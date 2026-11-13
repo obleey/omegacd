@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -38,6 +39,7 @@ import (
 type fakeStore struct {
 	domain.Store // unimplemented methods panic
 	mu           sync.Mutex
+	backupErr    error // the backup fails with it
 	hash         string
 	mustChange   bool
 	tokens       map[string]domain.APIToken
@@ -272,6 +274,13 @@ func newEnv(t *testing.T, mustChange bool) *env {
 	h := New(Config{
 		Log:        logger,
 		Controller: ctrl, Store: store, Source: src, WebhookSecret: "s3", Agents: agents.New(store, logger),
+		Backup: func(ctx context.Context, w io.Writer) error {
+			if store.backupErr != nil {
+				return store.backupErr
+			}
+			_, err := io.WriteString(w, "the tar")
+			return err
+		},
 		WebhookParse: func(provider string, h http.Header, body []byte, secret string) ([]string, error) {
 			if h.Get("X-Sig") != secret {
 				return nil, errors.New("bad signature")
@@ -857,5 +866,49 @@ func TestAgentAllowlistBehindProxy(t *testing.T) {
 	}
 	if e := connect(serve(""), "203.0.113.7"); !strings.Contains(e.GetError().GetMessage(), "not from 127.0.0.1") {
 		t.Fatalf("a forged X-Forwarded-For from an untrusted peer was believed: %v", e)
+	}
+}
+
+// failingWriter is a client that went away: every write fails.
+type failingWriter struct{ h http.Header }
+
+func (f failingWriter) Header() http.Header       { return f.h }
+func (f failingWriter) Write([]byte) (int, error) { return 0, errors.New("connection reset") }
+func (f failingWriter) WriteHeader(int)           {}
+
+// Q114: an admin gets the backup tar, logged with how they signed in; a backup that fails is an error, not half a
+// file; without a backup configured, or a place to stage it, it says so; a client leaving mid-download is logged.
+func TestBackup(t *testing.T) {
+	e := newEnv(t, false)
+	e.expect("GET", "/api/backup", "", 401)
+	e.login()
+	if b := e.expect("GET", "/api/backup", "", 200); b != "the tar" || !strings.Contains(e.log.String(), `msg="backup taken" via=session`) {
+		t.Fatalf("%q\n%s", b, e.log.String())
+	}
+	e.store.backupErr = errors.New("disk full")
+	e.expect("GET", "/api/backup", "", 500)
+
+	logs := &strings.Builder{}
+	log, _ := logging.New(logs, "debug", "text")
+	none := &server{Config: Config{Log: log}}
+	rec := httptest.NewRecorder()
+	none.backup(rec, httptest.NewRequest("GET", "/api/backup", nil))
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("not configured: %d", rec.Code)
+	}
+	s := &server{Config: Config{Log: log, Backup: func(ctx context.Context, w io.Writer) error { _, err := io.WriteString(w, "tar"); return err }}}
+	req := httptest.NewRequest("GET", "/api/backup", nil)
+	req.Header.Set("Authorization", "Bearer ocd_x")
+	s.backup(failingWriter{http.Header{}}, req)
+	if !strings.Contains(logs.String(), "backup not fully sent") || !strings.Contains(logs.String(), "via=token") {
+		t.Fatalf("logs:\n%s", logs.String())
+	}
+	file := filepath.Join(t.TempDir(), "a-file")
+	os.WriteFile(file, nil, 0o600)
+	t.Setenv("TMPDIR", file)
+	rec = httptest.NewRecorder()
+	s.backup(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("no temporary folder: %d", rec.Code)
 	}
 }

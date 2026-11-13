@@ -91,12 +91,18 @@ its e2e script, installs and enrolls an Agent first; the deploy files lose the s
 without being changed.
 
 ### M4-06 · History retention and disaster recovery
-**Status:** todo
+**Status:** done (2026-11-13, PR #127)
 **Depends on:** M4-01, M3-06
 
 History is kept forever by default with optional retention by count or age (Q36). Disaster recovery (Q30): a
 re-enrolled Agent reports what it runs; apps unknown to the Control Plane show as "on the Host, not managed" and are
 never touched; an App of Apps from Git takes them over by name without redeploying unchanged ones.
+
+Settled before it (Q112–Q119): retention by `OMEGACD_HISTORY_KEEP` and `OMEGACD_HISTORY_MAX_AGE`; `omegacd backup`
+(the database and the encrypted Git credentials, never a key), restored by documented steps; the Master Key generated
+when missing; Sync Operations a restored database still shows Running closed as unknown; an enrolled Agent's outbox
+cleared; the Applications a Host runs that the Control Plane doesn't know listed per Host; a takeover at the same
+Revision needs no Sync Operation.
 
 **Done when:** tested from a backup and from an empty Control Plane, with no container recreated that didn't change.
 
@@ -105,7 +111,8 @@ never touched; an App of Apps from Git takes them over by name without redeployi
 **Depends on:** M4-01
 
 With the Source Server down (Q31): reinstalled Agents and Rollbacks to rendered Revisions are served from the
-Control Plane's blob store; new Revisions wait with the reason shown.
+Control Plane's blob store; new Revisions wait with the reason shown. The store prunes with the history (Q113): a payload goes when no kept
+Sync Operation uses it.
 
 **Done when:** tested with the Source Server stopped.
 
@@ -161,6 +168,10 @@ its reason. The same pass checks logging (Q62): every error path logs or returns
 decision logs at debug, nothing fails silently; where the log is what tells an operator what happened, the path's
 test checks the log line. Code M4-05 deletes (push, SSH/TLS Hosts, the local engine path) is left
 out: it is deleted first, never tested (Q97). Then CI requires 100%: any uncovered line not in the exceptions fails.
+
+From M4-06: shutting down with Agents connected logs `ERROR record the agent leaving: sql: database is closed`: the
+store closes before the hub's sessions end (hijacked connections outlive the HTTP server's Shutdown). The server waits
+for its Agent sessions before closing the store.
 
 **Done when:** `make cover` shows 100% of the lines not marked unreachable, CI enforces it, and no error path is
 silent (reviewed package by package, the operator-facing ones tested by their log line).

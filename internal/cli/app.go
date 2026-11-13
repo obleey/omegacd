@@ -382,7 +382,7 @@ func (c *CLI) waitOp(ctx context.Context, cl *client, name string, id int64, hea
 	switch op.Phase {
 	case domain.OpFailed:
 		return errors.New(op.Message)
-	case domain.OpWaiting, domain.OpSuperseded: // nothing finishes it while its Host is offline: don't wait for that
+	case domain.OpWaiting, domain.OpSuperseded, domain.OpUnknown: // nothing finishes it now: don't wait for that
 		return fmt.Errorf("Sync Operation #%d %s: %s", id, op.Phase, op.Message)
 	}
 	if !health {
@@ -719,9 +719,9 @@ func (c *CLI) hostList(ctx context.Context, args []string) error {
 			agent += ", only from " + strings.Join(h.AllowIPs, " ")
 		}
 		rows = append(rows, []string{h.Name, strconv.FormatBool(h.Status.Connected), version,
-			cmp.Or(h.AgeRecipient, "(none)"), agent, strings.Join(h.Apps, ", ")})
+			cmp.Or(h.AgeRecipient, "(none)"), agent, strings.Join(h.Apps, ", "), strings.Join(h.Unmanaged, ", ")})
 	}
-	c.table([]string{"NAME", "CONNECTED", "VERSION", "HOST KEY", "AGENT", "APPS"}, rows, 1)
+	c.table([]string{"NAME", "CONNECTED", "VERSION", "HOST KEY", "AGENT", "APPS", "NOT MANAGED"}, rows, 1)
 	return nil
 }
 

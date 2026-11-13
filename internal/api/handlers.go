@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -523,4 +524,35 @@ func (s *server) deleteToken(w http.ResponseWriter, r *http.Request) {
 		err = s.Store.DeleteToken(r.Context(), id)
 	}
 	respond(w, http.StatusNoContent, nil, err)
+}
+
+// backup sends the backup tar, made in a temporary file first so that a failure is an error, not half a download.
+func (s *server) backup(w http.ResponseWriter, r *http.Request) {
+	if s.Backup == nil {
+		writeStatus(w, http.StatusNotImplemented, "backups are not configured")
+		return
+	}
+	f, err := os.CreateTemp("", "omegacd-backup-*.tar") // owner-only: it holds sealed credentials
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	defer os.Remove(f.Name())
+	defer f.Close()
+	if err := s.Backup(r.Context(), f); err != nil {
+		s.Log.ErrorContext(r.Context(), "backup", "err", err)
+		writeError(w, err)
+		return
+	}
+	via := "session"
+	if strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
+		via = "token"
+	}
+	s.Log.InfoContext(r.Context(), "backup taken", "via", via, "remote", s.clientIP(r))
+	w.Header().Set("Content-Type", "application/x-tar")
+	w.Header().Set("Content-Disposition", `attachment; filename="omegacd-backup.tar"`)
+	f.Seek(0, io.SeekStart)
+	if _, err := io.Copy(w, f); err != nil {
+		s.Log.DebugContext(r.Context(), "backup not fully sent: the client left", "err", err)
+	}
 }

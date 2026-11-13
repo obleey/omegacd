@@ -27,6 +27,10 @@ found by the test servers; the docs say so.
 runs as a non-root user; only the Agent's service gets the Docker socket, in its group (`group_add`); the Control
 Plane's gets none (Q104).
 
+From M4-06 (Q115): the Control Plane creates its Master Key when missing, but `deploy/compose.yaml` mounts `age.key` as
+a single read-only file, which must exist first. Mount a key folder instead (writable), so a compose install needs no
+`age-keygen` step either.
+
 **Done when:** `docker compose up -d` brings each up, as a non-root user; the Agent refuses a mount without path parity.
 
 ### M6-03 · systemd units

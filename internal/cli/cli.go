@@ -79,6 +79,7 @@ func init() { // init breaks the cycle commands → run funcs → flags → comm
 		"login":         {"login --server URL --token TOKEN", (*CLI).login},
 		"logout":        {"logout", (*CLI).logout},
 		"version":       {"version", (*CLI).version},
+		"backup":        {"backup FILE", (*CLI).backup},
 		"keygen":        {"keygen [--out FILE]   (a new age key like age-keygen; the public key also goes to stderr)", (*CLI).keygen},
 		"source-certs":  {"source-certs [--out DIR] [--host NAME]...   (mTLS certificates for a standalone Source Server; --host: the names the Control Plane dials it by)", (*CLI).sourceCerts},
 		"import":        {"import --host NAME [STACK]... [--recipient age1…] [--apps-dir apps] [--definitions platform/apps.yaml] [--dry-run] [--force]\n    (run on the Host, in your repository checkout: writes the Compose stacks running on this machine into it as Applications for Host NAME)", (*CLI).importStacks},

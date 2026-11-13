@@ -50,3 +50,41 @@ func TestLoadIdentityAndSeal(t *testing.T) {
 		t.Fatal("missing file should fail")
 	}
 }
+
+// Q115: a missing key is made, owner-only in a folder made for it; the next call reads the same one; what isn't a key
+// file, or a folder where none can be made, is an error.
+func TestLoadOrCreateIdentity(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "etc", "omegacd", "age.key")
+	id, created, err := LoadOrCreateIdentity(path)
+	if err != nil || !created {
+		t.Fatalf("created %v, %v", created, err)
+	}
+	if fi, _ := os.Stat(path); fi.Mode().Perm() != 0o600 {
+		t.Fatalf("mode %v", fi.Mode().Perm())
+	}
+	again, created, err := LoadOrCreateIdentity(path)
+	if err != nil || created || again.String() != id.String() {
+		t.Fatalf("again: %v %v", created, err)
+	}
+	bad := filepath.Join(t.TempDir(), "age.key")
+	os.WriteFile(bad, []byte("not a key"), 0o600)
+	if _, _, err := LoadOrCreateIdentity(bad); err == nil {
+		t.Fatal("a file that isn't a key was taken")
+	}
+	file := filepath.Join(t.TempDir(), "a-file")
+	os.WriteFile(file, nil, 0o600)
+	if _, _, err := LoadOrCreateIdentity(filepath.Join(file, "age.key")); err == nil {
+		t.Fatal("made a key under a file")
+	}
+	if os.Geteuid() == 0 {
+		return // root writes into read-only folders
+	}
+	ro := t.TempDir()
+	os.Chmod(ro, 0o500)
+	defer os.Chmod(ro, 0o700)
+	for _, p := range []string{filepath.Join(ro, "age.key"), filepath.Join(ro, "sub", "age.key")} {
+		if _, _, err := LoadOrCreateIdentity(p); err == nil {
+			t.Fatalf("made %s in a read-only folder", p)
+		}
+	}
+}

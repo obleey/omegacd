@@ -5,10 +5,12 @@ import (
 	"bytes"
 	"cmp"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/obleey/omegacd/internal/version"
+	"io"
 	"io/fs"
 	"log/slog"
 	"mime"
@@ -34,8 +36,10 @@ type Config struct {
 	UI            fs.FS
 	// TrustedProxies may set X-Forwarded-For; see ParseTrustedProxies.
 	TrustedProxies []netip.Prefix
-	Agents         *agents.Hub  // the Agents' connections; nil: none are accepted
-	Log            *slog.Logger // nil: nothing logged
+	Agents         *agents.Hub // the Agents' connections; nil: none are accepted
+	// Backup writes the backup tar (Q114): the database and the encrypted Git credentials, never a key; nil: none
+	Backup func(ctx context.Context, w io.Writer) error
+	Log    *slog.Logger // nil: nothing logged
 }
 
 type server struct {
@@ -106,6 +110,7 @@ func New(cfg Config) http.Handler {
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
 	// public, like /healthz: the version is printed on the login page and by `omegacd version`
+	mux.HandleFunc("GET /api/backup", s.backup)
 	mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"version": version.String()})
 	})

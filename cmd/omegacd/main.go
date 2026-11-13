@@ -7,6 +7,7 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net"
@@ -74,6 +75,10 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	keep, maxAge, err := historySettings(os.Getenv("OMEGACD_HISTORY_KEEP"), os.Getenv("OMEGACD_HISTORY_MAX_AGE"))
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(dataDir, 0o750); err != nil {
 		return fmt.Errorf("data dir: %w (set OMEGACD_DATA to a folder this user owns or can create)", err)
 	}
@@ -81,9 +86,13 @@ func run(log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	id, err := crypto.LoadIdentity(ageKeyFile)
+	id, created, err := crypto.LoadOrCreateIdentity(ageKeyFile)
 	if err != nil {
-		return err
+		return fmt.Errorf("master key: %w (OMEGACD_AGE_KEY_FILE)", err)
+	}
+	if created { // Q115
+		log.Warn("created the Master Key: back it up apart from omegacd backup's files; losing it means entering the "+
+			"registry credentials again", "path", ageKeyFile, "recipient", id.Recipient().String())
 	}
 	st, err := store.Open(filepath.Join(dataDir, "omegacd.db"), crypto.NewSealer(id))
 	if err != nil {
@@ -92,6 +101,7 @@ func run(log *slog.Logger) error {
 	defer st.Close()
 	knownHosts := cmp.Or(os.Getenv("OMEGACD_SSH_KNOWN_HOSTS"), "/etc/omegacd/known_hosts") // Git over SSH (Q106)
 	var src domain.Source
+	var backupFiles []string // a standalone Source Server's credentials are backed up with it
 	if u := os.Getenv("OMEGACD_SOURCE_SERVER"); u != "" {
 		c, err := source.Dial(u, sourceTLSDir())
 		if err != nil {
@@ -109,6 +119,7 @@ func run(log *slog.Logger) error {
 		s.Log = log.With("component", "source")
 		go s.CollectBlobs(ctx)
 		src = s
+		backupFiles = []string{filepath.Join(dataDir, "credentials.age")}
 	}
 
 	hub := agents.New(st, log.With("component", "agents"))
@@ -136,9 +147,12 @@ func run(log *slog.Logger) error {
 	srv := &http.Server{
 		Addr: addr,
 		Handler: api.New(api.Config{
-			Controller:     ctl,
-			Store:          st,
-			Agents:         hub,
+			Controller: ctl,
+			Store:      st,
+			Agents:     hub,
+			Backup: func(ctx context.Context, w io.Writer) error {
+				return writeBackup(ctx, st, backupFiles, w)
+			},
 			Source:         src,
 			WebhookSecret:  os.Getenv("OMEGACD_WEBHOOK_SECRET"),
 			WebhookParse:   source.ParseWebhook,
@@ -150,6 +164,7 @@ func run(log *slog.Logger) error {
 	}
 
 	go ctl.Run(ctx)
+	go pruneHistory(ctx, log.With("component", "history"), st, keep, maxAge, time.Hour)
 	go func() {
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)

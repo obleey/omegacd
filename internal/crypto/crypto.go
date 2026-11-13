@@ -4,9 +4,12 @@ package crypto
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"path/filepath"
 
 	"filippo.io/age"
 )
@@ -28,6 +31,31 @@ func LoadIdentity(path string) (*age.X25519Identity, error) {
 		}
 	}
 	return nil, fmt.Errorf("no X25519 identity in %s", path)
+}
+
+// LoadOrCreateIdentity reads the age key at path, creating it (owner-only, its folder too) when there is none; created
+// says it was.
+func LoadOrCreateIdentity(path string) (id *age.X25519Identity, created bool, err error) {
+	id, err = LoadIdentity(path)
+	if !errors.Is(err, fs.ErrNotExist) {
+		return id, false, err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, false, err
+	}
+	id, err = age.GenerateX25519Identity()
+	if err != nil { // coverage: unreachable, generating reads the system's randomness, which doesn't fail
+		return nil, false, err
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return nil, false, err
+	}
+	_, err = fmt.Fprintf(f, "# public key: %s\n%s\n", id.Recipient(), id)
+	if err = errors.Join(err, f.Close()); err != nil { // coverage: unreachable, writing a few bytes to a file just created
+		return nil, false, err
+	}
+	return id, true, nil
 }
 
 type Sealer struct {

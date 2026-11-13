@@ -22,8 +22,6 @@ import (
 	"github.com/obleey/omegacd/internal/domain"
 )
 
-const historyLimit = 20
-
 // schemaBase is PRAGMA user_version of v0.2's first schema (Q105): v0.1, and v0.2 before M4-05, counted their
 // migrations from 1, so any version below it is a database this version can't read.
 const schemaBase = 1000
@@ -110,6 +108,11 @@ CREATE TABLE agent_diff (
 	app TEXT PRIMARY KEY REFERENCES apps(name) ON DELETE CASCADE,
 	diff TEXT NOT NULL
 );
+`, `
+-- M4-06, as of the Host's Agent's last resync: each Application it runs with its deployed tree's checksum (Q119), and
+-- the ones the Control Plane doesn't know (Q118), JSON
+ALTER TABLE hosts ADD COLUMN agent_apps TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE hosts ADD COLUMN unmanaged TEXT NOT NULL DEFAULT '[]';
 `}
 
 type Store struct {
@@ -334,22 +337,16 @@ func (s *Store) CreateOp(ctx context.Context, op domain.SyncOperation) (int64, e
 	return res.LastInsertId()
 }
 
+// Backup writes a consistent copy of the database to path, a file that must not exist, while the server runs (Q114).
+func (s *Store) Backup(ctx context.Context, path string) error {
+	_, err := s.db.ExecContext(ctx, `VACUUM INTO ?`, path)
+	return err
+}
+
+// FinishOp records how a Sync Operation ended. History is kept until retention prunes it (PruneOps, Q112).
 func (s *Store) FinishOp(ctx context.Context, id int64, phase domain.OpPhase, message string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	var app string
-	if err := tx.QueryRowContext(ctx, `UPDATE ops SET phase=?, message=?, finished_at=? WHERE id=? RETURNING app`,
-		phase, message, time.Now().UnixNano(), id).Scan(&app); err != nil {
-		return mapErr(err)
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM ops WHERE app = ?1 AND id NOT IN
-		(SELECT id FROM ops WHERE app = ?1 ORDER BY id DESC LIMIT ?2)`, app, historyLimit); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return affected(s.db.ExecContext(ctx, `UPDATE ops SET phase=?, message=?, finished_at=? WHERE id=?`,
+		phase, message, time.Now().UnixNano(), id))
 }
 
 func (s *Store) SetOpPhase(ctx context.Context, id int64, phase domain.OpPhase, message string) error {
@@ -365,6 +362,21 @@ func (s *Store) SupersedeWaitingOps(ctx context.Context, app string, by int64) e
 
 func (s *Store) GetOp(ctx context.Context, id int64) (domain.SyncOperation, error) {
 	return scanOp(s.db.QueryRowContext(ctx, `SELECT `+opCols+` FROM ops WHERE id = ?`, id))
+}
+
+// PruneOps deletes finished Sync Operations beyond the newest keep of each Application (0: no limit) and those finished
+// before olderThan (zero: no limit), except each Application's newest succeeded one, the deployed Revision's (Q112). It
+// returns how many went.
+func (s *Store) PruneOps(ctx context.Context, keep int, olderThan time.Time) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM ops WHERE id IN (
+		SELECT id FROM (SELECT id, finished_at, ROW_NUMBER() OVER (PARTITION BY app ORDER BY id DESC) AS n FROM ops)
+		WHERE finished_at > 0 AND ((? > 0 AND n > ?) OR finished_at < ?))
+		AND id NOT IN (SELECT MAX(id) FROM ops WHERE phase = ? GROUP BY app)`,
+		keep, keep, toUnix(olderThan), domain.OpSucceeded)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 func (s *Store) ListOps(ctx context.Context, app string) ([]domain.SyncOperation, error) {
@@ -437,15 +449,21 @@ func (s *Store) DeleteRegistryCredential(ctx context.Context, id int64) error {
 // ---- hosts ----
 
 // hostSelect reads a Host with its Agent's enrollment
-const hostSelect = `SELECT name, created_at, signing_key, age_recipient, approved, locked, agent, allow_ips FROM hosts`
+const hostSelect = `SELECT name, created_at, signing_key, age_recipient, approved, locked, agent, allow_ips, agent_apps, unmanaged FROM hosts`
 
 func (s *Store) scanHost(r scanner) (domain.Host, error) {
 	var h domain.Host
 	var created int64
-	var locked, agent, allow string
+	var locked, agent, allow, agentApps, unmanaged string
 	if err := r.Scan(&h.Name, &created,
-		&h.SigningKey, &h.AgeRecipient, &h.Approved, &locked, &agent, &allow); err != nil {
+		&h.SigningKey, &h.AgeRecipient, &h.Approved, &locked, &agent, &allow, &agentApps, &unmanaged); err != nil {
 		return h, mapErr(err)
+	}
+	if err := json.Unmarshal([]byte(agentApps), &h.AgentApps); err != nil {
+		return h, fmt.Errorf("host %s: agent_apps: %w", h.Name, err)
+	}
+	if err := json.Unmarshal([]byte(unmanaged), &h.Unmanaged); err != nil {
+		return h, fmt.Errorf("host %s: unmanaged: %w", h.Name, err)
 	}
 	if err := json.Unmarshal([]byte(allow), &h.AllowIPs); err != nil {
 		return h, fmt.Errorf("host %s: allow_ips: %w", h.Name, err)
@@ -729,6 +747,14 @@ func (s *Store) Enroll(ctx context.Context, invite string, signingKey []byte, ag
 		return domain.Host{}, err
 	}
 	return s.GetHost(ctx, host)
+}
+
+// SetAgentApps records what a Host's Agent said at its resync: each Application it runs with its deployed tree's
+// checksum (Q119), and the ones the Control Plane doesn't know (Q118).
+func (s *Store) SetAgentApps(ctx context.Context, host string, apps map[string]string, unmanaged []string) error {
+	a, _ := json.Marshal(apps)
+	u, _ := json.Marshal(append([]string{}, unmanaged...)) // [] for none, never null
+	return affected(s.db.ExecContext(ctx, `UPDATE hosts SET agent_apps = ?, unmanaged = ? WHERE name = ?`, string(a), string(u), host))
 }
 
 func (s *Store) ApproveHost(ctx context.Context, host, fingerprint string) error {

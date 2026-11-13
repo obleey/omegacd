@@ -40,12 +40,7 @@ type stored struct {
 
 func openCreds(dir string) (*creds, error) {
 	keyFile := filepath.Join(dir, "source.key")
-	id, err := crypto.LoadIdentity(keyFile)
-	if errors.Is(err, fs.ErrNotExist) {
-		if id, err = age.GenerateX25519Identity(); err == nil {
-			err = writeNew(keyFile, []byte(id.String()+"\n"))
-		}
-	}
+	id, _, err := crypto.LoadOrCreateIdentity(keyFile)
 	if err != nil {
 		return nil, fmt.Errorf("source server key: %w", err)
 	}
@@ -65,15 +60,6 @@ func openCreds(dir string) (*creds, error) {
 		return nil, fmt.Errorf("read %s (is %s its key?): %w", c.file, keyFile, err)
 	}
 	return c, nil
-}
-
-func writeNew(path string, b []byte) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return err
-	}
-	_, err = f.Write(b)
-	return errors.Join(err, f.Close())
 }
 
 // save writes list encrypted next to the file, then renames it over: a crash keeps the old file whole.

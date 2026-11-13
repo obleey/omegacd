@@ -74,6 +74,9 @@ message EnrollmentStatus {
   string host = 1;
   bool approved = 2;
   string fingerprint = 3; // of the public key, as the admin sees it: "SHA256:" and base64, like ssh-keygen -l
+  // this connection's invite just enrolled the Agent: its outbox holds reports for a Control Plane that is no longer
+  // the one it reports to, which it drops (Q117)
+  bool enrolled_now = 4;
 }
 
 // RotateKey asks the Agent for a new signing key (Q76: an admin's click). It answers with a KeyRotation, which the
@@ -132,6 +135,9 @@ message BlobChunk {
 message Resync {
   // app → its deployed Revision's checksum (DesiredState.checksum): a Desired State in flight the Agent lacks goes again
   map<string, bytes> checksums = 1;
+  // the Sync Operations the Agent is deploying now: one the Control Plane shows Running that is neither here nor in
+  // the outbox ended where this Control Plane can't know how (a database restored from a backup, Q116)
+  repeated uint64 deploying = 2;
 }
 
 // Statuses are strings with the domain package's values (Healthy, Running, …).
