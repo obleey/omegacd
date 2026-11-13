@@ -54,6 +54,11 @@ ctr() { docker ps -q --no-trunc --filter label=com.docker.compose.project=$1; }
 history() { "$BIN" app history $1 -o json; }
 api() { curl -sf -H "Authorization: Bearer $OMEGACD_TOKEN" -H 'X-Requested-With: omegacd' -H 'Content-Type: application/json' "$@"; }
 
+touch "$T/file"
+out=$(OMEGACD_DATA=$T/data OMEGACD_AGE_KEY_FILE=$T/file/age.key "$BIN" 2>&1)
+check "a Master Key it can't make stops the start, naming the setting" 'echo "$out" | grep -q "master key: .*(OMEGACD_AGE_KEY_FILE)"'
+out=$(OMEGACD_DATA=$T/data OMEGACD_HISTORY_KEEP=0 "$BIN" 2>&1)
+check "so does a retention that keeps nothing (Q112)" 'echo "$out" | grep -q OMEGACD_HISTORY_KEEP'
 server "$T/data" "$T/age.key"
 check "the first start makes the Master Key itself, saying where (Q115)" '[ -s "$T/age.key" ] && grep -q "created the Master Key" "$T/server.log"'
 enroll edge

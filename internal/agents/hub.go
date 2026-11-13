@@ -175,9 +175,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 	fingerprint := domain.Fingerprint(key)
 	h.log.InfoContext(ctx, "agent connected", "fingerprint", fingerprint, "approved", host.Approved, "remote", addr)
-	if err := status(ctx, c, 0, host.Name, fingerprint, host.Approved, enrolled); err != nil {
-		return
-	}
+	status(ctx, c, 0, host.Name, fingerprint, host.Approved, enrolled) // sends queue: a closed connection is the reads' to log
 	go func() {
 		select {
 		case <-s.approved:
@@ -387,9 +385,8 @@ func (h *Hub) authenticate(ctx context.Context, c *wire.Conn) (domain.Host, []by
 	defer cancel()
 	nonce := make([]byte, 32)
 	rand.Read(nonce)
-	if err := c.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_Challenge{Challenge: &agentv1.Challenge{Nonce: nonce}}}); err != nil {
-		return domain.Host{}, nil, nil, false, err
-	}
+	// sends queue: a closed connection is the Recv's below to report
+	c.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_Challenge{Challenge: &agentv1.Challenge{Nonce: nonce}}})
 	var enroll *agentv1.Enroll
 	var hello *agentv1.Hello
 	for {
