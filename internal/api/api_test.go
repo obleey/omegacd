@@ -139,6 +139,7 @@ type fakeController struct {
 	changed    chan string
 	hosts      map[string]domain.Host
 	lastSync   domain.SyncRequest
+	syncErr    error   // Sync fails with it
 	lastDelete [2]bool // cascade, volumes
 }
 
@@ -228,7 +229,7 @@ func (c *fakeController) Sync(ctx context.Context, name string, req domain.SyncR
 		return 0, err
 	}
 	c.lastSync = req
-	return 7, nil
+	return 7, c.syncErr
 }
 
 func (c *fakeController) Rollback(_ context.Context, name string, opID int64) (int64, error) {
@@ -910,5 +911,17 @@ func TestBackup(t *testing.T) {
 	s.backup(rec, req)
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("no temporary folder: %d", rec.Code)
+	}
+}
+
+// Q124: a Sync the Source Server can't render is 503, its reason given and logged.
+func TestSourceServerUnavailable(t *testing.T) {
+	e := newEnv(t, false)
+	e.login()
+	e.expect("POST", "/api/apps", `{"name":"web","repoURL":"https://x/r.git"}`, 201)
+	e.ctrl.syncErr = fmt.Errorf("%w: Source Server unreachable (OMEGACD_SOURCE_SERVER): connection refused", domain.ErrUnavailable)
+	if b := e.expect("POST", "/api/apps/web/sync", "", 503); !strings.Contains(b, "Source Server unreachable") ||
+		!strings.Contains(e.log.String(), "status=503") || !strings.Contains(e.log.String(), "connection refused") {
+		t.Fatalf("%s\n%s", b, e.log.String())
 	}
 }

@@ -107,12 +107,19 @@ Revision needs no Sync Operation.
 **Done when:** tested from a backup and from an empty Control Plane, with no container recreated that didn't change.
 
 ### M4-07 · Serve delivered payloads without the Source Server
-**Status:** todo
+**Status:** done (2026-11-13, PR #128)
 **Depends on:** M4-01
 
 With the Source Server down (Q31): reinstalled Agents and Rollbacks to rendered Revisions are served from the
 Control Plane's blob store; new Revisions wait with the reason shown. The store prunes with the history (Q113): a payload goes when no kept
 Sync Operation uses it.
+
+Settled before and while building it (Q120–Q128): each render's file list kept by tree checksum, a Sync deploying
+from it; the files copied into `<data>/payloads` before a Desired State goes; Rollback and Syncs that waited deploy
+the kept render; an Agent that doesn't run an Application deployed on its Host gets it again (`restore`); a new
+Revision refused with 503 and the reason, no Sync Operation; payloads pruned hourly with the history; a reinstalled
+Agent comes back by its backed-up keys (no way back for a Host with Applications whose keys are lost); the gRPC client
+finds a restarted Source Server within seconds.
 
 **Done when:** tested with the Source Server stopped.
 

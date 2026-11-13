@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/obleey/omegacd/internal/blob"
 	"github.com/obleey/omegacd/internal/store"
 )
 
@@ -30,25 +31,43 @@ func historySettings(keep, maxAge string) (int, time.Duration, error) {
 	return n, age, nil
 }
 
-// pruneHistory applies the retention now and then every interval until ctx ends, logging what went.
-func pruneHistory(ctx context.Context, log *slog.Logger, st *store.Store, keep int, maxAge, every time.Duration) {
+// payloadGrace keeps a file a Sync is copying, before its render is recorded (tests wait less).
+var payloadGrace = time.Hour
+
+// prune applies the retention now and then every interval until ctx ends, then drops the payloads no Sync Operation
+// uses any more (Q113, Q125), even with history kept forever: a deleted Application's go. It logs what went.
+func prune(ctx context.Context, log *slog.Logger, st *store.Store, blobs *blob.Store, keep int, maxAge, every time.Duration) {
 	if keep == 0 && maxAge == 0 {
 		log.Debug("history kept forever: OMEGACD_HISTORY_KEEP and OMEGACD_HISTORY_MAX_AGE are unset")
-		return
 	}
 	for {
-		var olderThan time.Time
-		if maxAge > 0 {
-			olderThan = time.Now().Add(-maxAge)
+		if keep > 0 || maxAge > 0 {
+			var olderThan time.Time
+			if maxAge > 0 {
+				olderThan = time.Now().Add(-maxAge)
+			}
+			n, err := st.PruneOps(ctx, keep, olderThan)
+			switch {
+			case err != nil:
+				log.Error("prune history", "err", err)
+			case n > 0:
+				log.Info("history pruned", "deleted", n, "keep", keep, "maxAge", maxAge)
+			default:
+				log.Debug("history: nothing to prune", "keep", keep, "maxAge", maxAge)
+			}
 		}
-		n, err := st.PruneOps(ctx, keep, olderThan)
+		renders, used, err := st.PruneRenders(ctx)
+		files := 0
+		if err == nil {
+			files, err = blobs.GC(func(h string) bool { return used[h] }, payloadGrace)
+		}
 		switch {
 		case err != nil:
-			log.Error("prune history", "err", err)
-		case n > 0:
-			log.Info("history pruned", "deleted", n, "keep", keep, "maxAge", maxAge)
+			log.Error("prune payloads", "err", err)
+		case renders > 0 || files > 0:
+			log.Info("payloads pruned", "renders", renders, "files", files)
 		default:
-			log.Debug("history: nothing to prune", "keep", keep, "maxAge", maxAge)
+			log.Debug("payloads: nothing to prune")
 		}
 		select {
 		case <-ctx.Done():

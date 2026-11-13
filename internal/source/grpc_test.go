@@ -7,7 +7,9 @@ import (
 	"net"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -149,5 +151,47 @@ func TestGRPCCredentials(t *testing.T) {
 	}
 	if err := remote.DeleteCredential(ctx, c.ID); !errors.Is(err, domain.ErrNotFound) {
 		t.Errorf("delete twice: %v", err)
+	}
+}
+
+// Q124: a Source Server that doesn't answer is ErrUnavailable, naming the setting.
+func TestGRPCUnavailable(t *testing.T) {
+	url, dir := standalone(t, server(t))
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Close() // a port nothing listens on
+	c, err := Dial("https://"+l.Addr().String(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	_, err = c.Resolve(t.Context(), "https://example.com/r.git", "main")
+	if !errors.Is(err, domain.ErrUnavailable) || !strings.Contains(err.Error(), "Source Server unreachable (OMEGACD_SOURCE_SERVER)") {
+		t.Fatalf("%v, want ErrUnavailable (the server is at %s)", err, url)
+	}
+	// back on the same port: found within seconds, not after gRPC's default backoff
+	cfg, err := ServerTLS(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := grpc.NewServer(grpc.Creds(credentials.NewTLS(cfg)))
+	Serve(g, server(t))
+	back, err := net.Listen("tcp", l.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	go g.Serve(back)
+	defer g.Stop()
+	f, _, _, _ := setup(t)
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(200 * time.Millisecond) {
+		_, err := c.Resolve(t.Context(), f.dir, "main")
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("after the Source Server came back: %v", err)
+		}
 	}
 }

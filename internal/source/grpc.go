@@ -8,8 +8,10 @@ import (
 	"io"
 	"io/fs"
 	"net/url"
+	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
@@ -153,7 +155,10 @@ func Dial(rawURL, tlsDir string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	conn, err := grpc.NewClient(u.Host, grpc.WithTransportCredentials(credentials.NewTLS(cfg)))
+	// a restarted Source Server is found within seconds, not after gRPC's default backoff of up to two minutes (Q124)
+	conn, err := grpc.NewClient(u.Host, grpc.WithTransportCredentials(credentials.NewTLS(cfg)),
+		grpc.WithConnectParams(grpc.ConnectParams{Backoff: backoff.Config{BaseDelay: time.Second, Multiplier: 1.6,
+			Jitter: 0.2, MaxDelay: 5 * time.Second}, MinConnectTimeout: 5 * time.Second}))
 	if err != nil {
 		return nil, err
 	}
@@ -184,6 +189,8 @@ func fromStatus(err error) error {
 		return remoteErr{st.Message(), domain.ErrInvalid}
 	case st.Code() == codes.AlreadyExists:
 		return remoteErr{st.Message(), domain.ErrAlreadyExists}
+	case st.Code() == codes.Unavailable:
+		return remoteErr{"Source Server unreachable (OMEGACD_SOURCE_SERVER): " + st.Message(), domain.ErrUnavailable}
 	}
 	return fmt.Errorf("source server: %s", st.Message())
 }

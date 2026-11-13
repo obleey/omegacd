@@ -39,6 +39,8 @@ var (
 	ErrInvalid       = errors.New("invalid")
 	ErrUnmanaged     = errors.New("compose project exists and is not managed by omegacd")
 	ErrBusy          = errors.New("a sync operation is already running")
+	// ErrUnavailable: the Source Server can't be reached; what was rendered before still deploys (Q124)
+	ErrUnavailable = errors.New("unavailable")
 	// ErrWaitingForHost: the delete is recorded and done when the Application's Host's Agent is back (Q83)
 	ErrWaitingForHost = errors.New("waiting for the Host")
 )
@@ -493,6 +495,9 @@ type Store interface {
 	ApproveHost(ctx context.Context, host, fingerprint string) error
 	// SetAgentApps records a Host's Agent's resync: its Applications' checksums (Q119), the unknown ones (Q118).
 	SetAgentApps(ctx context.Context, host string, apps map[string]string, unmanaged []string) error
+	// SaveRender keeps a render's file list by its tree checksum, Render gives it back or ErrNotFound (Q120)
+	SaveRender(ctx context.Context, tree string, files []File) error
+	Render(ctx context.Context, tree string) ([]File, error)
 
 	ListTokens(ctx context.Context) ([]APIToken, error)
 	CreateToken(ctx context.Context, name string) (APIToken, string, error) // returns plaintext once

@@ -389,3 +389,36 @@ is declared. Their details (syntax, UI, messages) are decided when each is built
   and retention work as after any Sync. At another Revision it Syncs normally, Compose recreating only what changed.
   (Refined while building M4-06: first "no Sync Operation", but the Control Plane counts as deployed only what a Sync
   Operation recorded.)
+
+## Payloads without the Source Server (design check before M4-07, 2026-11-13)
+
+- **Q120** The Control Plane keeps each render's file list, by tree checksum (`renders` in its database): a Sync
+  records the render it made, and deploys from it without rendering again. A Sync Operation an Agent ran itself
+  (restore, self-heal, rollback on the Host) reports the same checksum, so it finds the render too.
+- **Q121** The files themselves go in the Control Plane's own blob store (`<data>/payloads`, apart from the in-process
+  Source Server's `blobs`, which it collects as a cache): before sending a Desired State it copies the ones it lacks
+  from the Source Server, and a Sync whose files can't be copied fails before the Agent gets anything. Agents' blob
+  requests and the Diff's compose text read that store first. With the Source Server in-process its files are stored
+  twice, accepted for one code path.
+- **Q122** Rollback, and a Sync that waited for an offline Host, deploy the stored render of their tree; only without
+  one is the Source Server asked. An App of Apps renders through the Source Server: its children's definitions are read
+  from Git.
+- **Q123** A resync that shows an Application deployed (a Succeeded Sync Operation) that its Agent doesn't run, not
+  being deleted and with no Sync Operation Running or Waiting, deploys its deployed Revision again from the stored
+  render: trigger `restore`, whatever Auto-Sync says, "its Agent didn't run it (reinstalled?)". It restores what the
+  Control Plane already deployed, nothing new.
+- **Q124** With the Source Server unreachable a new Revision gets no Sync Operation: `ErrUnavailable` (HTTP 503), the
+  status saying "Source Server unreachable … the deployed Revision keeps running". Polling and webhooks find it once
+  it is back, Auto-Sync runs it; a manual Sync is clicked again.
+- **Q125** Payloads prune with the history (Q113): hourly, after the retention, renders no Sync Operation uses, then
+  blobs no render uses (an hour's grace), also with history kept forever: a deleted Application's payloads go.
+- **Q126** `omegacd backup` holds the renders (in the database), not the blobs: after a restore Agents with their
+  cache roll back without the Source Server; a reinstalled Agent needs it until its files are copied again.
+- **Q127** A reinstalled Agent gets back on its Host by its keys: the README has the operator back up its state dir's
+  `signing.key` and `host.key`, and a reinstall that puts them back is a plain reconnect, no enrollment, Encrypted
+  Secrets still decrypting; its Applications come back by Q123, the files from the Control Plane's store. A Host with
+  Applications whose keys are lost has no way back in v0.2 (`host add` refuses an enrolled Host, `host delete` one with
+  Applications). (Found while building M4-07.)
+- **Q128** A Host Key that is lost can't decrypt the Encrypted Secrets in Git: a restore fails with the Agent's
+  decryption error naming the file. No code: the README says to back the key up, or to re-encrypt for the new one
+  (`host key show`); M5-08 shows it in the UI.

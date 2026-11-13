@@ -674,3 +674,41 @@ func TestSetAgentApps(t *testing.T) {
 		must(t, s.SetAgentApps(ctx, "edge", nil, nil))
 	}
 }
+
+// Q120, Q125: a render is kept once by its tree; the ones no Sync Operation names are pruned, and what the rest use is
+// reported; a render that doesn't read is an error, not an empty one.
+func TestRenders(t *testing.T) {
+	s, _ := open(t)
+	ctx := t.Context()
+	must(t, s.CreateApp(ctx, domain.Application{Name: "web"}))
+	_, err := s.CreateOp(ctx, domain.SyncOperation{App: "web", Revision: "r", TreeHash: "t1", StartedAt: time.Now()})
+	must(t, err)
+	must(t, s.SaveRender(ctx, "t1", []domain.File{{Path: "compose.yaml", Mode: 0o644, SHA256: "a"}}))
+	must(t, s.SaveRender(ctx, "t1", []domain.File{{Path: "other", SHA256: "x"}})) // kept already: stays
+	must(t, s.SaveRender(ctx, "t2", []domain.File{{Path: "compose.yaml", SHA256: "b"}}))
+	if files, err := s.Render(ctx, "t1"); err != nil || len(files) != 1 || files[0].SHA256 != "a" || files[0].Mode != 0o644 {
+		t.Fatalf("t1: %+v, %v", files, err)
+	}
+	if _, err := s.Render(ctx, "nope"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("unknown tree: %v", err)
+	}
+	n, used, err := s.PruneRenders(ctx)
+	if err != nil || n != 1 || !used["a"] || used["b"] {
+		t.Fatalf("pruned %d, used %v, %v", n, used, err)
+	}
+	if _, err := s.Render(ctx, "t2"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("t2 kept: %v", err)
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE renders SET files = 'not json'`)
+	must(t, err)
+	if _, err := s.Render(ctx, "t1"); err == nil {
+		t.Fatal("a broken render read")
+	}
+	if _, _, err := s.PruneRenders(ctx); err == nil {
+		t.Fatal("a broken render pruned without error")
+	}
+	s.Close()
+	if _, _, err := s.PruneRenders(ctx); err == nil {
+		t.Fatal("pruned a closed database")
+	}
+}

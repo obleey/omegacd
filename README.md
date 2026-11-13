@@ -354,7 +354,7 @@ Changes *inside* data folders and volumes never count as drift. Back up volumes 
 
 ## Backup and recovery
 
-**History** (every Sync Operation) is kept forever unless you set `OMEGACD_HISTORY_KEEP` (the newest N per Application) or `OMEGACD_HISTORY_MAX_AGE` (e.g. `720h`); pruning runs at start and hourly, and never deletes an Application's deployed Sync Operation.
+**History** (every Sync Operation) is kept forever unless you set `OMEGACD_HISTORY_KEEP` (the newest N per Application) or `OMEGACD_HISTORY_MAX_AGE` (e.g. `720h`); pruning runs at start and hourly, and never deletes an Application's deployed Sync Operation. The files OmegaCD delivered go with the history: those no Sync Operation uses any more are deleted hourly.
 
 **Back up** the Control Plane while it runs:
 
@@ -371,7 +371,9 @@ The tar holds the database and, with the built-in Source Server, its encrypted G
 
 Your Applications' secrets are not in either: each Host's Agent holds its own Host Key, on that Host. A standalone Source Server keeps its `credentials.age` and `source.key` in its own data dir: back those up the same way.
 
-**Restore** on a stopped Control Plane: an empty data dir, `tar -xf omegacd-….tar -C <data dir>`, `source.key` and the Master Key back where they were, start. The Agents reconnect by themselves. A Sync the backup caught running, whose result reached only the Control Plane you lost, shows as **Unknown**; what runs is what each Agent reports.
+**Each Host's Agent keys**: back up `signing.key` and `host.key` from its state dir (e.g. `/var/lib/omegacd-agent`) once. A Host reinstalled with those two put back reconnects as itself, no enrollment: the Control Plane deploys its Applications again at their deployed Revisions, even with the Source Server down. Lost, the Agent can't get back on a Host that has Applications, and the Host Key can't decrypt the secrets in Git that were encrypted for it: re-encrypt them for the new one (`omegacd host key show HOST`).
+
+**Restore** on a stopped Control Plane: an empty data dir, `tar -xf omegacd-….tar -C <data dir>`, `source.key` and the Master Key back where they were, start. The Agents reconnect by themselves. The files OmegaCD delivered aren't in the tar (Git has them): until the Source Server is reachable, Rollbacks work from what each Agent keeps (its last 10 Revisions per Application), and a reinstalled Host waits for the Source Server. A Sync the backup caught running, whose result reached only the Control Plane you lost, shows as **Unknown**; what runs is what each Agent reports.
 
 **From nothing** (no backup): start an empty Control Plane, add each Host again and run its Agent with the new invite (its state is kept: its apps keep running; reports it kept for the old Control Plane are dropped). `omegacd host list` shows what each Host runs that OmegaCD doesn't know (**not managed**: never touched). Create your App of Apps again: an Application its Agent already runs at the target Revision is **taken over** without deploying (its history says so); one at another Revision Syncs normally.
 
@@ -633,6 +635,11 @@ balancer between the two must pass TLS through untouched (TCP mode: Traefik `Hos
 `tls.passthrough`, nginx `stream` with `ssl_preread`, HAProxy `mode tcp`): terminating TLS there would drop the
 client certificate and the Source Server refuses the connection. Repository credentials live in the Source
 Server's data dir (see [Git access](#git-access)).
+
+**While it is down**, what runs keeps running, and what was rendered before still deploys: the Control Plane keeps
+the files it delivered (`payloads` in its data dir), so Rollbacks, Syncs that waited for a Host and reinstalled Hosts
+work. A new Revision can't be rendered: Applications show "Source Server unreachable … the deployed Revision keeps
+running", a Sync is refused (HTTP 503), and once it is back (found within seconds) polling, webhooks and Auto-Sync carry on.
 
 CLI: `OMEGACD_SERVER`, `OMEGACD_TOKEN`, `NO_COLOR`.
 

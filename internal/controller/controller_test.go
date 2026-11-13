@@ -36,6 +36,9 @@ type fakeStore struct {
 	finishErr    error                         // FinishOp fails with it
 	opsErr       error                         // ListOps fails with it
 	phaseErr     error                         // SetOpPhase fails with it
+	renders      map[string][]domain.File      // kept renders by tree (Q120)
+	renderErr    error                         // Render fails with it
+	saveErr      error                         // SaveRender fails with it
 	mu           sync.Mutex
 	apps         map[string]domain.Application
 	ops          []domain.SyncOperation
@@ -168,6 +171,30 @@ func (s *fakeStore) LastSucceededOp(ctx context.Context, app string) (domain.Syn
 	}
 	return domain.SyncOperation{}, domain.ErrNotFound
 }
+func (s *fakeStore) SaveRender(_ context.Context, tree string, files []domain.File) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.saveErr != nil {
+		return s.saveErr
+	}
+	if s.renders == nil {
+		s.renders = map[string][]domain.File{}
+	}
+	s.renders[tree] = files
+	return nil
+}
+func (s *fakeStore) Render(_ context.Context, tree string) ([]domain.File, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.renderErr != nil {
+		return nil, s.renderErr
+	}
+	files, ok := s.renders[tree]
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+	return files, nil
+}
 func (s *fakeStore) ListRegistryCredentials(context.Context) ([]domain.RegistryCredential, error) {
 	return nil, nil
 }
@@ -268,7 +295,11 @@ func newRig(t *testing.T) rig {
 	t.Helper()
 	r := rig{st: newStore(), g: &fakeSource{sha: "aaaaaaaa"}, ag: &fakeAgents{}}
 	r.st.hosts["edge"] = domain.Host{Name: "edge", Fingerprint: "SHA256:edge", Approved: true}
-	r.c = New(Config{Store: r.st, Source: r.g, Agents: r.ag, PollInterval: time.Hour})
+	blobs, err := blob.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.c = New(Config{Store: r.st, Source: r.g, Agents: r.ag, Blobs: blobs, PollInterval: time.Hour})
 	// background Syncs (auto, App of Apps children) finish before the test's temporary dirs go
 	t.Cleanup(func() {
 		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {

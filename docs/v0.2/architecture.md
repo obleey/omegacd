@@ -84,8 +84,10 @@ only the Control Plane, never Agents or users. A reverse proxy in between must p
   Health and logs come from the Agent.
 - **Offline Host**: shows the last known state with its time; a Sync is **queued** ("waiting for Host") and runs
   on reconnect; a newer Sync replaces a queued one.
-- **Keeps every payload it delivered** (content-addressed, cheap): reinstalled Agents and Rollbacks to rendered
-  Revisions work without the Source Server; only new Revisions wait for it, with the reason shown.
+- **Keeps every payload it delivered** (content-addressed, cheap): each render's file list by tree checksum in its
+  database, the files in `<data>/payloads`, pruned with the history (Q120–Q125). Reinstalled Agents (keys kept,
+  Q127) and Rollbacks to rendered Revisions work without the Source Server; only new Revisions wait for it, with the
+  reason shown (Q124).
 - **No built-in Agent** (Q104): the Control Plane's own machine is a Host like any other, with an Agent installed
   beside it and enrolled. Every Application names its Host; there is no default Host.
 - **Disaster recovery** (Q30): from a backup (database + Master Key) Agents just reconnect; from nothing, Agents
