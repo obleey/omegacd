@@ -181,6 +181,9 @@ func writeError(w http.ResponseWriter, err error) {
 		status = http.StatusNotFound
 	case errors.Is(err, domain.ErrAlreadyExists), errors.Is(err, domain.ErrUnmanaged), errors.Is(err, domain.ErrBusy):
 		status = http.StatusConflict
+	case errors.Is(err, domain.ErrUnavailable):
+		status = http.StatusServiceUnavailable
+		fallthrough // logged with its reason, like a 500
 	default:
 		if sw, ok := w.(*statusWriter); ok {
 			sw.err = err

@@ -40,7 +40,7 @@ The plan: [docs/v0.2](docs/v0.2/README.md) (architecture, decisions, 8 milestone
 
 - **Agents** on every Host dial out to the Control Plane over one WebSocket and run Compose themselves; push over SSH/TLS goes away
 - **Secrets decrypted only on the Agent**, with a Host Key born there; secret sources plug in on the Agent
-- **Source Server**: a separate component owning Git credentials and rendering; in-process by default, standalone with mTLS for production
+- **Source Server**: a separate component owning Git credentials and rendering; in-process by default, standalone with mTLS for production; while it is down, what was rendered still deploys (Rollbacks, reinstalled Hosts) from what the Control Plane kept
 - **No data loss**: Agents keep, restore and self-heal their apps with the Control Plane or Source Server gone; offline rollback on the Host
 - **Backup and recovery**: `omegacd backup` while running; restore from it, or recover from nothing: Agents re-enroll, the App of Apps takes their apps over without redeploying; history kept forever or pruned by count or age
 - **Enrollment** with single-use invites, Agent key pairs, fingerprint approval and signed challenges

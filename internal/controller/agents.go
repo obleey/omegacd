@@ -43,8 +43,32 @@ func (c *Controller) deploy(ctx context.Context, a domain.Application, op domain
 	if err != nil {
 		return err
 	}
+	if err := c.keepFiles(ctx, r.Files); err != nil {
+		return err
+	}
 	c.cfg.Log.DebugContext(ctx, "desired state to the agent", "files", len(ds.Files), "tree", r.Checksum)
 	return c.cfg.Agents.Deploy(ctx, a.Host, ds)
+}
+
+// keepFiles copies the files the Control Plane's store lacks from the Source Server (Q121): every file an Agent may
+// ask for is here before the Desired State goes.
+func (c *Controller) keepFiles(ctx context.Context, files []domain.File) error {
+	copied := 0
+	for _, f := range files {
+		if c.cfg.Blobs.Has(f.SHA256) {
+			continue
+		}
+		b, err := c.cfg.Source.Blob(ctx, f.SHA256)
+		if err == nil {
+			_, err = c.cfg.Blobs.Put(b)
+		}
+		if err != nil {
+			return fmt.Errorf("keep %s from the Source Server: %w", f.Path, err)
+		}
+		copied++
+	}
+	c.cfg.Log.DebugContext(ctx, "files kept for the agents", "copied", copied, "files", len(files))
+	return nil
 }
 
 // desiredState is a's Desired State at revision, rendered as r, for the Sync Operation op (0: none, e.g. a Diff).
@@ -125,7 +149,7 @@ func (c *Controller) stage(ctx context.Context, a domain.Application, r domain.R
 	}
 	done = func() { os.RemoveAll(tmp) }
 	dir = filepath.Join(tmp, a.Name)
-	if err := workdir.Write(dir, r.Files, func(hash string) ([]byte, error) { return c.cfg.Source.Blob(ctx, hash) }); err != nil {
+	if err := workdir.Write(dir, r.Files, func(hash string) ([]byte, error) { return c.Blob(ctx, hash) }); err != nil {
 		done()
 		return "", nil, err
 	}
@@ -194,6 +218,9 @@ func (c *Controller) Resynced(ctx context.Context, host string, running map[stri
 			continue // never synced
 		}
 		c.closeLost(ctx, host, a.Name, ops, active)
+		if _, runs := running[a.Name]; !runs && ops[0].Phase != domain.OpRunning && ops[0].Phase != domain.OpWaiting {
+			c.restoreOnHost(ctx, a, ops)
+		}
 		if ops[0].Phase != domain.OpWaiting {
 			continue
 		}
@@ -228,6 +255,24 @@ func (c *Controller) Resynced(ctx context.Context, host string, running map[stri
 		c.cfg.Log.ErrorContext(ctx, "record the applications on the host, not managed", "host", host, "err", err)
 	} else if len(unmanaged) > 0 {
 		c.cfg.Log.DebugContext(ctx, "on the host, not managed", "host", host, "apps", unmanaged)
+	}
+}
+
+// triggerRestore marks a Sync that deploys the deployed Revision again on a Host whose Agent doesn't run it (Q123).
+const triggerRestore = "restore"
+
+// restoreOnHost deploys a's deployed Revision (the newest Succeeded of ops) again, from its kept render: its Agent
+// doesn't run it, most likely reinstalled (Q123). Never deployed: nothing to restore.
+func (c *Controller) restoreOnHost(ctx context.Context, a domain.Application, ops []domain.SyncOperation) {
+	i := slices.IndexFunc(ops, func(op domain.SyncOperation) bool { return op.Phase == domain.OpSucceeded })
+	if i < 0 {
+		c.cfg.Log.DebugContext(ctx, "not on its host, never deployed: nothing to restore", "app", a.Name)
+		return
+	}
+	c.cfg.Log.InfoContext(ctx, "its agent doesn't run it: deploying the deployed revision again", "app", a.Name,
+		"host", a.Host, "revision", short(ops[i].Revision))
+	if _, err := c.startSync(a, ops[i].Revision, ops[i].TreeHash, triggerRestore); err != nil && !errors.Is(err, domain.ErrBusy) {
+		c.cfg.Log.ErrorContext(ctx, "restore on its host", "app", a.Name, "err", err)
 	}
 }
 

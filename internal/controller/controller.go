@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/obleey/omegacd/internal/agents"
+	"github.com/obleey/omegacd/internal/blob"
 	"github.com/obleey/omegacd/internal/domain"
 	"github.com/obleey/omegacd/internal/logging"
 	agentv1 "github.com/obleey/omegacd/internal/proto/agent/v1"
@@ -35,8 +36,10 @@ const (
 var nameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
 
 type Config struct {
-	Store        domain.Store
-	Source       domain.Source
+	Store  domain.Store
+	Source domain.Source
+	// Blobs keeps the files of every payload delivered, so what was rendered deploys without the Source Server (Q121)
+	Blobs        *blob.Store
 	PollInterval time.Duration
 	NormalizeURL func(string) string
 	ObserveSync  func(app string, phase domain.OpPhase, d time.Duration) // may be nil
@@ -198,6 +201,9 @@ func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fe
 	switch {
 	case err != nil:
 		v.SyncMessage = err.Error()
+		if errors.Is(err, domain.ErrUnavailable) && deployed { // Q124
+			v.SyncMessage += "; the deployed Revision " + short(last.Revision) + " keeps running"
+		}
 	case !deployed:
 		v.SyncStatus, v.SyncMessage = domain.OutOfSync, "never synced"
 	case targetTree != last.TreeHash:
@@ -259,7 +265,7 @@ func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fe
 	}
 
 	if trigger != "" {
-		if _, err := c.startSync(a, sha, trigger); err != nil && !errors.Is(err, domain.ErrBusy) {
+		if _, err := c.startSync(a, sha, targetTree, trigger); err != nil && !errors.Is(err, domain.ErrBusy) {
 			c.cfg.Log.ErrorContext(ctx, "auto sync", "err", err)
 		}
 	}
@@ -288,6 +294,36 @@ func (c *Controller) target(ctx context.Context, a domain.Application, fetch boo
 func (c *Controller) render(ctx context.Context, a domain.Application, sha string) (domain.Rendered, error) {
 	return c.cfg.Source.Render(ctx, domain.RenderSpec{RepoURL: a.RepoURL, Revision: sha, Path: a.Path,
 		ComposeFiles: a.ComposeFiles, Profiles: a.Profiles, Apps: a.Kind == domain.KindApps})
+}
+
+// renderAt is a's Desired State at sha: the render kept for tree when there is one (Q120, Q122), else the Source
+// Server's, kept for the next time. An App of Apps always renders: its children's definitions come from Git.
+func (c *Controller) renderAt(ctx context.Context, a domain.Application, sha, tree string) (domain.Rendered, error) {
+	if tree != "" && a.Kind == domain.KindCompose {
+		files, err := c.cfg.Store.Render(ctx, tree)
+		if err == nil {
+			c.cfg.Log.DebugContext(ctx, "the kept render", "app", a.Name, "tree", tree, "files", len(files))
+			return domain.Rendered{Files: files, Checksum: tree}, nil
+		}
+		if !errors.Is(err, domain.ErrNotFound) {
+			return domain.Rendered{}, err
+		}
+	}
+	r, err := c.render(ctx, a, sha)
+	if err == nil && r.Invalid == nil && a.Kind == domain.KindCompose {
+		if err := c.cfg.Store.SaveRender(ctx, r.Checksum, r.Files); err != nil { // the Source Server renders it again
+			c.cfg.Log.WarnContext(ctx, "keep the render", "app", a.Name, "tree", r.Checksum, "err", err)
+		}
+	}
+	return r, err
+}
+
+// Blob is a delivered file's content: from the Control Plane's own store (Q121), else the Source Server's.
+func (c *Controller) Blob(ctx context.Context, hash string) ([]byte, error) {
+	if b, err := c.cfg.Blobs.Get(hash); err == nil {
+		return b, nil
+	}
+	return c.cfg.Source.Blob(ctx, hash)
 }
 
 // autoTrigger is the trigger of the Sync policy wants now ("" for none), and why (for the debug log). Caller holds c.mu.
@@ -322,14 +358,14 @@ func (c *Controller) autoTrigger(a domain.Application, s *appState, v domain.App
 	return "auto", "new revision"
 }
 
-// startSync records a Sync Operation and runs it in the background.
-func (c *Controller) startSync(a domain.Application, sha, trigger string) (int64, error) {
+// startSync records a Sync Operation to sha and runs it in the background; tree, when known, finds its kept render.
+func (c *Controller) startSync(a domain.Application, sha, tree, trigger string) (int64, error) {
 	ctx := context.Background()
-	r, err := c.render(ctx, a, sha)
+	r, err := c.renderAt(ctx, a, sha, tree)
 	if err != nil {
 		return 0, err
 	}
-	tree := r.Checksum
+	tree = r.Checksum
 	c.mu.Lock()
 	s := c.state(a.Name)
 	if s.syncing || s.deleting {
@@ -381,6 +417,9 @@ func (c *Controller) runSync(a domain.Application, op domain.SyncOperation) {
 	}
 
 	phase, msg := domain.OpSucceeded, "synced to "+short(op.Revision)
+	if op.Trigger == triggerRestore {
+		msg = "deployed " + short(op.Revision) + " again: its Agent didn't run it (reinstalled?)"
+	}
 	if errors.Is(err, errTakenOver) {
 		msg, err = err.Error(), nil
 	}
@@ -476,7 +515,7 @@ func (c *Controller) syncPendingChildren(ctx context.Context, parent string) {
 		s := c.state(ch.Name)
 		s.retries, s.nextRetry, s.failedTree = 0, time.Time{}, ""
 		c.mu.Unlock()
-		if _, err := c.startSync(ch, v.TargetSHA, triggerParent); err != nil && !errors.Is(err, domain.ErrBusy) {
+		if _, err := c.startSync(ch, v.TargetSHA, "", triggerParent); err != nil && !errors.Is(err, domain.ErrBusy) {
 			c.cfg.Log.Error("sync child application", "app", ch.Name, "parent", parent, "err", err)
 		}
 	}
@@ -484,7 +523,7 @@ func (c *Controller) syncPendingChildren(ctx context.Context, parent string) {
 
 // apply renders the Revision and sends it to the Application's Agent, or, for an App of Apps, syncs its children.
 func (c *Controller) apply(ctx context.Context, a domain.Application, op domain.SyncOperation) error {
-	r, err := c.render(ctx, a, op.Revision)
+	r, err := c.renderAt(ctx, a, op.Revision, op.TreeHash)
 	if err != nil {
 		return fmt.Errorf("render: %w", err)
 	}
@@ -767,7 +806,7 @@ func (c *Controller) Sync(ctx context.Context, name string, req domain.SyncReque
 	if err != nil {
 		return 0, err
 	}
-	return c.startSync(a, sha, "manual")
+	return c.startSync(a, sha, "", "manual")
 }
 
 func (c *Controller) Rollback(ctx context.Context, name string, opID int64) (int64, error) {
@@ -790,7 +829,7 @@ func (c *Controller) Rollback(ctx context.Context, name string, opID int64) (int
 	if err := c.cfg.Store.UpdateApp(ctx, a); err != nil {
 		return 0, err
 	}
-	return c.startSync(a, op.Revision, "rollback")
+	return c.startSync(a, op.Revision, op.TreeHash, "rollback")
 }
 
 // Refresh re-reads Git now, past the fetch cooldown. An App of Apps refreshes its children first, so its own

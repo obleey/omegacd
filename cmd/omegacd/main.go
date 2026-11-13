@@ -27,6 +27,7 @@ import (
 	"github.com/obleey/omegacd/internal/agent"
 	"github.com/obleey/omegacd/internal/agents"
 	"github.com/obleey/omegacd/internal/api"
+	"github.com/obleey/omegacd/internal/blob"
 	"github.com/obleey/omegacd/internal/cli"
 	"github.com/obleey/omegacd/internal/controller"
 	"github.com/obleey/omegacd/internal/crypto"
@@ -122,14 +123,19 @@ func run(log *slog.Logger) error {
 		backupFiles = []string{filepath.Join(dataDir, "credentials.age")}
 	}
 
+	// the files delivered, kept apart from an in-process Source Server's blobs, which it collects as a cache (Q121)
+	payloads, err := blob.Open(filepath.Join(dataDir, "payloads"))
+	if err != nil {
+		return fmt.Errorf("data dir: %w (OMEGACD_DATA)", err)
+	}
 	hub := agents.New(st, log.With("component", "agents"))
-	hub.Blob = src.Blob // the files as rendered, secrets still encrypted: only the Agent decrypts (Q19)
 	ctl := controller.New(controller.Config{
-		Agents: hub, Store: st, Source: src, PollInterval: poll,
+		Agents: hub, Store: st, Source: src, Blobs: payloads, PollInterval: poll,
 		NormalizeURL: source.NormalizeURL,
 		ObserveSync:  api.ObserveSync,
 		Log:          log.With("component", "controller"),
 	})
+	hub.Blob = ctl.Blob // the files as rendered, secrets still encrypted: only the Agent decrypts (Q19)
 	hub.Reported, hub.Resynced, hub.Removed, hub.Progress, hub.Status = ctl.AgentReported, ctl.Resynced, ctl.AgentRemoved,
 		ctl.AgentProgress, ctl.AgentStatusChanged
 
@@ -164,7 +170,7 @@ func run(log *slog.Logger) error {
 	}
 
 	go ctl.Run(ctx)
-	go pruneHistory(ctx, log.With("component", "history"), st, keep, maxAge, time.Hour)
+	go prune(ctx, log.With("component", "history"), st, payloads, keep, maxAge, time.Hour)
 	go func() {
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)

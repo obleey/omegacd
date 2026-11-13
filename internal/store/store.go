@@ -113,6 +113,12 @@ CREATE TABLE agent_diff (
 -- the ones the Control Plane doesn't know (Q118), JSON
 ALTER TABLE hosts ADD COLUMN agent_apps TEXT NOT NULL DEFAULT '{}';
 ALTER TABLE hosts ADD COLUMN unmanaged TEXT NOT NULL DEFAULT '[]';
+`, `
+-- M4-07: each render's file list (JSON) by its tree checksum, what Sync Operations' tree_hash name (Q120)
+CREATE TABLE renders (
+	tree TEXT PRIMARY KEY,
+	files TEXT NOT NULL
+);
 `}
 
 type Store struct {
@@ -377,6 +383,56 @@ func (s *Store) PruneOps(ctx context.Context, keep int, olderThan time.Time) (in
 		return 0, err
 	}
 	return res.RowsAffected()
+}
+
+// SaveRender keeps a render's file list by its tree checksum (Q120); one already kept stays.
+func (s *Store) SaveRender(ctx context.Context, tree string, files []domain.File) error {
+	b, err := json.Marshal(files)
+	if err != nil { // coverage: unreachable, a slice of plain structs always marshals
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO renders (tree, files) VALUES (?, ?)`, tree, b)
+	return err
+}
+
+// Render is the file list kept for tree, or ErrNotFound.
+func (s *Store) Render(ctx context.Context, tree string) ([]domain.File, error) {
+	var b []byte
+	if err := s.db.QueryRowContext(ctx, `SELECT files FROM renders WHERE tree = ?`, tree).Scan(&b); err != nil {
+		return nil, mapErr(err)
+	}
+	var files []domain.File
+	return files, json.Unmarshal(b, &files)
+}
+
+// PruneRenders deletes the renders no Sync Operation names (Q125) and returns how many went, with the blobs the
+// renders left still use.
+func (s *Store) PruneRenders(ctx context.Context) (int64, map[string]bool, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM renders WHERE tree NOT IN (SELECT tree_hash FROM ops)`)
+	if err != nil {
+		return 0, nil, err
+	}
+	n, _ := res.RowsAffected()
+	rows, err := s.db.QueryContext(ctx, `SELECT files FROM renders`)
+	if err != nil { // coverage: unreachable, a plain SELECT right after a DELETE on the same healthy database
+		return 0, nil, err
+	}
+	defer rows.Close()
+	used := map[string]bool{}
+	for rows.Next() {
+		var b []byte
+		var files []domain.File
+		if err := rows.Scan(&b); err != nil { // coverage: unreachable, files is a NOT NULL TEXT column
+			return 0, nil, err
+		}
+		if err := json.Unmarshal(b, &files); err != nil {
+			return 0, nil, err
+		}
+		for _, f := range files {
+			used[f.SHA256] = true
+		}
+	}
+	return n, used, rows.Err()
 }
 
 func (s *Store) ListOps(ctx context.Context, app string) ([]domain.SyncOperation, error) {
