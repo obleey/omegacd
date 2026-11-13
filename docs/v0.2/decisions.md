@@ -422,3 +422,26 @@ is declared. Their details (syntax, UI, messages) are decided when each is built
 - **Q128** A Host Key that is lost can't decrypt the Encrypted Secrets in Git: a restore fails with the Agent's
   decryption error naming the file. No code: the README says to back the key up, or to re-encrypt for the new one
   (`host key show`); M5-08 shows it in the UI.
+
+## Coverage and no silent path (design check before M4-10, 2026-11-13)
+
+- **Q129** M4-10 is split into sub-tickets by package, one PR each (M4-10a–e); each brings its packages to 100% and no
+  silent path, the last turns on CI's 100%. 713 uncovered blocks at the start (88.0%): one PR would not be reviewable.
+- **Q130** What a test reaches in a line or two is tested: a closed store, a read-only or missing folder, an existing
+  fake. Marked unreachable is only what no test can reach: a statement in a transaction after an earlier one succeeded,
+  `crypto/rand`, marshalling plain structs, a value just validated (Q96: no fault-injection hooks).
+- **Q131** A decision that logs at debug (Q62) is a branch that changes what the system does: it skips, retries, waits,
+  picks a Revision, refuses or falls back; it says why. Pure functions (parsers, formatters, validators) don't log:
+  their errors say why.
+- **Q132** Every Warn and Error an operator acts on (server, Source Server, Agent) has a test checking its message;
+  errors only returned upward, and debug lines, are covered but not asserted.
+- **Q133** At the end CI's Coverage job and `make gate` fail on every uncovered block not marked (`-all`), floor 100.
+  No gate-only exceptions: a line only Debian or a gate target reaches gets a test CI's Ubuntu runners run.
+- **Q134** From the review before M4-10: the Control Plane refuses a database newer than it knows, as the Agent does;
+  the Application name rule lives in `domain` and the Agent refuses a Desired State, Diff or removal naming an
+  Application or App of Apps against it (a Failed Sync, not a dropped connection); an unset `OMEGACD_WEBHOOK_SECRET` is
+  warned about at start; `emit` logs a dropped event at debug; `omegacd import` says when it falls back to `main`; a
+  `du` size it can't read is unknown, not 0; the silent `ListApps` and `AgentStatus` errors are logged or returned to a
+  caller that logs. (`ListCredentials` turned out not silent: its list is in memory, and a wrong `source.key` stops the
+  start.)
+- **Q135** Q96 measures the Go code; the SvelteKit UI keeps its own check and tests, its coverage left to M8 if wanted.

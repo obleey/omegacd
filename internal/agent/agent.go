@@ -194,7 +194,10 @@ func (ag *Agent) Watch(ctx context.Context, changed func(app string)) error {
 			changed(project)
 			return
 		}
-		apps, _ := ag.db.ListApps(ctx)
+		apps, err := ag.db.ListApps(ctx)
+		if err != nil {
+			ag.log.ErrorContext(ctx, "after the engine's events came back: list applications to check", "err", err)
+		}
 		for _, a := range apps {
 			changed(a.Name)
 		}

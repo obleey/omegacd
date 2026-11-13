@@ -46,9 +46,10 @@ func (c *CLI) importStacks(ctx context.Context, args []string) error {
 			return errors.New("the repository has no origin remote: add one, or pass --repo-url")
 		}
 	}
-	revision, _ := git(ctx, "branch", "--show-current")
+	revision, _ := git(ctx, "branch", "--show-current") // a detached HEAD prints nothing, and that is all that goes wrong here
 	if revision == "" {
 		revision = "main"
+		fmt.Fprintln(c.Stderr, "no current branch (a detached HEAD?): the Applications follow main; check targetRevision")
 	}
 
 	dial := c.ImportHost

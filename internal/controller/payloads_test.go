@@ -1,31 +1,17 @@
 package controller
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/obleey/omegacd/internal/blob"
 	"github.com/obleey/omegacd/internal/domain"
+	"github.com/obleey/omegacd/internal/logging"
 )
-
-// lockedBuffer is a log background Syncs write while the test reads it.
-type lockedBuffer struct {
-	mu sync.Mutex
-	b  bytes.Buffer
-}
-
-func (l *lockedBuffer) Write(p []byte) (int, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.b.Write(p)
-}
-func (l *lockedBuffer) String() string { l.mu.Lock(); defer l.mu.Unlock(); return l.b.String() }
 
 // waitOp waits until app's newest Sync Operation is finished, and returns it.
 func waitOp(t *testing.T, r rig, app string) domain.SyncOperation {
@@ -96,7 +82,7 @@ func TestPayloadsWithoutSourceServer(t *testing.T) {
 func TestPayloadsFailing(t *testing.T) {
 	r, ag := agentRig(t)
 	ctx := t.Context()
-	var logs lockedBuffer
+	var logs logging.Buffer
 	r.c.cfg.Log = slog.New(slog.NewTextHandler(&logs, nil))
 	r.g.mu.Lock()
 	r.g.blobErr = errors.New("connection refused")
@@ -130,7 +116,7 @@ func TestPayloadsFailing(t *testing.T) {
 func TestRestoreOnHost(t *testing.T) {
 	r, ag := agentRig(t)
 	ctx := t.Context()
-	var logs lockedBuffer
+	var logs logging.Buffer
 	r.c.cfg.Log = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	for _, name := range []string{"web", "db", "fresh"} {
 		r.c.CreateApp(ctx, app(name))
@@ -223,7 +209,7 @@ func TestRestoreAfterLostSync(t *testing.T) {
 func TestSyncThatCantStartIsLogged(t *testing.T) {
 	r := newRig(t)
 	ctx := t.Context()
-	var logs lockedBuffer
+	var logs logging.Buffer
 	r.c.cfg.Log = slog.New(slog.NewTextHandler(&logs, nil))
 	r.st.mu.Lock()
 	r.st.createOpErr = errors.New("disk full")

@@ -135,7 +135,7 @@ func Open(path string, sealer *crypto.Sealer) (*Store, error) {
 	dsn := "file:" + (&url.URL{Path: path}).EscapedPath() +
 		"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=secure_delete(1)&_txlock=immediate"
 	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
+	if err != nil { // coverage: unreachable, sql.Open only checks the driver name, which is registered
 		return nil, err
 	}
 	s := &Store{db: db, sealer: sealer}
@@ -177,9 +177,12 @@ func (s *Store) migrate() error {
 	if v == 0 {
 		v = schemaBase
 	}
+	if v > schemaBase+len(migrations) { // Q134: an older binary must not run on a schema it doesn't know
+		return fmt.Errorf("the database is version %d, newer than this OmegaCD knows (%d): upgrade OmegaCD", v, schemaBase+len(migrations))
+	}
 	for i := v - schemaBase; i < len(migrations); i++ {
 		tx, err := s.db.Begin()
-		if err != nil {
+		if err != nil { // coverage: unreachable, beginning a transaction on a healthy SQLite that just answered user_version
 			return err
 		}
 		if _, err := tx.Exec(migrations[i]); err != nil {
@@ -190,7 +193,7 @@ func (s *Store) migrate() error {
 			tx.Rollback()
 			return err
 		}
-		if err := tx.Commit(); err != nil {
+		if err := tx.Commit(); err != nil { // coverage: unreachable, committing a healthy SQLite transaction
 			return err
 		}
 	}
@@ -218,7 +221,7 @@ func affected(res sql.Result, err error) error {
 	if err != nil {
 		return mapErr(err)
 	}
-	if n, err := res.RowsAffected(); err != nil {
+	if n, err := res.RowsAffected(); err != nil { // coverage: unreachable, the sqlite driver always reports the rows a statement changed
 		return err
 	} else if n == 0 {
 		return domain.ErrNotFound
@@ -444,7 +447,7 @@ func (s *Store) ListOps(ctx context.Context, app string) ([]domain.SyncOperation
 	ops := []domain.SyncOperation{}
 	for rows.Next() {
 		o, err := scanOp(rows)
-		if err != nil {
+		if err != nil { // coverage: unreachable, scanning ops' fixed columns into their own types
 			return nil, err
 		}
 		ops = append(ops, o)
@@ -469,7 +472,7 @@ func (s *Store) ListRegistryCredentials(ctx context.Context) ([]domain.RegistryC
 	for rows.Next() {
 		var c domain.RegistryCredential
 		var pw string
-		if err := rows.Scan(&c.ID, &c.Registry, &c.Username, &pw); err != nil {
+		if err := rows.Scan(&c.ID, &c.Registry, &c.Username, &pw); err != nil { // coverage: unreachable, scanning fixed columns into their own types
 			return nil, err
 		}
 		if c.Password, err = s.sealer.Open(pw); err != nil {
@@ -483,7 +486,7 @@ func (s *Store) ListRegistryCredentials(ctx context.Context) ([]domain.RegistryC
 
 func (s *Store) SaveRegistryCredential(ctx context.Context, c domain.RegistryCredential) (int64, error) {
 	pw, err := s.sealer.Seal(c.Password)
-	if err != nil {
+	if err != nil { // coverage: unreachable, age encrypting in memory to its own recipient
 		return 0, err
 	}
 	if c.ID == 0 {
@@ -592,7 +595,7 @@ func (s *Store) ConfirmSigningKey(ctx context.Context, host string, key []byte) 
 
 func (s *Store) LockHost(ctx context.Context, host string, conns []domain.AgentConnection) error {
 	b, err := json.Marshal(conns)
-	if err != nil {
+	if err != nil { // coverage: unreachable, marshalling plain structs
 		return err
 	}
 	return affected(s.db.ExecContext(ctx, `UPDATE hosts SET locked = ? WHERE name = ?`, string(b), host))
@@ -600,7 +603,7 @@ func (s *Store) LockHost(ctx context.Context, host string, conns []domain.AgentC
 
 func (s *Store) SetAllowIPs(ctx context.Context, host string, cidrs []string) error {
 	b, err := json.Marshal(cidrs)
-	if err != nil {
+	if err != nil { // coverage: unreachable, marshalling strings
 		return err
 	}
 	if len(cidrs) == 0 {
@@ -644,10 +647,10 @@ func (s *Store) ApplyAgentReport(ctx context.Context, host string, seq uint64, r
 				WHERE app=? AND phase=?`, domain.OpSuperseded, at, r.App, domain.OpWaiting)
 		}
 	}
-	if err != nil {
+	if err != nil { // coverage: unreachable, statements after the first in a transaction that holds the write lock (_txlock=immediate) on a healthy SQLite
 		return false, err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE hosts SET outbox_seq=? WHERE name=?`, seq, host); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE hosts SET outbox_seq=? WHERE name=?`, seq, host); err != nil { // coverage: unreachable, the same transaction, holding the write lock, on a healthy SQLite
 		return false, err
 	}
 	return true, tx.Commit()
@@ -729,7 +732,7 @@ func (s *Store) AgentLeft(ctx context.Context, host string, at time.Time) error 
 
 func (s *Store) RecordAgent(ctx context.Context, host string, info domain.AgentInfo) error {
 	b, err := json.Marshal(info)
-	if err != nil {
+	if err != nil { // coverage: unreachable, marshalling a plain struct
 		return err
 	}
 	return affected(s.db.ExecContext(ctx, `UPDATE hosts SET agent = ? WHERE name = ?`, string(b), host))
@@ -757,14 +760,14 @@ func (s *Store) CreateInvite(ctx context.Context, host string, expires time.Time
 		if _, err := tx.ExecContext(ctx, `INSERT INTO hosts (name, created_at) VALUES (?, ?)`, host, toUnix(time.Now())); err != nil { // coverage: unreachable, this transaction just found no Host by that name, and SQLite has one writer
 			return "", mapErr(err)
 		}
-	case err != nil:
+	case err != nil: // coverage: unreachable, a read in a transaction holding the write lock (_txlock=immediate) on a healthy SQLite
 		return "", err
 	case len(key) > 0:
 		return "", fmt.Errorf("%w: an Agent is enrolled for Host %s already", domain.ErrAlreadyExists, host)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO invites (host, hash, expires_at) VALUES (?, ?, ?)
 		ON CONFLICT (host) DO UPDATE SET hash = excluded.hash, expires_at = excluded.expires_at`,
-		host, hashToken(invite), toUnix(expires)); err != nil {
+		host, hashToken(invite), toUnix(expires)); err != nil { // coverage: unreachable, the same transaction, holding the write lock, on a healthy SQLite
 		return "", err
 	}
 	return invite, tx.Commit()
@@ -788,7 +791,7 @@ func (s *Store) Enroll(ctx context.Context, invite string, signingKey []byte, ag
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Host{}, errInvite
 	}
-	if err != nil {
+	if err != nil { // coverage: unreachable, a statement in a transaction holding the write lock (_txlock=immediate) on a healthy SQLite
 		return domain.Host{}, err
 	}
 	if !now.Before(fromUnix(expires)) {
@@ -796,10 +799,10 @@ func (s *Store) Enroll(ctx context.Context, invite string, signingKey []byte, ag
 		return domain.Host{}, errInvite
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE hosts SET signing_key = ?, age_recipient = ?, approved = 0 WHERE name = ?`,
-		signingKey, ageRecipient, host); err != nil {
+		signingKey, ageRecipient, host); err != nil { // coverage: unreachable, the same transaction, holding the write lock, on a healthy SQLite
 		return domain.Host{}, mapErr(err)
 	}
-	if err := tx.Commit(); err != nil {
+	if err := tx.Commit(); err != nil { // coverage: unreachable, committing a healthy SQLite transaction
 		return domain.Host{}, err
 	}
 	return s.GetHost(ctx, host)
@@ -850,7 +853,7 @@ func (s *Store) ListTokens(ctx context.Context) ([]domain.APIToken, error) {
 	for rows.Next() {
 		var t domain.APIToken
 		var created, used int64
-		if err := rows.Scan(&t.ID, &t.Name, &t.Hash, &created, &used); err != nil {
+		if err := rows.Scan(&t.ID, &t.Name, &t.Hash, &created, &used); err != nil { // coverage: unreachable, scanning fixed columns into their own types
 			return nil, err
 		}
 		t.CreatedAt, t.LastUsed = fromUnix(created), fromUnix(used)
@@ -872,7 +875,7 @@ func (s *Store) CreateToken(ctx context.Context, name string) (domain.APIToken, 
 	if err != nil {
 		return domain.APIToken{}, "", mapErr(err)
 	}
-	if t.ID, err = res.LastInsertId(); err != nil {
+	if t.ID, err = res.LastInsertId(); err != nil { // coverage: unreachable, the sqlite driver always reports the row it inserted
 		return domain.APIToken{}, "", err
 	}
 	return t, plaintext, nil

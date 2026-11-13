@@ -389,7 +389,10 @@ func (c *Controller) agentLive(ctx context.Context, a domain.Application) domain
 // on the Host: shown as such.
 func (c *Controller) agentDetail(ctx context.Context, a domain.Application, d domain.ResourceDetail) (domain.ResourceDetail, error) {
 	if d.Kind == "volume" || d.Kind == "network" {
-		st, _ := c.cfg.Store.AgentStatus(ctx, a.Name)
+		st, err := c.cfg.Store.AgentStatus(ctx, a.Name)
+		if err != nil && !errors.Is(err, domain.ErrNotFound) { // none yet: no details
+			return d, err
+		}
 		d.Info = st.Details[d.Kind+"/"+d.Name]
 		return d, nil
 	}

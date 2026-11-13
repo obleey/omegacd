@@ -167,7 +167,7 @@ TESTING.md documents it.
 line uncovered and unlisted, or lowers the total (tested with a throwaway change).
 
 ### M4-10 · Existing code to 100% coverage, and no silent path
-**Status:** todo
+**Status:** split into M4-10a–e (Q129); closed by M4-10e
 **Depends on:** M4-09, M4-05 (Q97: v0.1-only code is deleted, not tested)
 
 Q96: every package's reachable lines covered, unit + integration + e2e combined; what no test can reach is marked in the code with
@@ -176,12 +176,62 @@ decision logs at debug, nothing fails silently; where the log is what tells an o
 test checks the log line. Code M4-05 deletes (push, SSH/TLS Hosts, the local engine path) is left
 out: it is deleted first, never tested (Q97). Then CI requires 100%: any uncovered line not in the exceptions fails.
 
+How (Q129–Q135): one sub-ticket per group of packages, each to 100% and no silent path; tested where a test reaches it
+cheaply, marked only where none can (Q130); decisions at debug (Q131); operator-facing Warn and Error lines asserted
+(Q132); the Go code only (Q135). At the start: 713 uncovered blocks, 88.0%.
+
+**Done when:** `make cover` shows 100% of the lines not marked unreachable, CI enforces it, and no error path is
+silent (reviewed package by package, the operator-facing ones tested by their log line).
+
+### M4-10a · The review's findings, shutdown order; store, blob, crypto, wire, logging, domain, version to 100%
+**Status:** done (2026-11-13, PR #134)
+**Depends on:** M4-09
+
 From M4-06: shutting down with Agents connected logs `ERROR record the agent leaving: sql: database is closed`: the
 store closes before the hub's sessions end (hijacked connections outlive the HTTP server's Shutdown). The server waits
 for its Agent sessions before closing the store.
 
-**Done when:** `make cover` shows 100% of the lines not marked unreachable, CI enforces it, and no error path is
-silent (reviewed package by package, the operator-facing ones tested by their log line).
+From a review of the wiring before M4-10 (2026-11-13), settled as Q134:
+- The Control Plane's database opens one with a newer schema: `store.migrate` runs only what it lacks, so an older
+  binary starts silently on a schema it doesn't know. Refuse it, as the Agent's database does ("upgrade").
+- The Agent takes Application and App of Apps names from the Control Plane into its folder path
+  (`root/<parent>/<name>`) unchecked; only `root` is checked (Q57). It checks them with the Control Plane's own rule.
+- An unset `OMEGACD_WEBHOOK_SECRET` lets anyone trigger refreshes (README) but the server says nothing: warn at start.
+- Silent paths: the Agent drops
+  `ListApps` errors in `Watch` and in `keepInSync`'s first reports; `agentDetail` drops `AgentStatus` errors; `emit`
+  drops events for a slow subscriber unlogged; `omegacd import` falls back to `main` unsaid; the importer reads a
+  `du` size it can't parse as 0; `pendingChildren` ignores `childDiff` errors.
+
+**Done when:** the findings are fixed with tests; `internal/store`, `blob`, `crypto`, `wire`, `logging`, `domain`,
+`version` and `secretkey` are at 100% (or marked, Q130) with no silent path.
+
+### M4-10b · source, workdir, secrets, appdef to 100%
+**Status:** todo
+**Depends on:** M4-10a
+
+**Done when:** `internal/source`, `workdir`, `secrets` and `appdef` are at 100% (or marked, Q130) with no silent path,
+the Source Server's operator-facing Warn and Error lines tested (Q132).
+
+### M4-10c · agent, agents, engine to 100%
+**Status:** todo
+**Depends on:** M4-10a
+
+**Done when:** `internal/agent`, `agents` and `engine` are at 100% (or marked, Q130) with no silent path, the Agent's and
+the hub's operator-facing Warn and Error lines tested (Q132).
+
+### M4-10d · controller, api, cmd/omegacd to 100%
+**Status:** todo
+**Depends on:** M4-10a
+
+**Done when:** `internal/controller`, `api` and `cmd/omegacd` are at 100% (or marked, Q130) with no silent path, the
+server's operator-facing Warn and Error lines tested (Q132).
+
+### M4-10e · cli, importer to 100%; CI requires 100%
+**Status:** todo
+**Depends on:** M4-10b, M4-10c, M4-10d
+
+**Done when:** `internal/cli` and `importer` are at 100% (or marked, Q130); CI's Coverage job and `make gate` fail on any
+uncovered block not marked (`-all`), floor 100 (Q133); closes M4-10.
 
 ### M4-12 · Ubuntu 26.04: Podman green
 **Status:** deferred: after v0.2 (Q111, 2026-11-12; ROADMAP)

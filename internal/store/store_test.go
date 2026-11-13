@@ -3,8 +3,10 @@ package store
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -710,5 +712,133 @@ func TestRenders(t *testing.T) {
 	s.Close()
 	if _, _, err := s.PruneRenders(ctx); err == nil {
 		t.Fatal("pruned a closed database")
+	}
+}
+
+// Q134: a database newer than this binary knows is refused, saying to upgrade; a file that isn't a database and a
+// schema a migration can't apply to fail with their errors.
+func TestDatabaseThisVersionCantOpen(t *testing.T) {
+	id, _ := age.GenerateX25519Identity()
+	write := func(sqlText string) string {
+		path := filepath.Join(t.TempDir(), "omegacd.db")
+		db, err := sql.Open("sqlite", "file:"+path)
+		must(t, err)
+		_, err = db.Exec(sqlText)
+		must(t, err)
+		must(t, db.Close())
+		return path
+	}
+	newer := write(fmt.Sprintf(`PRAGMA user_version = %d`, schemaBase+len(migrations)+1))
+	if _, err := Open(newer, crypto.NewSealer(id)); err == nil || !strings.Contains(err.Error(), "newer than this OmegaCD knows") ||
+		!strings.Contains(err.Error(), "upgrade OmegaCD") {
+		t.Fatalf("newer: %v", err)
+	}
+	broken := write(fmt.Sprintf(`PRAGMA user_version = %d`, schemaBase+1)) // says migrated, has no tables
+	if _, err := Open(broken, crypto.NewSealer(id)); err == nil || !strings.Contains(err.Error(), "migration 2") {
+		t.Fatalf("broken schema: %v", err)
+	}
+	junk := filepath.Join(t.TempDir(), "omegacd.db")
+	must(t, os.WriteFile(junk, bytes.Repeat([]byte("not a database "), 512), 0o600))
+	if _, err := Open(junk, crypto.NewSealer(id)); err == nil {
+		t.Fatal("opened a file that isn't a database")
+	}
+}
+
+// Every read and write fails with an error, never a zero value, once the database is gone.
+func TestClosedStore(t *testing.T) {
+	s, _ := open(t)
+	s.Close()
+	key, _, _ := ed25519.GenerateKey(nil)
+	for name, err := range map[string]error{
+		"ListApps":                func() error { _, err := s.ListApps(ctx); return err }(),
+		"CreateOp":                func() error { _, err := s.CreateOp(ctx, domain.SyncOperation{App: "web"}); return err }(),
+		"ListOps":                 func() error { _, err := s.ListOps(ctx, "web"); return err }(),
+		"ListRegistryCredentials": func() error { _, err := s.ListRegistryCredentials(ctx); return err }(),
+		"ListHosts":               func() error { _, err := s.ListHosts(ctx); return err }(),
+		"ApplyAgentReport":        func() error { _, err := s.ApplyAgentReport(ctx, "edge", 1, domain.AgentReport{}); return err }(),
+		"CreateInvite":            func() error { _, err := s.CreateInvite(ctx, "edge", time.Now()); return err }(),
+		"Enroll":                  func() error { _, err := s.Enroll(ctx, "x", key, "age1x", time.Now()); return err }(),
+		"ListTokens":              func() error { _, err := s.ListTokens(ctx); return err }(),
+		"CreateSession":           s.CreateSession(ctx, "h", time.Now()),
+		"FinishOp":                s.FinishOp(ctx, 1, domain.OpFailed, ""),
+		"Backup":                  s.Backup(ctx, filepath.Join(t.TempDir(), "b.db")),
+	} {
+		if err == nil || errors.Is(err, domain.ErrNotFound) {
+			t.Errorf("%s on a closed store: %v", name, err)
+		}
+	}
+}
+
+// Rows a store can't read (a column edited by hand, a restore gone wrong) are errors naming what broke; registry
+// credentials sealed with another Master Key say they can't be opened.
+func TestUnreadableRows(t *testing.T) {
+	s, path := open(t)
+	must(t, s.CreateApp(ctx, domain.Application{Name: "web"}))
+	_, err := s.CreateInvite(ctx, "edge", time.Now().Add(time.Hour))
+	must(t, err)
+	_, err = s.SaveRegistryCredential(ctx, domain.RegistryCredential{Registry: "ghcr.io", Username: "u", Password: "p"})
+	must(t, err)
+	other, _ := age.GenerateX25519Identity()
+	s2, err := Open(path, crypto.NewSealer(other))
+	must(t, err)
+	defer s2.Close()
+	if _, err := s2.ListRegistryCredentials(ctx); err == nil || !strings.Contains(err.Error(), "open registry credential") {
+		t.Fatalf("another Master Key: %v", err)
+	}
+
+	_, err = s.db.Exec(`UPDATE apps SET compose_files = 'not json'`)
+	must(t, err)
+	if _, err := s.ListApps(ctx); err == nil {
+		t.Fatal("listed an unreadable Application")
+	}
+	for _, col := range []string{"allow_ips", "agent", "locked"} {
+		_, err = s.db.Exec(`UPDATE hosts SET allow_ips = '[]', agent = '', locked = '', ` + col + ` = 'not json'`)
+		must(t, err)
+		if _, err := s.ListHosts(ctx); err == nil || !strings.Contains(err.Error(), col) {
+			t.Errorf("%s: %v", col, err)
+		}
+	}
+}
+
+// What a caller can get wrong: no key to look up or rotate to, enrolling without keys, approving an unknown Host.
+func TestKeysRefused(t *testing.T) {
+	s, _ := open(t)
+	if _, err := s.HostBySigningKey(ctx, nil); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("no key: %v", err)
+	}
+	if err := s.RotateSigningKey(ctx, "edge", []byte("old"), nil); !errors.Is(err, domain.ErrInvalid) {
+		t.Errorf("rotate to nothing: %v", err)
+	}
+	if _, err := s.Enroll(ctx, "x", nil, "", time.Now()); !errors.Is(err, domain.ErrInvalid) {
+		t.Errorf("enroll without keys: %v", err)
+	}
+	if err := s.ApproveHost(ctx, "nope", "SHA256:x"); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("approve an unknown Host: %v", err)
+	}
+}
+
+// A newer Sync supersedes the ones still waiting for their Host (Q81), not itself; an empty allowlist is stored as none.
+func TestSupersedeAndEmptyAllowlist(t *testing.T) {
+	s, _ := open(t)
+	must(t, s.CreateApp(ctx, domain.Application{Name: "web"}))
+	waiting, err := s.CreateOp(ctx, domain.SyncOperation{App: "web", Revision: "a"})
+	must(t, err)
+	must(t, s.SetOpPhase(ctx, waiting, domain.OpWaiting, "waiting"))
+	newer, err := s.CreateOp(ctx, domain.SyncOperation{App: "web", Revision: "b"})
+	must(t, err)
+	must(t, s.SetOpPhase(ctx, newer, domain.OpWaiting, "waiting"))
+	must(t, s.SupersedeWaitingOps(ctx, "web", newer))
+	if op, _ := s.GetOp(ctx, waiting); op.Phase != domain.OpSuperseded || !strings.Contains(op.Message, "superseded by Sync Operation") {
+		t.Fatalf("waiting: %+v", op)
+	}
+	if op, _ := s.GetOp(ctx, newer); op.Phase != domain.OpWaiting {
+		t.Fatalf("newer: %+v", op)
+	}
+	_, err = s.CreateInvite(ctx, "edge", time.Now().Add(time.Hour))
+	must(t, err)
+	must(t, s.SetAllowIPs(ctx, "edge", []string{"10.0.0.0/8"}))
+	must(t, s.SetAllowIPs(ctx, "edge", nil))
+	if h, _ := s.GetHost(ctx, "edge"); h.AllowIPs == nil || len(h.AllowIPs) != 0 {
+		t.Fatalf("allow %#v", h.AllowIPs)
 	}
 }

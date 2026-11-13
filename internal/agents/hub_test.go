@@ -1042,3 +1042,23 @@ func TestDiff(t *testing.T) {
 		t.Fatalf("dropped: %v", err)
 	}
 }
+
+// From M4-06: closing the hub ends every Agent connection and returns only once their sessions recorded the Agent
+// leaving, so the server can close the store after it.
+func TestCloseWaitsForSessions(t *testing.T) {
+	h, st, url := newHub(t)
+	key := approvedAgent(t, h, st, url, "edge")
+	c, _ := agent(t, url, key, "", nil)
+	for deadline := time.Now().Add(5 * time.Second); h.session("edge") == nil; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("not connected")
+		}
+	}
+	h.Close()
+	if host, _ := st.GetHost(t.Context(), "edge"); host.Agent == nil || host.Agent.LeftAt.IsZero() {
+		t.Fatalf("the Agent's leaving not recorded before Close returned: %+v", host.Agent)
+	}
+	if _, err := c.Recv(t.Context()); err == nil {
+		t.Fatal("the Agent's connection is still open")
+	}
+}

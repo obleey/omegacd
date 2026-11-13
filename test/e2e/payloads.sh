@@ -107,6 +107,9 @@ kept() { local h; h=$(printf '%s\n' "$1" | openssl dgst -sha256 | awk '{print $N
 check "the payloads no kept Sync Operation uses are pruned, logged" \
   'waitfor "grep -q \"msg=\\\"payloads pruned\\\" component=history renders=2 files=2\" \"$T/server.log\"" && [ "$(ops)" = 1 ]'
 check "v1's and v2's files gone, the deployed v3's kept" '! kept "web v1" && ! kept "web v2" && kept "web v3"'
+check "it warns that webhooks have no secret (Q134)" 'grep -q "OMEGACD_WEBHOOK_SECRET is unset" "$T/server.log"'
+check "stopped with its Agent connected, it records the Agent leaving before closing its database (M4-10a)" \
+  '! grep -q "record the agent leaving" "$T/server.log"'
 check "no secret in any log (Q62)" '! grep -qF -e "$PW" -e e2e-password-123 "$T/server.log" "$T/source.log" "$AGENT_LOG" "$T/edge-before.log"'
 
 [ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- server log"; tail -25 "$T/server.log"; echo "--- agent log"; tail -15 "$AGENT_LOG"; }

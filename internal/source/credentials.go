@@ -104,7 +104,7 @@ func (c *creds) all(context.Context) ([]domain.RepoCredential, error) {
 
 // ListCredentials returns the credentials without their secrets: they never leave the Source Server.
 func (s *Server) ListCredentials(ctx context.Context) ([]domain.RepoCredential, error) {
-	list, _ := s.creds.all(ctx)
+	list, _ := s.creds.all(ctx) // never fails: the list is in memory, decrypted at start (a wrong source.key stops the start)
 	for i := range list {
 		list[i].Password, list[i].SSHPrivateKey = "", ""
 	}

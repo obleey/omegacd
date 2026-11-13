@@ -85,6 +85,7 @@ code=$(curl -s -o /dev/null -w '%{http_code}' -H 'X-Forgejo-Event: push' -H 'X-F
 check "a forged webhook is refused (401)" '[ "$code" = 401 ]'
 grep -i "webhook\|sync finished" "$T/server.log" | cut -c1-200 | tail -4
 
+check "with a webhook secret set, no warning about it (Q134)" '! grep -q "OMEGACD_WEBHOOK_SECRET is unset" "$T/server.log"'
 check "the logs are at debug and hold no secret (Q62)" 'grep -q level=DEBUG "$T/server.log" && ! grep -qF -e "$SECRET" -e "$FTOK" -e "$PW" -e e2e-password-123 -e "$OMEGACD_TOKEN" "$T/server.log" "$AGENT_LOG"'
 
 check "deployed by the Agent of the Control Plane's machine, as its log says (Q104)" 'grep -q "msg=deploy" "$AGENT_LOG"'
