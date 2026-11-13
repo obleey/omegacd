@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -163,8 +164,8 @@ func TestOps(t *testing.T) {
 
 	ops, err := s.ListOps(ctx, "web")
 	must(t, err)
-	if len(ops) != 20 || ops[0].ID != ids[24] || ops[19].ID != ids[5] {
-		t.Fatalf("want newest 20, got %d (first %d)", len(ops), ops[0].ID)
+	if len(ops) != 25 || ops[0].ID != ids[24] || ops[24].ID != ids[0] { // kept until retention prunes (Q112)
+		t.Fatalf("want all 25, newest first, got %d (first %d)", len(ops), ops[0].ID)
 	}
 	if ops[0].Phase != domain.OpFailed || ops[0].Message != "msg" || ops[0].FinishedAt.IsZero() || ops[0].StartedAt.IsZero() {
 		t.Fatalf("op fields: %+v", ops[0])
@@ -183,7 +184,7 @@ func TestOps(t *testing.T) {
 	if op.Phase != domain.OpRunning || op.Revision != "r2" || !op.FinishedAt.IsZero() {
 		t.Fatalf("running op: %+v", op)
 	}
-	_, err = s.GetOp(ctx, ids[0])
+	_, err = s.GetOp(ctx, 99999)
 	wantErr(t, err, domain.ErrNotFound)
 
 	must(t, s.DeleteApp(ctx, "web"))
@@ -590,4 +591,86 @@ func TestAgentDiff(t *testing.T) {
 	must(t, s.DeleteApp(ctx, "web"))
 	_, err = s.AgentDiff(ctx, "web")
 	wantErr(t, err, domain.ErrNotFound)
+}
+
+// Q112: retention by count and by age deletes finished Sync Operations, never the newest succeeded one of an
+// Application (its deployed Revision's) nor one still running.
+func TestPruneOps(t *testing.T) {
+	s, _ := open(t)
+	ctx := t.Context()
+	for _, app := range []string{"web", "db"} {
+		must(t, s.CreateApp(ctx, domain.Application{Name: app}))
+	}
+	op := func(app string, phase domain.OpPhase) int64 {
+		id, err := s.CreateOp(ctx, domain.SyncOperation{App: app, Revision: "r", Phase: domain.OpRunning, StartedAt: time.Now()})
+		must(t, err)
+		if phase != domain.OpRunning {
+			must(t, s.FinishOp(ctx, id, phase, ""))
+		}
+		return id
+	}
+	deployed := op("web", domain.OpSucceeded)
+	failed := []int64{op("web", domain.OpFailed), op("web", domain.OpFailed), op("web", domain.OpFailed)}
+	running := op("web", domain.OpRunning)
+	dbOK := op("db", domain.OpSucceeded)
+	ids := func(app string) []int64 {
+		ops, err := s.ListOps(ctx, app)
+		must(t, err)
+		var out []int64
+		for _, o := range ops {
+			out = append(out, o.ID)
+		}
+		slices.Sort(out)
+		return out
+	}
+
+	if n, err := s.PruneOps(ctx, 0, time.Time{}); err != nil || n != 0 {
+		t.Fatalf("no retention set: %d %v", n, err)
+	}
+	if n, err := s.PruneOps(ctx, 2, time.Time{}); err != nil || n != 2 {
+		t.Fatalf("keep 2: %d %v", n, err)
+	}
+	if got := ids("web"); !slices.Equal(got, []int64{deployed, failed[2], running}) {
+		t.Fatalf("web keeps the newest two and its deployed one: %v", got)
+	}
+	if n, err := s.PruneOps(ctx, 0, time.Now().Add(time.Hour)); err != nil || n != 1 {
+		t.Fatalf("by age: %d %v", n, err)
+	}
+	if got := ids("web"); !slices.Equal(got, []int64{deployed, running}) || !slices.Equal(ids("db"), []int64{dbOK}) {
+		t.Fatalf("by age keeps the deployed and running ones: %v %v", got, ids("db"))
+	}
+	s.Close()
+	if _, err := s.PruneOps(ctx, 1, time.Time{}); err == nil {
+		t.Fatal("pruned a closed database")
+	}
+}
+
+// Q118, Q119: what a Host's Agent said at its resync is kept per Host, replaced at each: its Applications' checksums
+// and the ones the Control Plane doesn't know, none as an empty list; an unknown Host is not found, and a column that
+// isn't JSON is an error.
+func TestSetAgentApps(t *testing.T) {
+	s, _ := open(t)
+	ctx := t.Context()
+	if _, err := s.CreateInvite(ctx, "edge", time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	must(t, s.SetAgentApps(ctx, "edge", map[string]string{"handmade": "c1", "web": "c2"}, []string{"handmade"}))
+	h, _ := s.GetHost(ctx, "edge")
+	if !slices.Equal(h.Unmanaged, []string{"handmade"}) || h.AgentApps["web"] != "c2" {
+		t.Fatalf("%v %v", h.Unmanaged, h.AgentApps)
+	}
+	must(t, s.SetAgentApps(ctx, "edge", nil, nil))
+	if h, _ := s.GetHost(ctx, "edge"); len(h.Unmanaged) != 0 || len(h.AgentApps) != 0 {
+		t.Fatalf("after a resync with none: %v %v", h.Unmanaged, h.AgentApps)
+	}
+	wantErr(t, s.SetAgentApps(ctx, "nope", nil, nil), domain.ErrNotFound)
+	for _, col := range []string{"unmanaged", "agent_apps"} {
+		if _, err := s.db.ExecContext(ctx, `UPDATE hosts SET `+col+` = 'not json' WHERE name = 'edge'`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.GetHost(ctx, "edge"); err == nil || !strings.Contains(err.Error(), col) {
+			t.Fatalf("a broken %s: %v", col, err)
+		}
+		must(t, s.SetAgentApps(ctx, "edge", nil, nil))
+	}
 }

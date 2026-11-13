@@ -761,10 +761,13 @@ func (x *Enroll) GetAgeRecipient() string {
 // EnrollmentStatus answers an authenticated Agent: waiting for an admin to approve its key (Q28, Q74), and again once
 // approved. Until then the Control Plane sends it nothing else.
 type EnrollmentStatus struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Host          string                 `protobuf:"bytes,1,opt,name=host,proto3" json:"host,omitempty"`
-	Approved      bool                   `protobuf:"varint,2,opt,name=approved,proto3" json:"approved,omitempty"`
-	Fingerprint   string                 `protobuf:"bytes,3,opt,name=fingerprint,proto3" json:"fingerprint,omitempty"` // of the public key, as the admin sees it: "SHA256:" and base64, like ssh-keygen -l
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Host        string                 `protobuf:"bytes,1,opt,name=host,proto3" json:"host,omitempty"`
+	Approved    bool                   `protobuf:"varint,2,opt,name=approved,proto3" json:"approved,omitempty"`
+	Fingerprint string                 `protobuf:"bytes,3,opt,name=fingerprint,proto3" json:"fingerprint,omitempty"` // of the public key, as the admin sees it: "SHA256:" and base64, like ssh-keygen -l
+	// this connection's invite just enrolled the Agent: its outbox holds reports for a Control Plane that is no longer
+	// the one it reports to, which it drops (Q117)
+	EnrolledNow   bool `protobuf:"varint,4,opt,name=enrolled_now,json=enrolledNow,proto3" json:"enrolled_now,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -818,6 +821,13 @@ func (x *EnrollmentStatus) GetFingerprint() string {
 		return x.Fingerprint
 	}
 	return ""
+}
+
+func (x *EnrollmentStatus) GetEnrolledNow() bool {
+	if x != nil {
+		return x.EnrolledNow
+	}
+	return false
 }
 
 // RotateKey asks the Agent for a new signing key (Q76: an admin's click). It answers with a KeyRotation, which the
@@ -1236,7 +1246,10 @@ func (x *BlobChunk) GetData() []byte {
 type Resync struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// app → its deployed Revision's checksum (DesiredState.checksum): a Desired State in flight the Agent lacks goes again
-	Checksums     map[string][]byte `protobuf:"bytes,1,rep,name=checksums,proto3" json:"checksums,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Checksums map[string][]byte `protobuf:"bytes,1,rep,name=checksums,proto3" json:"checksums,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// the Sync Operations the Agent is deploying now: one the Control Plane shows Running that is neither here nor in
+	// the outbox ended where this Control Plane can't know how (a database restored from a backup, Q116)
+	Deploying     []uint64 `protobuf:"varint,2,rep,packed,name=deploying,proto3" json:"deploying,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1274,6 +1287,13 @@ func (*Resync) Descriptor() ([]byte, []int) {
 func (x *Resync) GetChecksums() map[string][]byte {
 	if x != nil {
 		return x.Checksums
+	}
+	return nil
+}
+
+func (x *Resync) GetDeploying() []uint64 {
+	if x != nil {
+		return x.Deploying
 	}
 	return nil
 }
@@ -2351,11 +2371,12 @@ const file_omegacd_agent_v1_agent_proto_rawDesc = "" +
 	"\tsignature\x18\x02 \x01(\fR\tsignature\"E\n" +
 	"\x06Enroll\x12\x16\n" +
 	"\x06invite\x18\x01 \x01(\tR\x06invite\x12#\n" +
-	"\rage_recipient\x18\x02 \x01(\tR\fageRecipient\"d\n" +
+	"\rage_recipient\x18\x02 \x01(\tR\fageRecipient\"\x87\x01\n" +
 	"\x10EnrollmentStatus\x12\x12\n" +
 	"\x04host\x18\x01 \x01(\tR\x04host\x12\x1a\n" +
 	"\bapproved\x18\x02 \x01(\bR\bapproved\x12 \n" +
-	"\vfingerprint\x18\x03 \x01(\tR\vfingerprint\"\v\n" +
+	"\vfingerprint\x18\x03 \x01(\tR\vfingerprint\x12!\n" +
+	"\fenrolled_now\x18\x04 \x01(\bR\venrolledNow\"\v\n" +
 	"\tRotateKey\"J\n" +
 	"\vKeyRotation\x12\x1d\n" +
 	"\n" +
@@ -2386,9 +2407,10 @@ const file_omegacd_agent_v1_agent_proto_rawDesc = "" +
 	"\tBlobChunk\x12\x16\n" +
 	"\x06sha256\x18\x01 \x01(\fR\x06sha256\x12\x16\n" +
 	"\x06offset\x18\x02 \x01(\x04R\x06offset\x12\x12\n" +
-	"\x04data\x18\x03 \x01(\fR\x04data\"\x8d\x01\n" +
+	"\x04data\x18\x03 \x01(\fR\x04data\"\xab\x01\n" +
 	"\x06Resync\x12E\n" +
-	"\tchecksums\x18\x01 \x03(\v2'.omegacd.agent.v1.Resync.ChecksumsEntryR\tchecksums\x1a<\n" +
+	"\tchecksums\x18\x01 \x03(\v2'.omegacd.agent.v1.Resync.ChecksumsEntryR\tchecksums\x12\x1c\n" +
+	"\tdeploying\x18\x02 \x03(\x04R\tdeploying\x1a<\n" +
 	"\x0eChecksumsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01\"\xf4\x01\n" +

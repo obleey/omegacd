@@ -200,6 +200,9 @@ func (ag *Agent) serve(ctx context.Context, conn *wire.Conn, c *Connection) erro
 			}
 		case e.GetEnrollmentStatus() != nil:
 			s := e.GetEnrollmentStatus()
+			if s.EnrolledNow && ag.db != nil {
+				ag.dropOutbox(ctx)
+			}
 			if s.Approved {
 				ag.log.Info("connected to the Control Plane, approved", "host", s.Host)
 				if ag.db != nil { // an Agent without its state (tests of the connection alone) has nothing to sync

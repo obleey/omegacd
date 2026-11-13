@@ -31,6 +31,11 @@ type fakeStore struct {
 	statuses     map[string]domain.AgentStatus // reports of Agents (M4-02)
 	diffs        map[string]domain.AgentDiff   // Diffs Agents computed (M4-11)
 	diffErr      error                         // SaveAgentDiff fails with it
+	unmanaged    map[string][]string           // by Host (Q118)
+	unmanagedErr error                         // SetUnmanaged fails with it
+	finishErr    error                         // FinishOp fails with it
+	opsErr       error                         // ListOps fails with it
+	phaseErr     error                         // SetOpPhase fails with it
 	mu           sync.Mutex
 	apps         map[string]domain.Application
 	ops          []domain.SyncOperation
@@ -108,9 +113,27 @@ func (s *fakeStore) CreateOp(_ context.Context, op domain.SyncOperation) (int64,
 	s.ops = append(s.ops, op)
 	return op.ID, nil
 }
+func (s *fakeStore) SetAgentApps(_ context.Context, host string, apps map[string]string, unmanaged []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.unmanagedErr != nil {
+		return s.unmanagedErr
+	}
+	if s.unmanaged == nil {
+		s.unmanaged = map[string][]string{}
+	}
+	s.unmanaged[host] = unmanaged
+	h := s.hosts[host]
+	h.AgentApps, h.Unmanaged = apps, unmanaged
+	s.hosts[host] = h
+	return nil
+}
 func (s *fakeStore) FinishOp(_ context.Context, id int64, p domain.OpPhase, m string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.finishErr != nil {
+		return s.finishErr
+	}
 	s.ops[id-1].Phase, s.ops[id-1].Message, s.ops[id-1].FinishedAt = p, m, time.Now()
 	return nil
 }
@@ -125,6 +148,9 @@ func (s *fakeStore) GetOp(_ context.Context, id int64) (domain.SyncOperation, er
 func (s *fakeStore) ListOps(_ context.Context, app string) ([]domain.SyncOperation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.opsErr != nil {
+		return nil, s.opsErr
+	}
 	var out []domain.SyncOperation
 	for _, op := range slices.Backward(s.ops) {
 		if op.App == app {
@@ -851,6 +877,9 @@ func TestInviteHost(t *testing.T) {
 func (s *fakeStore) SetOpPhase(_ context.Context, id int64, p domain.OpPhase, m string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.phaseErr != nil {
+		return s.phaseErr
+	}
 	s.ops[id-1].Phase, s.ops[id-1].Message = p, m
 	return nil
 }
@@ -1016,7 +1045,7 @@ func TestWaitingSyncRunsOnResync(t *testing.T) {
 	if op, _ := r.st.GetOp(ctx, id); op.Phase != domain.OpWaiting {
 		t.Fatalf("op %+v", op)
 	}
-	r.c.Resynced(ctx, "other") // another Host's Agent: nothing
+	r.c.Resynced(ctx, "other", nil, nil) // another Host's Agent: nothing
 	r.waitIdle(t, "web")
 	if op, _ := r.st.GetOp(ctx, id); op.Phase != domain.OpWaiting {
 		t.Fatalf("ran for another Host: %+v", op)
@@ -1025,7 +1054,7 @@ func TestWaitingSyncRunsOnResync(t *testing.T) {
 	ag.mu.Lock()
 	ag.err = nil // back
 	ag.mu.Unlock()
-	r.c.Resynced(ctx, "edge")
+	r.c.Resynced(ctx, "edge", nil, nil)
 	for deadline := time.Now().Add(2 * time.Second); ; time.Sleep(5 * time.Millisecond) {
 		if op, _ := r.st.GetOp(ctx, id); op.Phase == domain.OpSucceeded {
 			break
@@ -1099,7 +1128,7 @@ func TestDeleteThroughAgent(t *testing.T) {
 	ag.mu.Lock()
 	ag.err = nil
 	ag.mu.Unlock()
-	r.c.Resynced(ctx, "edge")
+	r.c.Resynced(ctx, "edge", nil, nil)
 	for deadline := time.Now().Add(2 * time.Second); ; time.Sleep(5 * time.Millisecond) {
 		if _, err := r.st.GetApp(ctx, "db"); errors.Is(err, domain.ErrNotFound) {
 			break
@@ -1204,7 +1233,7 @@ func TestAppOfAppsDeleteWaitsForChild(t *testing.T) {
 	ag.mu.Lock()
 	ag.err = nil
 	ag.mu.Unlock()
-	r.c.Resynced(ctx, "edge")
+	r.c.Resynced(ctx, "edge", nil, nil)
 	for deadline := time.Now().Add(2 * time.Second); ; time.Sleep(5 * time.Millisecond) {
 		_, cerr := r.st.GetApp(ctx, "edge-child")
 		_, perr := r.st.GetApp(ctx, "platform")
@@ -1636,4 +1665,124 @@ func TestStageWithoutTempDir(t *testing.T) {
 	if _, _, err := r.c.stage(t.Context(), app("web"), domain.Rendered{}); err == nil {
 		t.Fatal("staged without a temporary folder")
 	}
+}
+
+// Q116, Q118: an Agent's resync lists the Applications it runs that the Control Plane doesn't know; a Sync Operation
+// still Running that is neither active on the Agent nor being run here is closed as Unknown; failures are logged.
+func TestResyncClosesLostOpsAndListsUnmanaged(t *testing.T) {
+	r, _ := agentRig(t)
+	ctx := t.Context()
+	var logs bytes.Buffer
+	r.c.cfg.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	for _, name := range []string{"web", "db", "busy", "fresh"} { // fresh: never synced
+		a := app(name)
+		a.Host = "edge"
+		r.c.CreateApp(ctx, a)
+		r.waitIdle(t, name)
+	}
+	running := func(app string) int64 {
+		id, _ := r.st.CreateOp(ctx, domain.SyncOperation{App: app, Revision: "r", Phase: domain.OpRunning, StartedAt: time.Now()})
+		return id
+	}
+	lost, active, mine := running("web"), running("db"), running("busy")
+	r.c.setSyncing("busy", true) // a Sync this Control Plane runs right now
+	defer r.c.setSyncing("busy", false)
+
+	r.c.Resynced(ctx, "edge", map[string]string{"web": "t1", "db": "t2", "busy": "t3", "handmade": "t4"}, []uint64{uint64(active)})
+	if op, _ := r.st.GetOp(ctx, lost); op.Phase != domain.OpUnknown || !strings.Contains(op.Message, "result unknown") {
+		t.Fatalf("lost: %+v", op)
+	}
+	for _, id := range []int64{active, mine} {
+		if op, _ := r.st.GetOp(ctx, id); op.Phase != domain.OpRunning {
+			t.Fatalf("op %d closed: %+v", id, op)
+		}
+	}
+	r.st.mu.Lock()
+	got := r.st.unmanaged["edge"]
+	r.st.mu.Unlock()
+	if !slices.Equal(got, []string{"handmade"}) || !strings.Contains(logs.String(), "result is unknown") {
+		t.Fatalf("unmanaged %v; logs:\n%s", got, logs.String())
+	}
+
+	waiting, _ := r.st.CreateOp(ctx, domain.SyncOperation{App: "db", Revision: "r", Phase: domain.OpWaiting, StartedAt: time.Now()})
+	r.st.mu.Lock()
+	r.st.phaseErr = errors.New("disk full")
+	r.st.mu.Unlock()
+	r.c.Resynced(ctx, "edge", nil, []uint64{uint64(active)}) // a waiting Sync the store can't start
+	if op, _ := r.st.GetOp(ctx, waiting); op.Phase != domain.OpWaiting || !strings.Contains(logs.String(), "run the sync that waited for the host") {
+		t.Fatalf("waiting: %+v\n%s", op, logs.String())
+	}
+	running("web") // lost again, while the store fails
+	r.st.mu.Lock()
+	r.st.finishErr, r.st.unmanagedErr = errors.New("disk full"), errors.New("disk full")
+	r.st.mu.Unlock()
+	r.c.Resynced(ctx, "edge", nil, []uint64{uint64(active)})
+	r.st.mu.Lock()
+	r.st.opsErr = errors.New("disk full")
+	r.st.mu.Unlock()
+	r.c.Resynced(ctx, "edge", nil, nil)
+	for _, want := range []string{"close a lost sync operation", "record the applications on the host, not managed", "list sync operations"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Fatalf("no %q:\n%s", want, logs.String())
+		}
+	}
+}
+
+// Q119: an Application created over one its Agent already runs at the target's tree is taken over: its first Sync
+// sends nothing and records one Succeeded Sync Operation saying so; later Syncs, and one over another tree, deploy.
+func TestTakeover(t *testing.T) {
+	r, ag := agentRig(t)
+	ctx := t.Context()
+	r.st.mu.Lock()
+	h := r.st.hosts["edge"]
+	h.AgentApps = map[string]string{"web": "tree-aaaaaaaa", "db": "tree-older"}
+	r.st.hosts["edge"] = h
+	r.st.mu.Unlock()
+	for _, name := range []string{"web", "db"} {
+		a := app(name)
+		a.Host = "edge"
+		r.c.CreateApp(ctx, a)
+		r.waitIdle(t, name)
+		r.c.Sync(ctx, name, domain.SyncRequest{})
+		r.waitIdle(t, name)
+	}
+	ops, _ := r.st.ListOps(ctx, "web")
+	if len(ops) != 1 || ops[0].Phase != domain.OpSucceeded || !strings.Contains(ops[0].Message, "taken over") {
+		t.Fatalf("web: %+v", ops)
+	}
+	sent := ag.sent()
+	if len(sent) != 1 || sent[0].App != "db" {
+		t.Fatalf("sent %d, want only db's (another tree)", len(sent))
+	}
+	if v := r.c.reconcile(ctx, mustApp(t, r, "web")); v.SyncStatus != domain.Synced || v.DeployedSHA != "aaaaaaaa" {
+		t.Fatalf("taken over: %s %q", v.SyncStatus, v.DeployedSHA)
+	}
+	r.g.set("bbbbbbbb")
+	r.c.Sync(ctx, "web", domain.SyncRequest{})
+	r.waitIdle(t, "web")
+	if sent := ag.sent(); sent[len(sent)-1].App != "web" {
+		t.Fatal("a later Sync wasn't sent")
+	}
+
+	ghost := app("ghost") // its Host gone from the store after it was created: no takeover, a normal Sync
+	ghost.Host = "edge"
+	r.c.CreateApp(ctx, ghost)
+	r.waitIdle(t, "ghost")
+	r.st.mu.Lock()
+	delete(r.st.hosts, "edge")
+	r.st.mu.Unlock()
+	r.c.Sync(ctx, "ghost", domain.SyncRequest{})
+	r.waitIdle(t, "ghost")
+	if ops, _ := r.st.ListOps(ctx, "ghost"); len(ops) == 0 || strings.Contains(ops[0].Message, "taken over") {
+		t.Fatalf("ghost: %+v", ops)
+	}
+}
+
+func mustApp(t *testing.T, r rig, name string) domain.Application {
+	t.Helper()
+	a, err := r.st.GetApp(t.Context(), name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a
 }

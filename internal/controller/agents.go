@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -16,6 +17,24 @@ import (
 	agentv1 "github.com/obleey/omegacd/internal/proto/agent/v1"
 	"github.com/obleey/omegacd/internal/workdir"
 )
+
+// errTakenOver: the Application's Agent already runs its target (Q119); nothing was sent.
+var errTakenOver = errors.New("taken over: its Agent already runs this Revision")
+
+// takenOver reports whether a, never deployed by this Control Plane, already runs on its Host at the tree r: its Agent's
+// last resync had the same checksum for it (Q119).
+func (c *Controller) takenOver(ctx context.Context, a domain.Application, r domain.Rendered) bool {
+	if _, err := c.cfg.Store.LastSucceededOp(ctx, a.Name); !errors.Is(err, domain.ErrNotFound) {
+		return false
+	}
+	h, err := c.cfg.Store.GetHost(ctx, a.Host)
+	if err != nil || r.Checksum == "" || h.AgentApps[a.Name] != r.Checksum {
+		c.cfg.Log.DebugContext(ctx, "not a takeover: its Agent doesn't run this tree", "app", a.Name, "err", err)
+		return false
+	}
+	c.cfg.Log.InfoContext(ctx, "taken over: its agent already runs this revision", "app", a.Name, "host", a.Host)
+	return true
+}
 
 // deploy sends a's Desired State at op's Revision to its Host's Agent, which fetches the files it lacks, decrypts and
 // deploys them, and waits for its report. The files travel as rendered: secrets stay encrypted until the Agent.
@@ -145,23 +164,37 @@ func (c *Controller) AgentReported(ctx context.Context, app string) {
 	c.reconcile(ctx, a)
 }
 
-// Resynced runs the Syncs that waited for the Host (Q81) now that its Agent is back, each as the same Sync Operation.
-func (c *Controller) Resynced(ctx context.Context, host string) {
+// Resynced takes a Host's Agent's resync (Q78): apps it runs with their deployed trees' checksums, active the Sync
+// Operations still going on it. They are kept for a takeover (Q119); the ones the Control Plane doesn't know are listed
+// as on the Host, not managed (Q118); a Sync Operation still
+// Running that isn't active ended where this Control Plane can't know how (a database restored from a backup) and is
+// closed as Unknown (Q116); the Syncs that waited for the Host run, each as the same Sync Operation (Q81).
+func (c *Controller) Resynced(ctx context.Context, host string, running map[string]string, active []uint64) {
 	apps, err := c.cfg.Store.ListApps(ctx)
 	if err != nil {
 		c.cfg.Log.ErrorContext(ctx, "list applications", "err", err)
 		return
 	}
+	known := map[string]bool{}
 	for _, a := range apps {
 		if a.Host != host || a.Kind != domain.KindCompose {
 			continue
 		}
+		known[a.Name] = true
 		if a.Deleting != "" {
 			go c.finishDeleting(context.WithoutCancel(ctx), a.Name)
 			continue
 		}
 		ops, err := c.cfg.Store.ListOps(ctx, a.Name)
-		if err != nil || len(ops) == 0 || ops[0].Phase != domain.OpWaiting {
+		if err != nil {
+			c.cfg.Log.ErrorContext(ctx, "list sync operations", "app", a.Name, "err", err)
+			continue
+		}
+		if len(ops) == 0 {
+			continue // never synced
+		}
+		c.closeLost(ctx, host, a.Name, ops, active)
+		if ops[0].Phase != domain.OpWaiting {
 			continue
 		}
 		op := ops[0]
@@ -176,6 +209,7 @@ func (c *Controller) Resynced(ctx context.Context, host string) {
 			continue
 		}
 		if err := c.cfg.Store.SetOpPhase(ctx, op.ID, domain.OpRunning, "Host "+host+" is back"); err != nil {
+			c.cfg.Log.ErrorContext(ctx, "run the sync that waited for the host", "app", a.Name, "op", op.ID, "err", err)
 			c.setSyncing(a.Name, false)
 			continue
 		}
@@ -183,6 +217,41 @@ func (c *Controller) Resynced(ctx context.Context, host string) {
 		c.cfg.Log.InfoContext(ctx, "host back: running the sync that waited for it", "app", a.Name, "op", op.ID)
 		c.emit(domain.Event{Type: "op", App: a.Name, Data: op})
 		go c.runSync(a, op)
+	}
+	var unmanaged []string
+	for _, name := range slices.Sorted(maps.Keys(running)) {
+		if !known[name] {
+			unmanaged = append(unmanaged, name)
+		}
+	}
+	if err := c.cfg.Store.SetAgentApps(ctx, host, running, unmanaged); err != nil {
+		c.cfg.Log.ErrorContext(ctx, "record the applications on the host, not managed", "host", host, "err", err)
+	} else if len(unmanaged) > 0 {
+		c.cfg.Log.DebugContext(ctx, "on the host, not managed", "host", host, "apps", unmanaged)
+	}
+}
+
+// closeLost closes app's Running Sync Operations that are neither active on its Host's Agent nor being run here as
+// Unknown (Q116): after a restore from a backup their result went to the Control Plane that is gone; a Desired State
+// lost with a dropped connection never reached the Agent. The Agent's outbox came first, so a result it has is in.
+func (c *Controller) closeLost(ctx context.Context, host, app string, ops []domain.SyncOperation, active []uint64) {
+	c.mu.Lock()
+	syncing := c.state(app).syncing
+	c.mu.Unlock()
+	for _, op := range ops {
+		if op.Phase != domain.OpRunning || syncing || slices.Contains(active, uint64(op.ID)) {
+			continue
+		}
+		msg := "result unknown: Host " + host + "'s Agent neither runs it nor reported how it ended (the Control Plane's " +
+			"database is older than the Host, restored from a backup, or the Sync was lost with a dropped connection); " +
+			"the Application's state is what its Agent reports"
+		if err := c.cfg.Store.FinishOp(ctx, op.ID, domain.OpUnknown, msg); err != nil {
+			c.cfg.Log.ErrorContext(ctx, "close a lost sync operation", "app", app, "op", op.ID, "err", err)
+			continue
+		}
+		op.Phase, op.Message = domain.OpUnknown, msg
+		c.cfg.Log.WarnContext(ctx, "a sync operation's result is unknown: its host's agent neither runs it nor reported it", "app", app, "op", op.ID)
+		c.emit(domain.Event{Type: "op", App: app, Data: op})
 	}
 }
 

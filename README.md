@@ -112,10 +112,10 @@ Create a service user and its key files:
 ```sh
 sudo useradd --system --home-dir /var/lib/omegacd --shell /usr/sbin/nologin omegacd
 sudo install -d -m 0750 -o omegacd -g omegacd /etc/omegacd
-sudo -u omegacd age-keygen -o /etc/omegacd/age.key
 sudo -u omegacd install -m 0600 /dev/null /etc/omegacd/known_hosts
-sudo chmod 600 /etc/omegacd/age.key
 ```
+
+The Master Key, `/etc/omegacd/age.key`, is created at the first start (logged with its path); keep a copy apart from your backups (see [Backup and recovery](#backup-and-recovery)).
 
 Install the unit from [`packaging/omegacd.service`](packaging/omegacd.service) and start it:
 
@@ -352,6 +352,29 @@ Changes *inside* data folders and volumes never count as drift. Back up volumes 
 
 **Folders OmegaCD didn't create are never synced into.** A work dir like `/opt/services` may already hold other folders. A Sync writes into an Application's folder only if it is missing or empty (or holds only empty directories), if the Agent recorded that it wrote there for that Application, or if a container OmegaCD created for it (`managed-by=omegacd`) runs from it — containers of other tools don't count. An App of Apps' folder may also hold its children's folders. Anything else fails, naming the folder: rename the Application, pick another work dir, or move the folder away. Older versions marked their folders with a `.omegacd` file instead: a folder marked for the Application is still taken, and the Sync deletes the marker; one marked for another Application is refused.
 
+## Backup and recovery
+
+**History** (every Sync Operation) is kept forever unless you set `OMEGACD_HISTORY_KEEP` (the newest N per Application) or `OMEGACD_HISTORY_MAX_AGE` (e.g. `720h`); pruning runs at start and hourly, and never deletes an Application's deployed Sync Operation.
+
+**Back up** the Control Plane while it runs:
+
+```sh
+omegacd backup omegacd-$(date +%F).tar     # owner-only; never overwrites a file
+```
+
+The tar holds the database and, with the built-in Source Server, its encrypted Git credentials (`credentials.age`). **No key is in it**: keep these two apart, safely, once:
+
+| Key | Seals | Lost? |
+|---|---|---|
+| the Master Key (`OMEGACD_AGE_KEY_FILE`) | the registry credentials' passwords | enter the registry credentials again |
+| `source.key` (in the data dir, or the standalone Source Server's) | the Git credentials | enter the Git credentials again |
+
+Your Applications' secrets are not in either: each Host's Agent holds its own Host Key, on that Host. A standalone Source Server keeps its `credentials.age` and `source.key` in its own data dir: back those up the same way.
+
+**Restore** on a stopped Control Plane: an empty data dir, `tar -xf omegacd-….tar -C <data dir>`, `source.key` and the Master Key back where they were, start. The Agents reconnect by themselves. A Sync the backup caught running, whose result reached only the Control Plane you lost, shows as **Unknown**; what runs is what each Agent reports.
+
+**From nothing** (no backup): start an empty Control Plane, add each Host again and run its Agent with the new invite (its state is kept: its apps keep running; reports it kept for the old Control Plane are dropped). `omegacd host list` shows what each Host runs that OmegaCD doesn't know (**not managed**: never touched). Create your App of Apps again: an Application its Agent already runs at the target Revision is **taken over** without deploying (its history says so); one at another Revision Syncs normally.
+
 ## Git access
 
 Public repositories need no setup; the New Application form checks access as you type (public / private with a credential / denied, with an inline *Add credential*). For private ones, add a credential under **Settings → Repository credentials** (for reading Git repositories), matched by URL prefix: a username and password/token for HTTPS, or an SSH private key. Credentials are kept by the [Source Server](#standalone-source-server), not in OmegaCD's database: in `credentials.age` in its data dir, encrypted with its own key `source.key` (created at its first start, owner-only). Back up both together; without `source.key` the credentials can't be read. Secrets go in and are never shown again. Private images need **Settings → Registry credentials** (for pulling Docker images), keyed by registry host such as `ghcr.io` — not a URL.
@@ -561,6 +584,7 @@ omegacd keygen --out age.key               # a new age key, e.g. the Master Key 
 | `host allow NAME [CIDR]...` | the addresses the Host's Agent may connect from (behind a reverse proxy: set `OMEGACD_TRUSTED_PROXIES`); none: anywhere |
 | `host rotate NAME`, `host unlock NAME`, `host delete NAME` | a new signing key for the connected Agent; let a Host locked by two connections with its key connect again; delete a Host, revoking its Agent's key |
 | `host key show HOST` | the public half of its Host Key; the private half never leaves the Host |
+| `backup FILE` | the Control Plane's backup: the database and the encrypted Git credentials, no key; owner-only, never overwrites a file |
 | `keygen [--out FILE]` | a new age key, like `age-keygen`; works offline, never overwrites a file |
 
 Every command talking to a server takes `--server`, `--token` and `-o table|json`; `OMEGACD_SERVER` and `OMEGACD_TOKEN` override the saved login. Colors are used only on a terminal and honour `NO_COLOR`.
@@ -575,7 +599,9 @@ All server settings are environment variables:
 | --- | --- | --- |
 | `OMEGACD_ADDR` | `:8080` | Listen address |
 | `OMEGACD_DATA` | `/data` | Database (`omegacd.db`), Git cache and rendered files |
-| `OMEGACD_AGE_KEY_FILE` | `/etc/omegacd/age.key` | age identity, the Master Key: seals the credentials OmegaCD stores. Required |
+| `OMEGACD_AGE_KEY_FILE` | `/etc/omegacd/age.key` | age identity, the Master Key: seals the registry credentials' passwords. Created at the first start when missing; keep a copy apart from your backups |
+| `OMEGACD_HISTORY_KEEP` | *(all)* | Sync Operations kept per Application, the newest; an Application's deployed one is always kept |
+| `OMEGACD_HISTORY_MAX_AGE` | *(forever)* | Sync Operations older than this (Go duration, e.g. `720h`) are deleted, the deployed one kept |
 | `OMEGACD_SSH_KNOWN_HOSTS` | `/etc/omegacd/known_hosts` | Host keys of Git servers, for Git over SSH |
 | `OMEGACD_POLL_INTERVAL` | `3m` | How often Git is polled (Go duration); `0` turns polling off (webhooks only, see [Webhooks](#webhooks)) |
 | `OMEGACD_ADMIN_PASSWORD` | *(generated)* | Initial `admin` password, used only on first start. If unset, a random one is logged and must be changed on first login |

@@ -296,6 +296,15 @@ func (d *DB) Outbox(ctx context.Context) ([]*agentv1.OutboxEntry, error) {
 	return out, rows.Err()
 }
 
+// ClearOutbox deletes every entry, returning how many there were (Q117).
+func (d *DB) ClearOutbox(ctx context.Context) (int64, error) {
+	res, err := d.db.ExecContext(ctx, `DELETE FROM outbox`)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // Ack deletes the entries up to and including seq: the Control Plane has them.
 func (d *DB) Ack(ctx context.Context, seq uint64) error {
 	_, err := d.db.ExecContext(ctx, `DELETE FROM outbox WHERE seq <= ?`, seq)

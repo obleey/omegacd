@@ -353,3 +353,39 @@ is declared. Their details (syntax, UI, messages) are decided when each is built
   (`ubuntu-24.04-arm` for arm64), so a runner image change can't move the tests under us. On GitHub's 26.04 runner,
   rootless Podman couldn't remove a container's network (cause not found yet); Ubuntu 26.04 as a tested Host is after
   v0.2.0 (ROADMAP), with what M4-12 found. M4-12 is deferred.
+
+## History and disaster recovery (design check before M4-06, 2026-11-13)
+
+- **Q112** History is kept forever unless `OMEGACD_HISTORY_KEEP=N` (the newest N Sync Operations per Application)
+  or `OMEGACD_HISTORY_MAX_AGE` (a Go duration) is set (Q36). Pruned at start and hourly, logged with how many went.
+  An Application's deployed Sync Operation and its last successful one are always kept: Rollback and the deployed view
+  need them.
+- **Q113** M4-07's store of delivered payloads (Q31) prunes with the history, a payload going when no kept Sync
+  Operation uses it.
+- **Q114** `omegacd backup FILE` writes one tar (mode 0600, never over an existing file): a consistent `omegacd.db`
+  (SQLite's `VACUUM INTO`, the server running) and, with the Source Server in-process, its still encrypted
+  `credentials.age`. No private key is in it. Only the admin may take one (`GET /api/backup`), logged at info, never
+  its contents. Restoring is documented steps, not a command: an empty data dir, `tar -xf`, the keys back in place,
+  start.
+- **Q115** The admin backs up the Control Plane's two keys themselves: the Master Key (`age.key`) seals only the
+  registry credentials' passwords, `source.key` only the Git credentials; losing one means entering those credentials
+  again. `omegacd backup` and the README say so. The Master Key is generated at the first start when missing (as
+  `source.key` is), logged with its path: no `age-keygen` install step.
+- **Q116** After a restore the database can be older than its Hosts. When an Agent resyncs, a Sync Operation still
+  Running for one of its Applications that the Agent neither deploys now nor reported (its outbox arrives before its
+  checksums) is closed as Unknown, "result unknown", logged. The Agent's resync names the Sync Operations it is
+  deploying. The same closes a Sync whose Desired State was lost with a dropped connection (the hub resends one only
+  within a connection), which until then stayed Running.
+- **Q117** An Agent an invite enrolls clears its outbox first, logging how many reports it dropped: the Control Plane
+  that enrolled it knows none of those Sync Operations (after a recovery from nothing, a report for an old op 5 would
+  otherwise close a new, unrelated op 5).
+- **Q118** "On the Host, not managed" (Q30, Q91): per Host, the Applications its Agent runs that the Control Plane
+  doesn't know, refreshed at every resync, shown by `host list`, `host get` and the API (the UI comes with M5-02),
+  never acted on.
+- **Q119** An App of Apps (or anyone) creating an Application over one its Host's Agent already runs at the target
+  Revision takes it over without deploying: its first Sync, finding its Agent's checksum of the deployed tree (sent with
+  every resync, kept per Host) equal to the target's, sends nothing and records one Sync Operation, Succeeded, "taken
+  over: its Agent already runs this Revision"; no container is touched, and history, Rollback, the deployed Revision
+  and retention work as after any Sync. At another Revision it Syncs normally, Compose recreating only what changed.
+  (Refined while building M4-06: first "no Sync Operation", but the Control Plane counts as deployed only what a Sync
+  Operation recorded.)

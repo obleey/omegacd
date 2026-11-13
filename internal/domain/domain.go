@@ -94,6 +94,8 @@ const (
 	// a Sync to an offline Host: it runs when its Agent reconnects (Q81), unless a newer one supersedes it first
 	OpWaiting    OpPhase = "Waiting"
 	OpSuperseded OpPhase = "Superseded"
+	// how it ended is lost: the Control Plane's database is older than its Host (restored from a backup, Q116)
+	OpUnknown OpPhase = "Unknown"
 )
 
 // SyncOperation is one attempt to Sync an Application to a Revision.
@@ -174,6 +176,12 @@ type Host struct {
 	AllowIPs []string `json:"allowIPs,omitempty"`
 	// Agent is what the Host's Agent said about itself when it last connected (Q41); nil before.
 	Agent *AgentInfo `json:"agent,omitempty"`
+	// Unmanaged are the Applications the Host's Agent runs that the Control Plane doesn't know: "on the Host, not
+	// managed" (Q30, Q118), as of its last resync; never acted on (Q91).
+	Unmanaged []string `json:"unmanaged,omitempty"`
+	// AgentApps is each Application the Host's Agent runs with its deployed tree's checksum, as of its last resync: an
+	// Application created over one at its target is taken over without deploying (Q119).
+	AgentApps map[string]string `json:"-"`
 }
 
 // AgentInfo is an Agent's Hello, as last received.
@@ -483,6 +491,8 @@ type Store interface {
 	UnlockHost(ctx context.Context, host string) error
 	// ApproveHost approves the Host's key if fingerprint is the key's (ErrInvalid otherwise, or without a key).
 	ApproveHost(ctx context.Context, host, fingerprint string) error
+	// SetAgentApps records a Host's Agent's resync: its Applications' checksums (Q119), the unknown ones (Q118).
+	SetAgentApps(ctx context.Context, host string, apps map[string]string, unmanaged []string) error
 
 	ListTokens(ctx context.Context) ([]APIToken, error)
 	CreateToken(ctx context.Context, name string) (APIToken, string, error) // returns plaintext once

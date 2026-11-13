@@ -355,5 +355,25 @@ func (ag *Agent) checksums(ctx context.Context) *agentv1.Resync {
 			r.Checksums[a.Name] = sum
 		}
 	}
+	ag.deploying.Range(func(op, _ any) bool { // Q116: still going, not lost
+		if op.(uint64) != 0 {
+			r.Deploying = append(r.Deploying, op.(uint64))
+		}
+		return true
+	})
 	return r
+}
+
+// dropOutbox empties the outbox when an invite has just enrolled this Agent (Q117): its reports were for the Control
+// Plane it reported to before, whose Sync Operations the one it is enrolled with now doesn't know.
+func (ag *Agent) dropOutbox(ctx context.Context) {
+	n, err := ag.db.ClearOutbox(ctx)
+	switch {
+	case err != nil:
+		ag.log.ErrorContext(ctx, "clear the outbox after enrolling", "err", err)
+	case n > 0:
+		ag.log.WarnContext(ctx, "enrolled anew: dropped the reports kept for the Control Plane this Agent reported to before", "reports", n)
+	default:
+		ag.log.DebugContext(ctx, "enrolled: no reports kept from before")
+	}
 }
