@@ -293,3 +293,76 @@ func skipUnlessRequired(t *testing.T, format string, args ...any) {
 	}
 	t.Skipf(format, args...)
 }
+
+// Every way a decryption fails is an error naming the file, nothing half-written passed off as decrypted: keys that
+// don't parse, a folder that can't be walked, a file that isn't SOPS, a value or MAC tampered with, an output
+// path that can't be written; and Encrypt refuses a file in its format that doesn't parse.
+func TestDecryptDirFailures(t *testing.T) {
+	id := newID(t)
+	enc := func(t *testing.T, name, plain string) string {
+		t.Helper()
+		b, err := Encrypt([]byte(plain), name, []string{id.Recipient().String()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	decrypt := func(files map[string]string) error {
+		dir := t.TempDir()
+		for name, content := range files {
+			if content == "" {
+				os.MkdirAll(filepath.Join(dir, name), 0o755)
+				continue
+			}
+			os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644)
+		}
+		_, err := Decryptor{}.DecryptDir(dir, []string{id.String()})
+		return err
+	}
+	// flip changes the character after the first of field in the line of s starting with line
+	flip := func(s, line, field string) string {
+		i := strings.Index(s, "\n"+line) + 1
+		j := i + strings.Index(s[i:], field) + len(field)
+		c := byte('A')
+		if s[j] == 'A' {
+			c = 'B'
+		}
+		return s[:j] + string(c) + s[j+1:]
+	}
+	env := enc(t, "db.sops.env", "DB_PASSWORD=s3cret-db-password-value\n")
+
+	if _, err := (Decryptor{}).DecryptDir(t.TempDir(), []string{"not a key"}); err == nil {
+		t.Error("a key that doesn't parse")
+	}
+	if _, err := (Decryptor{}).DecryptDir(filepath.Join(t.TempDir(), "missing"), nil); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("a missing folder: %v", err)
+	}
+	for name, tc := range map[string]struct {
+		files map[string]string
+		want  string
+	}{
+		"not SOPS":         {map[string]string{"db.sops.env": "A=1\n"}, "decrypt db.sops.env"},
+		"a value tampered": {map[string]string{"db.sops.env": flip(env, "DB_PASSWORD=", "tag:")}, "decrypt db.sops.env"},
+		"the MAC tampered": {map[string]string{"db.sops.env": flip(env, "sops_mac=", "tag:")}, "integrity check failed"},
+		"output a folder":  {map[string]string{"db.sops.env": env, "db.env": ""}, "db.env"},
+	} {
+		if err := decrypt(tc.files); err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), "s3cret") {
+			t.Errorf("%s: %v, want %q", name, err, tc.want)
+		}
+	}
+	if err := decrypt(map[string]string{"app.sops.ini": enc(t, "app.sops.ini", "[db]\npassword = s3cret-ini-value\n")}); err != nil {
+		t.Errorf("ini: %v", err)
+	}
+	if _, err := Encrypt([]byte("a: [\n"), "x.sops.yaml", []string{id.Recipient().String()}); err == nil {
+		t.Error("encrypted YAML that doesn't parse")
+	}
+
+	if os.Getuid() == 0 {
+		t.Skip("root reads anything") // the suite runs as a normal user
+	}
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "db.sops.env"), []byte(env), 0)
+	if _, err := (Decryptor{}).DecryptDir(dir, []string{id.String()}); !errors.Is(err, fs.ErrPermission) {
+		t.Errorf("an unreadable file: %v", err)
+	}
+}

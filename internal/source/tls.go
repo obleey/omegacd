@@ -39,13 +39,13 @@ func GenerateCerts(dir string, hosts []string) error {
 		return err
 	}
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
+	if err != nil { // coverage: unreachable, crypto/rand doesn't fail
 		return err
 	}
 	ca := template("omegacd source CA")
 	ca.IsCA, ca.BasicConstraintsValid, ca.KeyUsage = true, true, x509.KeyUsageCertSign
 	caDER, err := x509.CreateCertificate(rand.Reader, ca, ca, &caKey.PublicKey, caKey)
-	if err != nil {
+	if err != nil { // coverage: unreachable, a valid template and a key just made
 		return err
 	}
 	if err := writePEM(filepath.Join(dir, caFile), "CERTIFICATE", caDER, 0o644); err != nil {
@@ -68,15 +68,15 @@ func GenerateCerts(dir string, hosts []string) error {
 		cert, priv string
 	}{{srv, serverCert, serverKey}, {cli, clientCert, clientKey}} {
 		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		if err != nil {
+		if err != nil { // coverage: unreachable, crypto/rand doesn't fail
 			return err
 		}
 		der, err := x509.CreateCertificate(rand.Reader, c.t, ca, &key.PublicKey, caKey)
-		if err != nil {
+		if err != nil { // coverage: unreachable, a valid template and keys just made
 			return err
 		}
 		keyDER, err := x509.MarshalPKCS8PrivateKey(key)
-		if err != nil {
+		if err != nil { // coverage: unreachable, an ECDSA P-256 key always marshals
 			return err
 		}
 		if err := writePEM(filepath.Join(dir, c.cert), "CERTIFICATE", der, 0o644); err != nil {

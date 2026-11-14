@@ -17,14 +17,19 @@ import (
 	"github.com/obleey/omegacd/internal/domain"
 )
 
-func TestSSHHostKeyVerification(t *testing.T) {
+// sshKey is a new SSH private key, PEM-encoded.
+func sshKey(t *testing.T) string {
 	_, clientKey, _ := ed25519.GenerateKey(rand.Reader)
 	block, err := gossh.MarshalPrivateKey(clientKey, "")
 	if err != nil {
 		t.Fatal(err)
 	}
+	return string(pem.EncodeToMemory(block))
+}
+
+func TestSSHHostKeyVerification(t *testing.T) {
 	creds := func(context.Context) ([]domain.RepoCredential, error) {
-		return []domain.RepoCredential{{URLPrefix: "git@example.com:", SSHPrivateKey: string(pem.EncodeToMemory(block))}}, nil
+		return []domain.RepoCredential{{URLPrefix: "git@example.com:", SSHPrivateKey: sshKey(t)}}, nil
 	}
 	const url = "git@example.com:org/repo.git"
 

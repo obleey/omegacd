@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/storage/memory"
 
 	"github.com/obleey/omegacd/internal/domain"
 )
@@ -223,5 +225,121 @@ func TestOnlyTheSourceServerReadsGit(t *testing.T) {
 	}
 	if len(pkgs) < 10 {
 		t.Fatalf("listed only %d packages", len(pkgs))
+	}
+}
+
+// fixedHash is an object stored under a hash its content doesn't have: a damaged object.
+type fixedHash struct {
+	plumbing.EncodedObject
+	h plumbing.Hash
+}
+
+func (o fixedHash) Hash() plumbing.Hash { return o.h }
+
+// damage replaces url's repo cache by a copy in memory holding only the objects keep wants.
+func damage(t *testing.T, g *Git, url string, keep func(plumbing.EncodedObject) bool, extra ...plumbing.EncodedObject) {
+	t.Helper()
+	e, unlock, err := g.open(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	mem := memory.NewStorage()
+	mem.SetReference(plumbing.NewSymbolicReference(plumbing.HEAD, "refs/heads/main"))
+	iter, err := e.r.Storer.IterEncodedObjects(plumbing.AnyObject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	iter.ForEach(func(o plumbing.EncodedObject) error {
+		if keep(o) {
+			mem.SetEncodedObject(o)
+		}
+		return nil
+	})
+	for _, o := range extra {
+		mem.SetEncodedObject(o)
+	}
+	if e.r, err = git.Open(mem, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Q139: what a damaged repo cache can't read fails naming the cache's folder, to delete; a Diff's errors name the
+// Repository and Revisions.
+func TestDamagedRepoCache(t *testing.T) {
+	f, _, c1, _ := setup(t)
+	c3 := f.commit(map[string]string{"app/compose.yaml": "services: {web: {}}\n"})
+	isType := func(types ...plumbing.ObjectType) func(plumbing.EncodedObject) bool {
+		return func(o plumbing.EncodedObject) bool { return slices.Contains(types, o.Type()) }
+	}
+	garbage := &plumbing.MemoryObject{}
+	garbage.SetType(plumbing.CommitObject)
+	garbage.Write([]byte("not a commit"))
+	ctx := t.Context()
+	for _, tc := range []struct {
+		name string
+		keep func(plumbing.EncodedObject) bool
+		bad  []plumbing.EncodedObject
+		do   func(g *Git) error
+	}{
+		{"a file", isType(plumbing.CommitObject, plumbing.TreeObject), nil, func(g *Git) error { _, err := g.tree(ctx, f.dir, c1, "app"); return err }},
+		{"a tree", isType(plumbing.CommitObject), nil, func(g *Git) error { _, err := g.tree(ctx, f.dir, c1, "app"); return err }},
+		{"a commit", isType(), []plumbing.EncodedObject{fixedHash{garbage, plumbing.NewHash(c1)}}, func(g *Git) error { _, err := g.tree(ctx, f.dir, c1, ""); return err }},
+		{"a diff's files", isType(plumbing.CommitObject, plumbing.TreeObject), nil, func(g *Git) error { _, err := g.Diff(ctx, f.dir, c1, c3, "app"); return err }},
+		{"a diff's old tree", isType(plumbing.CommitObject), nil, func(g *Git) error { _, err := g.Diff(ctx, f.dir, c1, c3, "app"); return err }},
+		{"a diff's new tree", isType(plumbing.CommitObject), nil, func(g *Git) error { _, err := g.Diff(ctx, f.dir, "", c3, "app"); return err }},
+		{"a diff cancelled", isType(plumbing.CommitObject, plumbing.TreeObject, plumbing.BlobObject), nil, func(g *Git) error {
+			cancelled, cancel := context.WithCancel(ctx)
+			cancel()
+			_, err := g.Diff(cancelled, f.dir, c1, c3, "app")
+			return err
+		}},
+	} {
+		g := New(t.TempDir(), nil)
+		if _, err := g.Resolve(ctx, f.dir, "main"); err != nil {
+			t.Fatal(err)
+		}
+		damage(t, g, f.dir, tc.keep, tc.bad...)
+		err := tc.do(g)
+		if err == nil || !strings.Contains(err.Error(), "may be damaged") || !strings.Contains(err.Error(), g.cacheDir) {
+			t.Errorf("%s: %v", tc.name, err)
+		}
+		if strings.HasPrefix(tc.name, "a diff") && !strings.Contains(err.Error(), "diff "+f.dir) {
+			t.Errorf("%s: %v, want the Repository named", tc.name, err)
+		}
+	}
+}
+
+// A repo cache that can't be made, a commit not given, one Git can't fetch and one not there: each says so.
+func TestRepoCacheFailures(t *testing.T) {
+	f, _, c1, _ := setup(t)
+	ctx := t.Context()
+	file := filepath.Join(t.TempDir(), "file")
+	os.WriteFile(file, nil, 0o600)
+	g := New(file, nil)
+	for name, err := range map[string]error{
+		"Resolve": func() error { _, err := g.Resolve(ctx, f.dir, "main"); return err }(),
+		"Render":  func() error { _, err := g.tree(ctx, f.dir, c1, ""); return err }(),
+		"Diff":    func() error { _, err := g.Diff(ctx, f.dir, "", c1, ""); return err }(),
+	} {
+		if err == nil || !strings.Contains(err.Error(), "open repo cache "+file) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	g = New(t.TempDir(), nil)
+	if _, err := g.tree(ctx, f.dir, "", ""); !errors.Is(err, domain.ErrInvalid) {
+		t.Errorf("no commit: %v", err)
+	}
+	if _, err := g.tree(ctx, filepath.Join(f.dir, "missing"), c1, ""); err == nil || errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("a Repository Git can't fetch: %v", err)
+	}
+	if _, err := g.tree(ctx, f.dir, strings.Repeat("0", 40), ""); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("a commit not in the Repository: %v", err)
+	}
+	if _, err := g.Diff(ctx, f.dir, strings.Repeat("0", 40), c1, ""); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("a Diff from a commit not there: %v", err)
+	}
+	if _, err := g.Diff(ctx, f.dir, c1, strings.Repeat("0", 40), ""); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("a Diff to a commit not there: %v", err)
 	}
 }

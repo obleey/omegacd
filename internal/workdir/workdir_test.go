@@ -128,3 +128,70 @@ func TestClaim(t *testing.T) {
 		t.Errorf("only empty directories: %v", err)
 	}
 }
+
+// A file whose content is already there keeps its inode, a new mode is set in place, a symlink pointing elsewhere
+// is made again, and a folder where a file goes is replaced.
+func TestWriteChanges(t *testing.T) {
+	dest := t.TempDir()
+	if err := write(dest, map[string]string{"run.sh": "x", "link": "@a", "conf": "x"}); err != nil {
+		t.Fatal(err)
+	}
+	os.Remove(filepath.Join(dest, "conf"))
+	os.MkdirAll(filepath.Join(dest, "conf", "sub"), 0o755)
+	if err := write(dest, map[string]string{"run.sh": "x", "link": "@a", "conf": "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := write(dest, map[string]string{"run.txt": "x", "link": "@b", "conf": "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if l, _ := os.Readlink(filepath.Join(dest, "link")); l != "b" {
+		t.Errorf("link -> %q", l)
+	}
+	if fi, err := os.Stat(filepath.Join(dest, "conf")); err != nil || !fi.Mode().IsRegular() {
+		t.Errorf("conf: %v, %v", fi, err)
+	}
+	// same content, another mode: chmod, same file
+	os.Rename(filepath.Join(dest, "run.txt"), filepath.Join(dest, "run.sh"))
+	before, _ := os.Stat(filepath.Join(dest, "run.sh"))
+	if err := write(dest, map[string]string{"run.sh": "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if after, _ := os.Stat(filepath.Join(dest, "run.sh")); after.Mode().Perm() != 0o755 || !os.SameFile(before, after) {
+		t.Errorf("run.sh: %v", after.Mode())
+	}
+}
+
+// What the filesystem refuses comes back as its error: a folder that can't be made, entries that can't be replaced,
+// a folder that can't be read when pruning.
+func TestWriteFailures(t *testing.T) {
+	dest := t.TempDir()
+	os.WriteFile(filepath.Join(dest, "file"), []byte("x"), 0o644)
+	if err := write(filepath.Join(dest, "file", "app"), map[string]string{"a": "x"}); err == nil {
+		t.Error("an app folder under a file")
+	}
+	if err := write(dest, map[string]string{"file/a": "x"}); err == nil {
+		t.Error("a folder where a file is")
+	}
+	if os.Getuid() == 0 {
+		t.Skip("root writes anywhere") // the suite runs as a normal user
+	}
+	sub := filepath.Join(dest, "sub")
+	for name, files := range map[string]map[string]string{
+		"a symlink where another one is": {"sub/link": "@b"},
+		"a file where a folder is":       {"sub/dir": "x"},
+	} {
+		os.RemoveAll(sub)
+		os.MkdirAll(filepath.Join(sub, "dir", "x"), 0o755)
+		os.Symlink("a", filepath.Join(sub, "link"))
+		os.Chmod(sub, 0o500)
+		if err := write(dest, files); !errors.Is(err, fs.ErrPermission) {
+			t.Errorf("%s in a read-only folder: %v", name, err)
+		}
+		os.Chmod(sub, 0o755)
+	}
+	os.Chmod(filepath.Join(sub, "dir"), 0)
+	t.Cleanup(func() { os.Chmod(filepath.Join(sub, "dir"), 0o755) })
+	if err := write(dest, map[string]string{"file": "x"}); !errors.Is(err, fs.ErrPermission) {
+		t.Errorf("pruning an unreadable folder: %v", err)
+	}
+}

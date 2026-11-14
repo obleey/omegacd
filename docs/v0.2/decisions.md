@@ -445,3 +445,20 @@ is declared. Their details (syntax, UI, messages) are decided when each is built
   caller that logs. (`ListCredentials` turned out not silent: its list is in memory, and a wrong `source.key` stops the
   start.)
 - **Q135** Q96 measures the Go code; the SvelteKit UI keeps its own check and tests, its coverage left to M8 if wanted.
+
+## Source, workdir, secrets, appdef (before M4-10b, 2026-11-13)
+
+- **Q136** The standalone Source Server logs its failed requests where every handler's error passes (`toStatus`):
+  Warn for what the caller didn't cause (Git, the disk), debug for not found, invalid and already exists, which the
+  Control Plane reports. Messages are already without secrets (`hide`).
+- **Q137** The Control Plane's Source Server client logs a lost Invalidate at debug (the next Resolve may use a fetch
+  up to `FetchCooldown` old); `domain.Source.Invalidate` keeps returning nothing.
+- **Q138** Rendering logs at debug what it doesn't check: compose files that don't load without their secrets (the
+  Host's render checks them) and files the plain-secret warning can't read.
+- **Q139** Diff's errors name the Repository and Revisions; an error from a damaged repo cache names its folder, to
+  delete. Repairing it on its own (delete, clone again) goes to M7-03.
+- **Q140** Marked unreachable in these packages: `crypto/rand`, x509 and PKCS8 errors in `GenerateCerts`,
+  `grpc.NewClient` (fails only on bad options), age and JSON encoding and `Sync`/`Close` after a good write in the
+  credentials file, `ageKeys.Encrypt` (decrypting never calls it), `Chmod`/`Write` on a file just opened.
+- **Q141** `workdir.Claim` ignores a marker it can't remove, said in a comment: it is this Application's, and the next
+  Write deletes it.

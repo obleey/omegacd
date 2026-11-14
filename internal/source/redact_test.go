@@ -2,7 +2,9 @@ package source
 
 import (
 	"context"
+	"errors"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/obleey/omegacd/internal/domain"
@@ -24,6 +26,13 @@ func TestURLCredentialsStayOutOfErrorsAndLogs(t *testing.T) {
 				t.Errorf("credential in %q", s)
 			}
 		}
+		if !errors.Is(err, syscall.ECONNREFUSED) {
+			t.Errorf("%v: the cause is lost with the credential", err)
+		}
+	}
+	if a, err := g.CheckAccess(context.Background(), "http://me:s3cret-pw@127.0.0.1:1/r.git"); err != nil || a.Access != "error" ||
+		strings.Contains(a.Message, "s3cret-pw") {
+		t.Errorf("the access check: %+v, %v", a, err)
 	}
 	if got := redact("https://me:pw@git.example.com/r.git"); got != "https://***@git.example.com/r.git" {
 		t.Errorf("redact = %q", got)
