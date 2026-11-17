@@ -94,6 +94,21 @@ func (s *fakeStore) DeleteHost(_ context.Context, n string) error {
 	delete(s.hosts, n)
 	return nil
 }
+func (s *fakeStore) RenameHost(_ context.Context, old, n string) error {
+	if err := s.broken("RenameHost"); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	h, ok := s.hosts[old]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	delete(s.hosts, old)
+	h.Name = n
+	s.hosts[n] = h
+	return nil
+}
 
 func (s *fakeStore) ListApps(context.Context) ([]domain.Application, error) {
 	if err := s.broken("ListApps"); err != nil {

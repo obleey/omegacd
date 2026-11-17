@@ -52,6 +52,7 @@ func TestApplicationsUnlisted(t *testing.T) {
 		"list":          func() error { _, err := r.c.ListApps(ctx); return err }(),
 		"hosts":         func() error { _, err := r.c.ListHosts(ctx); return err }(),
 		"delete host":   r.c.DeleteHost(ctx, "edge"),
+		"rename host":   r.c.RenameHost(ctx, "edge", "edge-1"),
 		"refresh":       func() error { _, err := r.c.Refresh(ctx, "platform"); return err }(),
 		"delete parent": r.c.DeleteApp(ctx, "platform", true, false),
 		"sync children": r.c.syncChildren(ctx, parent, nil),
@@ -440,5 +441,33 @@ func TestHostChangedEvents(t *testing.T) {
 	r.st.breaks("DeleteHost", errLocked)
 	if err := r.c.DeleteHost(ctx, "edge2"); !errors.Is(err, errLocked) {
 		t.Errorf("delete: %v", err)
+	}
+
+	// renamed (Q162): the old name goes, the new one comes; refused for a bad name and for a Host in use
+	if _, _, err := r.c.InviteHost(ctx, "spare"); err != nil {
+		t.Fatal(err)
+	}
+	next()
+	if err := r.c.RenameHost(ctx, "spare", " spare-1 "); err != nil {
+		t.Fatal(err)
+	}
+	if e := next(); e.Type != "host-deleted" || e.Data != "spare" {
+		t.Fatalf("renamed, the old name: %+v", e)
+	}
+	if e := next(); e.Type != "host" || e.Data.(domain.HostView).Name != "spare-1" {
+		t.Fatalf("renamed, the new name: %+v", e)
+	}
+	if !strings.Contains(logs.String(), `msg="host renamed" host=spare to=spare-1`) {
+		t.Errorf("logs:\n%s", logs.String())
+	}
+	if err := r.c.RenameHost(ctx, "spare-1", "Not A Name"); !errors.Is(err, domain.ErrInvalid) {
+		t.Errorf("a bad name: %v", err)
+	}
+	if err := r.c.RenameHost(ctx, "edge", "edge-1"); !errors.Is(err, domain.ErrInvalid) || !strings.Contains(err.Error(), "web") {
+		t.Errorf("in use: %v", err)
+	}
+	r.st.breaks("RenameHost", errLocked)
+	if err := r.c.RenameHost(ctx, "spare-1", "spare-2"); !errors.Is(err, errLocked) {
+		t.Errorf("store: %v", err)
 	}
 }

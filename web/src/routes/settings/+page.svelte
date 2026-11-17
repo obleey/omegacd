@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api, ago, errMsg, get, type APIToken, type RegistryCredential, type RepoCredential } from '#lib/api.ts';
+	import { type DateFormat, dateFormats, formatDate } from '#lib/datetime.ts';
+	import { display, setDateFormat } from '#lib/display.svelte.ts';
 	import Icon from '#lib/Icon.svelte';
 	import { toastError } from '#lib/toast.svelte.ts';
 
@@ -76,7 +78,19 @@
 <svelte:head><title>Settings · OmegaCD</title></svelte:head>
 
 <h1>Settings</h1>
-<p class="muted small sub">Credentials and API tokens used by every Application. Hosts have their own page: <a href="/hosts">Hosts</a>.</p>
+<p class="muted small sub">How this browser shows OmegaCD, and the credentials and API tokens every Application uses. Hosts have their own page: <a href="/hosts">Hosts</a>.</p>
+
+<section class="card">
+	<h2><span class="hicon"><Icon name="clock" size={17} /></span>Display <span class="muted small">— in this browser only</span></h2>
+	<div class="field">
+		<label for="datefmt">Date and time format</label>
+		<select id="datefmt" class="narrow" value={display.dateFormat} onchange={(e) => setDateFormat(e.currentTarget.value as DateFormat)}>
+			{#each Object.entries(dateFormats) as [f, label] (f)}
+				<option value={f}>{label} — {formatDate(Date.now(), f as DateFormat)}</option>
+			{/each}
+		</select>
+	</div>
+</section>
 {#if error}<p class="error" role="alert">{error}</p>{/if}
 
 <section class="card">
@@ -223,4 +237,5 @@
 	.newtoken { border: 1px solid color-mix(in srgb, var(--green) 45%, transparent); background: color-mix(in srgb, var(--green) 10%, transparent); border-radius: var(--radius); padding: 0.6rem 0.8rem; margin-bottom: 1rem; }
 	.newtoken p { margin: 0 0 0.4rem; }
 	.tok { background: var(--crust); padding: 0.3rem 0.5rem; border-radius: 4px; word-break: break-all; flex: 1; }
+	.narrow { max-width: 24rem; }
 </style>

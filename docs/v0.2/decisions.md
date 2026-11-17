@@ -521,3 +521,40 @@ is declared. Their details (syntax, UI, messages) are decided when each is built
   `OMEGACD_AGENT_ALLOW_ROOT=true`: root in a container holding the socket is root on the Host already.
 - **Q160** Add Host's commands use an address field prefilled with the browser's address; opened over plain http on
   another address than localhost, the dialog warns that Agents connect over https only (Q95).
+
+## Host cards (before M5-02, 2026-11-17)
+
+- **Q161** The Hosts page shows one card per Host in a grid (one column on a phone), in place of M5-01's table.
+- **Q162** A Host is renamed with `POST /api/settings/hosts/{name}/rename` and `omegacd host rename OLD NEW`, refused
+  while an Application uses it (Q53). The Agent is found by its key, not its name; the rename drops its live
+  connection, as the hub tracks connections by name, and the Agent reconnects under the new name.
+- **Q163** "Agent outdated" (Q41) is decided by the Control Plane: `outdated` in the Agent's info when it is older than
+  the Control Plane but still served; a development build is never outdated. `host list` shows it; M5-03's badge
+  reuses it.
+- **Q164** Revoke (delete) confirms in a dialog saying the Agent is cut off and enrolls again while its Applications
+  keep running; Unlock confirms naming the two connections (Q75); Rotate key needs no confirmation and is enabled only
+  while the Agent is connected.
+- **Q165** The allowlist editor takes one address or CIDR per line, empty for any, validated by the server as
+  `host allow` is; it shows the address the Agent last connected from, recorded with the Agent's info (`address`).
+- **Q166** M5-02's e2e: `secrets.sh` encrypts with the `.sops.yaml` rule from `GET /api/settings/hosts/{name}/keys`
+  (what the UI copies) and the secret deploys to that Host; `enrollment.sh` drives rename, rotate, unlock and the
+  allowlist through the API.
+
+## Trying M5-02 locally (2026-11-17)
+
+- **Q167** A Sync of an App of Apps doesn't sync a Child Application that has `adopt: true` and was never synced: it
+  is created and waits for its first manual Sync, after its Diff is checked (what `omegacd import` asks for). Until
+  then every Sync of the App of Apps holds it back; afterwards it is synced like any other child. `autoSync: true` in
+  its definition takes it over without review. Found when a Sync of the App of Apps took an imported stack over at
+  once. In M6-05.
+- **Q168** A **Date and time format** setting: Browser default (as before), European (`17.11.2026 18:42`, 24-hour) or
+  US (`11/17/2026 6:42 PM`, 12-hour); every date and time the UI shows goes through it.
+- **Q169** It is kept per browser (local storage), in a Display section of Settings: a viewer's preference, nothing on
+  the server.
+- **Q170** Q168 and Q169 are part of M5-02.
+- **Q171** A Child Application is rolled back as any Application, as in Argo CD: an older Revision from its history,
+  its Auto-Sync off. While it is rolled back, a Sync of its App of Apps neither syncs it nor turns its Auto-Sync back
+  on (other settings from Git still apply); a manual Sync of the child ends the rollback. Its page says it is rolled
+  back and why its App of Apps skips it. Replaces "Rollback is owned by Git" (v0.1's App of Apps), README included.
+- **Q172** Q171 is its own ticket, M5-09, after M5-02; tested with Q167, as both change which children a Sync of an
+  App of Apps syncs.

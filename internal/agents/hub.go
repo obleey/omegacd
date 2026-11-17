@@ -160,7 +160,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		err = allowed(host, addr)
 	}
 	if err == nil {
-		err = h.checkVersion(ctx, host.Name, hello)
+		err = h.checkVersion(ctx, host.Name, addr, hello)
 	}
 	if err == nil {
 		err = h.admit(ctx, host, addr)
@@ -202,7 +202,9 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		h.mu.Unlock()
 		if gone { // "offline since" (Q38)
-			if err := h.store.AgentLeft(context.WithoutCancel(ctx), host.Name, h.now()); err != nil {
+			if err := h.store.AgentLeft(context.WithoutCancel(ctx), host.Name, h.now()); errors.Is(err, domain.ErrNotFound) {
+				h.log.DebugContext(ctx, "the agent left a Host renamed or deleted meanwhile")
+			} else if err != nil {
 				h.log.ErrorContext(ctx, "record the agent leaving", "err", err)
 			}
 			h.changed(context.WithoutCancel(ctx), host.Name)
@@ -347,14 +349,14 @@ func (h *Hub) SetAllowlist(ctx context.Context, host string, cidrs []string) ([]
 }
 
 // checkVersion records what the Agent said about itself and refuses a version this Control Plane doesn't serve (Q41).
-func (h *Hub) checkVersion(ctx context.Context, host string, hello *agentv1.Hello) error {
+func (h *Hub) checkVersion(ctx context.Context, host, addr string, hello *agentv1.Hello) error {
 	if hello == nil {
 		return errors.New("the Agent sent no Hello before its challenge response")
 	}
 	err := compatible(h.version, hello.AgentVersion)
 	info := domain.AgentInfo{Version: hello.AgentVersion, Protocol: hello.ProtocolVersion, Hostname: hello.Hostname,
 		OS: hello.Os, Arch: hello.Arch, Engine: hello.Engine, EngineVersion: hello.EngineVersion, Rootless: hello.Rootless,
-		SeenAt: h.now()}
+		Address: addr, SeenAt: h.now(), Outdated: err == nil && outdated(h.version, hello.AgentVersion)}
 	if err != nil {
 		info.Refused = err.Error()
 	}

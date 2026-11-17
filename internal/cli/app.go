@@ -711,6 +711,9 @@ func (c *CLI) hostList(ctx context.Context, args []string) error {
 		version := h.Status.ServerVersion
 		if a := h.Agent; a != nil {
 			version = "agent " + a.Version
+			if a.Outdated {
+				version += " (outdated)"
+			}
 			if a.Refused != "" { // the reason in full: -o json
 				agent = "REFUSED: Agent " + a.Version
 			}
@@ -810,6 +813,23 @@ func (c *CLI) hostUnlock(ctx context.Context, args []string) error {
 	return c.hostAction(ctx, "host unlock", "POST", "unlock", args, func(h, _ string) string {
 		return "Host " + h + " unlocked: its Agent can connect again"
 	})
+}
+
+func (c *CLI) hostRename(ctx context.Context, args []string) error {
+	var o opts
+	pos, err := parse(c.flags("host rename", &o), args, 2, 2)
+	if err != nil {
+		return err
+	}
+	cl, err := c.client(o)
+	if err != nil {
+		return err
+	}
+	if err := cl.do(ctx, "POST", "/api/settings/hosts/"+url.PathEscape(pos[0])+"/rename", map[string]string{"name": pos[1]}, nil); err != nil {
+		return err
+	}
+	fmt.Fprintf(c.Stdout, "Host %s renamed %s\n", pos[0], pos[1])
+	return nil
 }
 
 func (c *CLI) hostDelete(ctx context.Context, args []string) error {

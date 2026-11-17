@@ -4,7 +4,7 @@ set -u  # no pipefail: grep -q closing the pipe early must not fail a check
 BIN=${OMEGACD_BIN:-$(cd "$(dirname "$0")/../.." && pwd)/bin/omegacd}
 T=$(mktemp -d "${TMPDIR:-/tmp}/omegacd-e2es.XXXX")
 REPO=$T/repo; API=http://127.0.0.1:18080/api; W=
-mkdir -p "$REPO/sec" "$T/data"
+mkdir -p "$REPO/apps/box" "$T/data"
 fail=0
 check() { if eval "$2"; then echo "PASS  $1"; else echo "FAIL  $1"; fail=1; fi; }
 gitc() { git -C "$REPO" -c user.name=e2e -c user.email=e2e@local "$@"; }
@@ -26,9 +26,19 @@ W=$AGENT_WORK/e2e-sec
 api() { curl -sf -H "Authorization: Bearer $OMEGACD_TOKEN" "$API/apps/e2e-sec/$1"; }
 ctr() { docker ps -q --filter label=dev.omegacd.application=e2e-sec; }
 
-# encrypted for the Agent's Host Key (RCPT, from enroll), not the Master Key
-enc() { printf '%s\n' "$1" > "$T/plain"; SOPS_AGE_RECIPIENTS=$RCPT sops --encrypt --input-type dotenv --output-type dotenv "$T/plain" > "$2"; }
-cat > "$REPO/sec/compose.yaml" <<'EOF'
+# encrypted for the Agent's Host Key, not the Master Key, with the .sops.yaml rule a Host card copies (M5-02, Q166):
+# its public half from the keys endpoint, in the rule hostkeys.ts writes
+KEYS=$(curl -sf -H "Authorization: Bearer $OMEGACD_TOKEN" $API/settings/hosts/box/keys)
+HK=$(echo "$KEYS" | python3 -c 'import json,sys; print([k["recipient"] for k in json.load(sys.stdin) if k["current"]][0])')
+check "the keys endpoint has the Host Key the Agent registered" '[ "$HK" = "$RCPT" ]'
+cat > "$REPO/.sops.yaml" <<EOF
+creation_rules:
+  # Host box; the path is up to you: match the files of the Applications deployed to it
+  - path_regex: apps/box/.*\\.sops\\.
+    age: $HK
+EOF
+enc() { printf '%s\n' "$1" > "$2"; (cd "$REPO" && sops --encrypt --in-place "$2"); }
+cat > "$REPO/apps/box/compose.yaml" <<'EOF'
 services:
   web:
     image: busybox:1.36
@@ -37,11 +47,11 @@ services:
     environment:
       DB_PASSWORD: ${DB_PASSWORD}
 EOF
-enc 'DB_PASSWORD=first-db-pw' "$REPO/sec/.sops.env"
-enc 'API_TOKEN=first-token' "$REPO/sec/app.sops.env"
+enc 'DB_PASSWORD=first-db-pw' "$REPO/apps/box/.sops.env"
+enc 'API_TOKEN=first-token' "$REPO/apps/box/app.sops.env"
 gitc init -q -b main && gitc add -A && gitc commit -qm init
 
-"$BIN" app create e2e-sec --repo "$REPO" --path sec --host box >/dev/null
+"$BIN" app create e2e-sec --repo "$REPO" --path apps/box --host box >/dev/null
 "$BIN" app sync e2e-sec --wait --timeout 2m >/dev/null 2>&1
 check "work dir has the decrypted files" '[ -f "$W/.env" ] && [ -f "$W/app.env" ]'
 check "and no *.sops.* copies" '[ -z "$(ls -A "$W" | grep "\.sops\.")" ]'
@@ -54,7 +64,7 @@ check "its content is not shown" '! echo "$D" | grep -q first-token'
 check "no secret anywhere in the API" '! echo "$R$D$(api diff)" | grep -q "first-"'
 
 first=$(ctr)
-enc 'API_TOKEN=second-token' "$REPO/sec/app.sops.env"; gitc commit -qam "rotate token"
+enc 'API_TOKEN=second-token' "$REPO/apps/box/app.sops.env"; gitc commit -qam "rotate token"
 "$BIN" app refresh e2e-sec >/dev/null 2>&1
 check "changed secret makes the app OutOfSync" '"$BIN" app get e2e-sec -o json | grep -q "\"OutOfSync\""'
 "$BIN" app sync e2e-sec --wait --timeout 2m >/dev/null 2>&1

@@ -26,9 +26,9 @@ type faultyStore struct {
 }
 
 type faults struct {
-	confirm, record, lock, apply error
-	approve                      string
-	allow                        []string
+	confirm, record, lock, apply, left error
+	approve                            string
+	allow                              []string
 }
 
 func (f *faultyStore) set(w faults) { f.mu.Lock(); f.what = w; f.mu.Unlock() }
@@ -50,6 +50,13 @@ func (f *faultyStore) RecordAgent(ctx context.Context, host string, info domain.
 		return w.record
 	}
 	return f.Store.RecordAgent(ctx, host, info)
+}
+
+func (f *faultyStore) AgentLeft(ctx context.Context, host string, at time.Time) error {
+	if w := f.get(); w.left != nil {
+		return w.left
+	}
+	return f.Store.AgentLeft(ctx, host, at)
 }
 
 func (f *faultyStore) LockHost(ctx context.Context, host string, conns []domain.AgentConnection) error {
@@ -104,7 +111,7 @@ func waitLog(t *testing.T, logs *logging.Buffer, want string) {
 }
 
 // What the hub can't record or read on a connection: the Agent's Hello (logged, the connection served), its key's
-// confirmation (logged, the connection ended), the lock of a copied key (the copy refused with it), an allowlist it
+// confirmation (logged, the connection ended), its leaving (logged), the lock of a copied key (the copy refused with it), an allowlist it
 // can't parse (refused); and a request that isn't a WebSocket (logged). Each logged one is checked (Q132).
 func TestHubStoreFailures(t *testing.T) {
 	h, st, url, fs := faultyHub(t)
@@ -115,6 +122,11 @@ func TestHubStoreFailures(t *testing.T) {
 		t.Fatalf("not served when the Hello can't be recorded: %v", e)
 	}
 	waitLog(t, logs, `msg="record the agent" err="disk full" host=web`)
+
+	fs.set(faults{left: errors.New("disk full")})
+	gone, _ := agent(t, url, key, "", nil)
+	gone.Close()
+	waitLog(t, logs, `msg="record the agent leaving" err="disk full"`)
 
 	fs.set(faults{lock: errors.New("database is locked")})
 	first, _ := agent(t, url, key, "", nil)
@@ -266,10 +278,8 @@ func TestHostChangedTold(t *testing.T) {
 		}
 	}
 	ctx := t.Context()
-	key := approvedAgent(t, h, st, url, "web") // Hello, connected, approved, left
-	if count() < 4 {
-		t.Fatalf("told %d times through enrollment", count())
-	}
+	key := approvedAgent(t, h, st, url, "web")       // Hello, connected, approved, left
+	more("enrollment, through the Agent leaving", 3) // leaving is told after the connection ends: wait for it
 	c, _ := agent(t, url, key, "", nil)
 	got := reading(c)
 	n := count()

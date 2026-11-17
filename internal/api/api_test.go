@@ -200,6 +200,19 @@ func (c *fakeController) DeleteHost(_ context.Context, name string) error {
 	return nil
 }
 
+func (c *fakeController) RenameHost(_ context.Context, old, name string) error {
+	if old == "busy" {
+		return fmt.Errorf("%w: host %q is used by Applications web", domain.ErrInvalid, old)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	h := c.hosts[old]
+	delete(c.hosts, old)
+	h.Name = name
+	c.hosts[name] = h
+	return nil
+}
+
 func (c *fakeController) HostKeys(_ context.Context, host string) ([]domain.HostKey, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -787,7 +800,14 @@ func TestHostsAPI(t *testing.T) {
 	if b := e.expect("DELETE", "/api/settings/hosts/busy", "", 400); !strings.Contains(b, "web") {
 		t.Fatal(b)
 	}
-	e.expect("DELETE", "/api/settings/hosts/prod", "", 204)
+	if b := e.expect("POST", "/api/settings/hosts/busy/rename", `{"name":"x"}`, 400); !strings.Contains(b, "web") {
+		t.Fatal(b)
+	}
+	e.expect("POST", "/api/settings/hosts/prod/rename", `{"name":"prod-1"}`, 204)
+	if b := e.expect("GET", "/api/settings/hosts", "", 200); !strings.Contains(b, `"name":"prod-1"`) {
+		t.Fatal(b)
+	}
+	e.expect("DELETE", "/api/settings/hosts/prod-1", "", 204)
 }
 
 func (c *fakeController) InviteHost(_ context.Context, name string) (string, time.Time, error) {

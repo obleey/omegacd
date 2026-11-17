@@ -519,7 +519,7 @@ func TestHostEnrollment(t *testing.T) {
 		"GET /api/settings/hosts": []domain.HostView{
 			{Host: domain.Host{Name: "web", Fingerprint: "SHA256:abc", AgeRecipient: "age1web"}},
 			{Host: domain.Host{Name: "db"}},
-			{Host: domain.Host{Name: "cache", Fingerprint: "SHA256:def", Approved: true, Agent: &domain.AgentInfo{Version: "v0.2.1"},
+			{Host: domain.Host{Name: "cache", Fingerprint: "SHA256:def", Approved: true, Agent: &domain.AgentInfo{Version: "v0.2.1", Outdated: true},
 				AllowIPs: []string{"10.0.0.0/8"}, Unmanaged: []string{"handmade", "legacy"}}},
 			{Host: domain.Host{Name: "old", Fingerprint: "SHA256:jkl", Approved: true, Agent: &domain.AgentInfo{Version: "v0.0.9", Refused: "too old"}}},
 			{Host: domain.Host{Name: "copied", Fingerprint: "SHA256:ghi", Approved: true,
@@ -530,6 +530,7 @@ func TestHostEnrollment(t *testing.T) {
 		"PUT /api/settings/hosts/web/allow-ips": func() any { return map[string][]string{"allowIPs": {"10.0.0.0/8", "203.0.113.7/32"}} },
 		"PUT /api/settings/hosts/db/allow-ips":  map[string][]string{"allowIPs": {}},
 		"DELETE /api/settings/hosts/web":        nil,
+		"POST /api/settings/hosts/web/rename":   nil,
 	})
 	r := run(t, srv, nil, "", "host", "add", "web")
 	if r.code != 0 || !strings.Contains(r.stdout, "OMEGACD_AGENT_CONTROL_PLANE="+srv.URL+" OMEGACD_AGENT_INVITE=omegacd-invite-abc omegacd agent") ||
@@ -538,7 +539,7 @@ func TestHostEnrollment(t *testing.T) {
 	}
 	r = run(t, srv, nil, "", "host", "list")
 	for _, want := range []string{"to approve SHA256:abc", "age1web", "approved SHA256:def", "invited",
-		"LOCKED: two connections (10.0.0.1, 10.0.0.2)", "agent v0.2.1", "REFUSED: Agent v0.0.9", "approved SHA256:def, only from 10.0.0.0/8", "NOT MANAGED", "handmade, legacy"} {
+		"LOCKED: two connections (10.0.0.1, 10.0.0.2)", "agent v0.2.1 (outdated)", "REFUSED: Agent v0.0.9", "approved SHA256:def, only from 10.0.0.0/8", "NOT MANAGED", "handmade, legacy"} {
 		if !strings.Contains(r.stdout, want) {
 			t.Fatalf("list lacks %q:\n%s", want, r.stdout)
 		}
@@ -558,6 +559,13 @@ func TestHostEnrollment(t *testing.T) {
 	if r := run(t, srv, nil, "", "host", "allow", "db"); r.code != 0 || !strings.Contains(r.stdout, "from anywhere") ||
 		!slices.Contains(f.bodies, `{"allowIPs":[]}`) {
 		t.Fatalf("allow none: %+v %v", r, f.bodies)
+	}
+	if r := run(t, srv, nil, "", "host", "rename", "web", "web-1"); r.code != 0 || strings.TrimSpace(r.stdout) != "Host web renamed web-1" ||
+		!slices.Contains(f.bodies, `{"name":"web-1"}`) {
+		t.Fatalf("rename: %+v %v", r, f.bodies)
+	}
+	if r := run(t, srv, nil, "", "host", "rename", "web"); r.code != 2 {
+		t.Fatalf("rename without the new name: %+v", r)
 	}
 	for args, want := range map[string]string{
 		"rotate": "Host web: its Agent's new key is SHA256:new",

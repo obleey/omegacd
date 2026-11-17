@@ -30,6 +30,13 @@ export const statusMeta: Record<string, [Tone, IconName, boolean?]> = {
 	Connected: ['green', 'check-circle'],
 	Disconnected: ['red', 'x-circle'],
 	'No Host Key': ['red', 'x-circle'],
+	// Host enrollment (M5-02)
+	Invited: ['overlay', 'clock'],
+	'To approve': ['yellow', 'key'],
+	Approved: ['green', 'check'],
+	Locked: ['red', 'lock'],
+	Refused: ['red', 'x-circle'],
+	Outdated: ['yellow', 'alert'],
 	// container state
 	running: ['green', 'check-circle'],
 	restarting: ['yellow', 'notch', true],

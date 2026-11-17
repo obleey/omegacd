@@ -22,6 +22,23 @@ func TestCompatible(t *testing.T) {
 			t.Errorf("compatible(%s, %s) = %v, want %q", tc.cp, tc.agent, err, tc.refused)
 		}
 	}
+	for _, tc := range []struct {
+		cp, agent string
+		want      bool
+	}{
+		{"v0.3.1", "v0.3.0", true},
+		{"v0.3.0", "v0.2.9", true},
+		{"v0.3.0", "v0.3.0", false},
+		{"v0.3.0", "v0.4.0", false},
+		{"v0.3.0", "v0.2.9-rc.1", false}, // development builds and release candidates never
+		{"v0.3.0-0.2026-abc", "v0.2.0", false},
+		{"v0.3.0", "v0.2.0+dirty", false},
+		{"(devel)", "v0.2.0", false},
+	} {
+		if got := outdated(tc.cp, tc.agent); got != tc.want {
+			t.Errorf("outdated(%s, %s) = %v", tc.cp, tc.agent, got)
+		}
+	}
 	if err := compatible("v0.3.0", "v0.1.4"); !strings.Contains(err.Error(), "serves Agents from v0.2 on: upgrade the Agent") {
 		t.Errorf("doesn't say what to upgrade to: %v", err)
 	}

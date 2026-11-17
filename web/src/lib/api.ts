@@ -156,9 +156,11 @@ export interface AgentInfo {
 	engine?: string; // docker or podman
 	engineVersion?: string;
 	rootless?: boolean;
+	address?: string; // it connected from (Q165)
 	seenAt: string;
 	leftAt?: string; // when its connection ended; none while connected
 	refused?: string; // why the Control Plane refused it, e.g. an outdated version
+	outdated?: boolean; // served, but older than the Control Plane (Q163)
 }
 
 /** A Host and its Agent (Q9): every Host is reached through one. */

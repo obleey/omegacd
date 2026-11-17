@@ -403,6 +403,13 @@ omegacd host approve web-1 SHA256:…          # after comparing the fingerprint
 In the UI it is **Hosts → Add Host**: name the Host, copy the command that runs its Agent (with `omegacd` installed, or
 in a container: `docker run` of OmegaCD's image), and watch it connect; compare the fingerprint it shows with the one
 the Agent printed, and **Approve**. Agents connect over https only: open OmegaCD at the address they reach it at.
+Each Host then has a card, live: online or last seen, its Agent's version (flagged **outdated** when older than
+OmegaCD), engine and rootless, OS/arch, its Applications, its key's fingerprint and its Host Key with its `.sops.yaml`
+rule to copy; and **Rotate key**, **Allowlist…** (showing the address its Agent last connected from), **Rename…**
+(only while no Application uses it), **Revoke**, and for a locked Host both connections with **Unlock**.
+
+**Settings → Display** picks how dates and times are shown, in this browser: the browser's own format, European
+(`17.11.2026 18:42`) or US (`11/17/2026 6:42 PM`).
 
 Applications with `host: web-1` then deploy through it; a Sync to it while it's offline waits for it, and its Applications show their last known state. `omegacd agent --help` lists its settings (its work dir, state dir, engine). The machine OmegaCD runs on is a Host like any other: give it an Agent too, and OmegaCD can deploy its own Compose project as an Application — an Agent only refuses the project it runs in itself.
 
@@ -564,6 +571,7 @@ omegacd host approve web SHA256:…          # after comparing the fingerprint t
 omegacd host rotate web                    # the Agent makes a new signing key
 omegacd host allow web 203.0.113.7         # its Agent may connect only from there (CIDRs too; none: anywhere)
 omegacd host unlock web                    # locked by two connections with one key, for a harmless cause
+omegacd host rename web web-1              # only while no Application uses it: Git names Hosts
 omegacd host delete web                    # revokes its Agent's key (a key that may be stolen: delete, add again)
 omegacd host key show web                  # its Host Key's public half, for .sops.yaml
 omegacd keygen --out age.key               # a new age key, e.g. the Master Key for a fresh install
@@ -588,6 +596,7 @@ omegacd keygen --out age.key               # a new age key, e.g. the Master Key 
 | `host list` | |
 | `host add NAME`, `host approve NAME FINGERPRINT` | enrolls a Host's Agent with a single-use invite (valid an hour), approved by its key's fingerprint; Applications on it then deploy through the Agent, which decrypts their secrets and reports their Health, containers, resources and logs (a Sync to it while it's offline waits for it; offline, the app shows its last known state and since when the Host is gone). The Agent connects over https only, except to its own machine; `OMEGACD_AGENT_CA_FILE` trusts a private CA |
 | `host allow NAME [CIDR]...` | the addresses the Host's Agent may connect from (behind a reverse proxy: set `OMEGACD_TRUSTED_PROXIES`); none: anywhere |
+| `host rename NAME NEW` | rename a Host no Application uses; its Agent reconnects under the new name |
 | `host rotate NAME`, `host unlock NAME`, `host delete NAME` | a new signing key for the connected Agent; let a Host locked by two connections with its key connect again; delete a Host, revoking its Agent's key |
 | `host key show HOST` | the public half of its Host Key; the private half never leaves the Host |
 | `backup FILE` | the Control Plane's backup: the database and the encrypted Git credentials, no key; owner-only, never overwrites a file |

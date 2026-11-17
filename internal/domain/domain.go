@@ -204,10 +204,13 @@ type AgentInfo struct {
 	Engine        string    `json:"engine,omitempty"` // docker or podman
 	EngineVersion string    `json:"engineVersion,omitempty"`
 	Rootless      bool      `json:"rootless,omitempty"`
+	Address       string    `json:"address,omitempty"` // it connected from, as the hub saw it (Q165)
 	SeenAt        time.Time `json:"seenAt"`
 	LeftAt        time.Time `json:"leftAt,omitzero"` // when its connection ended; zero while it's connected
 	// Refused says why the Control Plane refused it, such as an outdated version; empty when it was served
 	Refused string `json:"refused,omitempty"`
+	// Outdated is a served Agent older than the Control Plane (Q41, Q163); never a development build
+	Outdated bool `json:"outdated,omitempty"`
 }
 
 // ParsePrefixes parses CIDRs or bare IPs (a bare IP is the prefix of that one address).
@@ -459,6 +462,8 @@ type Store interface {
 	ListHosts(ctx context.Context) ([]Host, error)
 	GetHost(ctx context.Context, name string) (Host, error)
 	DeleteHost(ctx context.Context, name string) error
+	// RenameHost renames a Host, its invite with it: ErrNotFound, or ErrAlreadyExists for a name taken.
+	RenameHost(ctx context.Context, old, name string) error
 
 	// Enrollment (Q22, Q73): CreateInvite adds the Host by name if it's new and returns a single-use invite for it,
 	// valid until expires; a new one replaces the Host's previous. ErrAlreadyExists once an Agent enrolled for it.
@@ -664,6 +669,8 @@ type Controller interface {
 	ListHosts(ctx context.Context) ([]HostView, error)
 	// DeleteHost refuses (ErrInvalid) while Applications use the Host.
 	DeleteHost(ctx context.Context, name string) error
+	// RenameHost refuses (ErrInvalid) while Applications use the Host (Q53, Q162).
+	RenameHost(ctx context.Context, old, name string) error
 	// InviteHost adds a Host reached through an Agent, by name, and returns a single-use invite for it, valid an hour
 	// (Q22, Q73); for such a Host no Agent has enrolled for yet, a new invite that replaces the last.
 	InviteHost(ctx context.Context, name string) (invite string, expires time.Time, err error)
