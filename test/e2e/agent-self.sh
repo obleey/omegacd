@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # End-to-end: an Agent running in a container, as a Compose project of its own, refuses an Application of that project
-# (Q109) and deploys any other, the Control Plane's included (Q104). The binary is OMEGACD_BIN on Linux; elsewhere a
+# (Q109) and deploys any other, the Control Plane's included (Q104); after a reboot it reclaims its work dir from
+# Docker's placeholders and restores (Q143). The binary is OMEGACD_BIN on Linux; elsewhere a
 # Linux build of this checkout for the engine's architecture.
 set -u # no pipefail: grep -q closing the pipe early must not fail a check
 BIN=${OMEGACD_BIN:-$(cd "$(dirname "$0")/../.." && pwd)/bin/omegacd}
@@ -74,9 +75,10 @@ FP=$(agentlog | grep -o 'fingerprint=SHA256:[A-Za-z0-9+/]*' | head -1 | cut -d= 
 "$BIN" host approve box "$FP" >/dev/null
 check "and is approved" 'waitlog "connected to the Control Plane, approved"'
 
-for d in self other; do
-  printf 'services:\n  app:\n    image: busybox:1.38\n    command: ["sleep", "3600"]\n' > "$REPO/$d/compose.yaml"
-done
+printf 'services:\n  app:\n    image: busybox:1.38\n    command: ["sleep", "3600"]\n' > "$REPO/self/compose.yaml"
+# a file from Git mounted: after a reboot Docker makes it a root-owned folder if it restarts the app first (Q143)
+printf 'services:\n  app:\n    image: busybox:1.38\n    command: ["sh", "-c", "cat /conf.txt; sleep 3600"]\n    volumes: ["./conf.txt:/conf.txt:ro"]\n' > "$REPO/other/compose.yaml"
+echo "conf from git" > "$REPO/other/conf.txt"
 gitc init -q -b main && gitc add -A && gitc commit -qm init
 
 "$BIN" app create $SELF --repo "$REPO" --path self --host box --adopt >/dev/null
@@ -87,6 +89,25 @@ check "and the Agent still runs, untouched" '[ "$(docker inspect -f "{{.State.Ru
 "$BIN" app create e2e-other --repo "$REPO" --path other --host box >/dev/null
 out=$("$BIN" app sync e2e-other --wait --timeout 3m 2>&1); rc=$?
 check "any other it deploys" '[ $rc -eq 0 ] && [ -n "$(docker ps -q --filter label=com.docker.compose.project=e2e-other)" ]'
+
+# Q143: the Host rebooted, its RAM work dir empty, and Docker restarted the app before the Agent: the file it mounts is
+# a folder Docker made as root. The containerised Agent reclaims the work dir through Docker with its own image, then
+# restores the app from its cache.
+docker compose -p $SELF -f "$T/agent.yaml" stop agent >/dev/null 2>&1
+docker run --rm -v "$T:$T" busybox:1.38 rm -rf "$T/work/e2e-other"
+# it fails to start (a folder can't be mounted where the file was), having made the folder: as after a reboot
+docker restart $(docker ps -aq --filter label=com.docker.compose.project=e2e-other) >/dev/null 2>&1
+check "Docker made the missing file a folder" '[ -d "$T/work/e2e-other/conf.txt" ]'
+docker compose -p $SELF -f "$T/agent.yaml" start agent >/dev/null 2>&1
+check "the Agent reclaims the work dir from Docker's placeholders with its own image" 'waitlog "reclaim the work dir from Docker"'
+running() { [ -f "$T/work/e2e-other/conf.txt" ] && docker logs "$(docker ps -q --filter label=com.docker.compose.project=e2e-other)" 2>&1 | grep -q "conf from git"; }
+check "and restores the app: its file back, read by its container" 'for _ in $(seq 150); do running && break; sleep 0.2; done; running'
+
+# an Agent container whose hostname isn't its ID can't find itself to check its work dir's path: it says what to do
+out=$(docker run --rm --hostname not-its-id -v "$LBIN:/omegacd:ro" -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$T/work:$T/work" -e OMEGACD_AGENT_STATE_DIR=/tmp/state -e OMEGACD_AGENT_WORKDIR="$T/work" -e OMEGACD_AGENT_ALLOW_ROOT=true \
+  ${GOCOVERDIR:+-e GOCOVERDIR=$GOCOVERDIR -v $GOCOVERDIR:$GOCOVERDIR} busybox:1.38 /omegacd agent 2>&1)
+check "an Agent whose container's hostname isn't its ID is told to keep it so" 'echo "$out" | grep -q "hostname its ID"'
 
 [ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- agent log"; agentlog | tail -15; echo "--- server log"; tail -10 "$T/server.log"; }
 exit $fail

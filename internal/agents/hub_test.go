@@ -33,13 +33,19 @@ import (
 
 func newHub(t *testing.T) (*Hub, *store.Store, string) {
 	t.Helper()
+	return newHubOn(t, func(st *store.Store) domain.Store { return st })
+}
+
+// newHubOn is newHub with the store the hub uses made from the test's.
+func newHubOn(t *testing.T, wrap func(*store.Store) domain.Store) (*Hub, *store.Store, string) {
+	t.Helper()
 	id, _ := age.GenerateX25519Identity()
 	st, err := store.Open(filepath.Join(t.TempDir(), "omegacd.db"), crypto.NewSealer(id))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	h := New(st, nil)
+	h := New(wrap(st), nil)
 	// a session outlives srv.Close (its connection is hijacked) and records the Agent leaving: the store and its
 	// folder go only after every session ended
 	var sessions sync.WaitGroup
@@ -278,6 +284,7 @@ func TestReplayedSignatureRefused(t *testing.T) {
 // until an admin unlocks it, and the lock names both connections.
 func TestDuplicateConnectionLocks(t *testing.T) {
 	h, st, url := newHub(t)
+	logs := logTo(h)
 	ctx := t.Context()
 	key := approvedAgent(t, h, st, url, "web")
 	first, _ := agent(t, url, key, "", nil)
@@ -285,6 +292,7 @@ func TestDuplicateConnectionLocks(t *testing.T) {
 
 	_, e := agent(t, url, key, "", nil) // a copy of the key, connected while the first still answers
 	refused(t, e, "Host web is locked: two connections used its key at once (127.0.0.1 since ")
+	waitLog(t, logs, `level=ERROR msg="two live connections with one Host's key: the Host is locked until an admin unlocks or revokes it" first=127.0.0.1 second=127.0.0.1`)
 	if e := next(t, got); e.GetError() == nil || !strings.Contains(e.GetError().Message, "locked") {
 		t.Fatalf("the first connection got %v, want the lock", e)
 	}
@@ -387,6 +395,7 @@ func TestRotation(t *testing.T) {
 
 func TestRotationRefused(t *testing.T) {
 	h, st, url := newHub(t)
+	logs := logTo(h)
 	ctx := t.Context()
 	key := approvedAgent(t, h, st, url, "web")
 	if _, err := h.Rotate(ctx, "web"); !errors.Is(err, ErrOffline) {
@@ -402,6 +411,7 @@ func TestRotationRefused(t *testing.T) {
 	if err := <-done; err == nil {
 		t.Fatal("Rotate succeeded")
 	}
+	waitLog(t, logs, `level=WARN msg="key rotation refused" err="the new key's signature doesn't verify" host=web`)
 	if host, _ := st.GetHost(ctx, "web"); host.Fingerprint != domain.Fingerprint(key.Public().(ed25519.PublicKey)) {
 		t.Fatalf("the key changed: %+v", host)
 	}
@@ -472,6 +482,7 @@ func TestVersionHandshake(t *testing.T) {
 // Q28: an Agent outside its Host's allowlist is refused even with a valid key; a narrowed list cuts a live connection.
 func TestAllowlist(t *testing.T) {
 	h, st, url := newHub(t)
+	logs := logTo(h)
 	ctx := t.Context()
 	key := approvedAgent(t, h, st, url, "web")
 
@@ -484,6 +495,7 @@ func TestAllowlist(t *testing.T) {
 	}
 	_, e := agent(t, url, key, "", nil)
 	refused(t, e, "Host web's Agent may connect only from 10.9.0.0/16, 2001:db8::1/128, not from 127.0.0.1")
+	waitLog(t, logs, `level=WARN msg="agent refused" remote=127.0.0.1 err="Host web's Agent may connect only from`)
 
 	if _, err := h.SetAllowlist(ctx, "web", []string{"127.0.0.1"}); err != nil {
 		t.Fatal(err)
@@ -499,6 +511,7 @@ func TestAllowlist(t *testing.T) {
 	if e := next(t, got); !strings.Contains(e.GetError().GetMessage(), "may connect only from 10.9.0.0/16") {
 		t.Fatalf("the live connection outside the new list got %v", e)
 	}
+	waitLog(t, logs, `level=WARN msg="agent outside the new allowlist: disconnected" host=web remote=127.0.0.1`)
 	if list, err := h.SetAllowlist(ctx, "web", nil); err != nil || len(list) != 0 {
 		t.Fatalf("cleared: %v %v", list, err)
 	}
@@ -514,6 +527,7 @@ func TestAllowlist(t *testing.T) {
 func TestDeploy(t *testing.T) {
 	h, st, url := newHub(t)
 	ctx := t.Context()
+	logs := logTo(h)
 	files := map[string][]byte{"compose.yaml": []byte("services: {}\n"), "secret.sops.env": []byte("ENC[...]")}
 	sums := map[string][]byte{}
 	for name, b := range files {
@@ -553,6 +567,7 @@ func TestDeploy(t *testing.T) {
 	if e := next(t, got); e.ReplyTo != req.Id || !strings.Contains(e.GetError().GetMessage(), "not a file of a Desired State sent to this Agent") {
 		t.Fatalf("a blob outside its Desired States: %v", e)
 	}
+	waitLog(t, logs, `level=WARN msg="blob for an agent" blob=`+hex.EncodeToString(other[:]))
 	c.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_SyncOperationReport{SyncOperationReport: &agentv1.SyncOperationReport{
 		App: "a", Op: 7, Phase: "Failed", Message: "image not found"}}})
 	if err := <-done; err == nil || err.Error() != "image not found" {
@@ -846,8 +861,15 @@ func TestRemoveOnAClosingConnection(t *testing.T) {
 	close(approved)
 	h.mu.Lock()
 	h.conns["web"] = &session{conn: c, approved: approved, removes: map[uint64]chan *agentv1.AppRemoved{},
-		logs: map[uint64]chan *agentv1.LogChunk{}, diffs: map[uint64]chan *agentv1.DiffResult{}, files: map[string]bool{}}
+		logs: map[uint64]chan *agentv1.LogChunk{}, diffs: map[uint64]chan *agentv1.DiffResult{}, files: map[string]bool{},
+		deploys: map[uint64]chan *agentv1.SyncOperationReport{}, sent: map[uint64]*agentv1.DesiredState{}}
 	h.mu.Unlock()
+	if err := h.Deploy(t.Context(), "web", &agentv1.DesiredState{Op: 1}); !errors.Is(err, ErrDisconnected) {
+		t.Fatalf("Deploy = %v", err)
+	}
+	if _, err := h.Rotate(t.Context(), "web"); err == nil {
+		t.Fatal("rotated over a closed connection")
+	}
 	if err := h.Remove(t.Context(), "web", "app", false, false); !errors.Is(err, ErrDisconnected) {
 		t.Fatalf("Remove = %v", err)
 	}
@@ -863,6 +885,7 @@ func TestRemoveOnAClosingConnection(t *testing.T) {
 // Host records the time.
 func TestStatusReports(t *testing.T) {
 	h, st, url := newHub(t)
+	logs := logTo(h)
 	ctx := t.Context()
 	told := make(chan string, 4)
 	h.Status = func(_ context.Context, app string) { told <- app }
@@ -895,6 +918,8 @@ func TestStatusReports(t *testing.T) {
 	if _, err := st.AgentStatus(ctx, "elsewhere"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatal("kept another Host's app's report")
 	}
+	waitLog(t, logs, `level=WARN msg="keep an agent's status report" app=elsewhere`)
+	waitLog(t, logs, `level=WARN msg="an agent's status report" app=app err=`)
 	select {
 	case app := <-told:
 		t.Fatalf("told about %s too", app)

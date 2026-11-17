@@ -182,11 +182,11 @@ func serviceHash(o types.ServiceConfig) (string, error) {
 	o = trimServiceHashFields(o)
 
 	raw, err := json.Marshal(o)
-	if err != nil {
+	if err != nil { // coverage: unreachable, a service config holds only types that encode as JSON
 		return "", err
 	}
 	pinned, err := pinRootKeyOrder(raw, serviceHashKeyOrder)
-	if err != nil {
+	if err != nil { // coverage: unreachable, a struct encodes as a JSON object, which is what this reads
 		return "", err
 	}
 	sum := sha256.Sum256(pinned)

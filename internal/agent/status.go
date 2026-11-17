@@ -40,9 +40,12 @@ func (ag *Agent) statusReport(ctx context.Context, name string) (*agentv1.Status
 	details := map[string]map[string]string{}
 	for _, res := range live.Resources {
 		if res.Kind == "volume" || res.Kind == "network" {
-			if info, err := ag.engine.Inspect(ctx, app, res.Kind, res.Name); err == nil {
-				details[res.Kind+"/"+res.Name] = info
+			info, err := ag.engine.Inspect(ctx, app, res.Kind, res.Name)
+			if err != nil { // the report goes without its details; the next one tries again
+				ag.log.DebugContext(ctx, "status report: no details", "app", name, "kind", res.Kind, "name", res.Name, "err", err)
+				continue
 			}
+			details[res.Kind+"/"+res.Name] = info
 		}
 	}
 	for _, f := range files {

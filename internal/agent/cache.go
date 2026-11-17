@@ -72,7 +72,7 @@ func (c *Cache) trim(ctx context.Context, app string) error {
 	}
 	for i, r := range revs {
 		if i >= c.keep && r.Revision != a.Revision {
-			if err := c.db.DeleteRevision(ctx, app, r.Revision); err != nil {
+			if err := c.db.DeleteRevision(ctx, app, r.Revision); err != nil { // coverage: unreachable, a write to the healthy database that just answered
 				return err
 			}
 		}

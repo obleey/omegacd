@@ -87,7 +87,7 @@ func (s SOPS) Decrypt(dir string) ([]Decrypted, error) {
 // envKeys is the variable names in a .env file; values are never read out of it.
 func envKeys(path string) []string {
 	b, err := os.ReadFile(path)
-	if err != nil {
+	if err != nil { // coverage: unreachable, the file was just written by the decryption that names it
 		return nil
 	}
 	var keys []string
@@ -109,7 +109,7 @@ func HostKey(stateDir string) (*age.X25519Identity, error) {
 	if !errors.Is(err, fs.ErrNotExist) {
 		return id, err
 	}
-	if id, err = age.GenerateX25519Identity(); err != nil {
+	if id, err = age.GenerateX25519Identity(); err != nil { // coverage: unreachable, generating reads the system's randomness, which doesn't fail
 		return nil, err
 	}
 	key := fmt.Sprintf("# created: %s\n# public key: %s\n%s\n", time.Now().Format(time.RFC3339), id.Recipient(), id)

@@ -92,6 +92,12 @@ func TestNamesFromControlPlaneChecked(t *testing.T) {
 	if _, err := ag.diff(ctx, &agentv1.DesiredState{App: "web/../.."}, nil); !errors.Is(err, domain.ErrInvalid) {
 		t.Errorf("diff: %v", err)
 	}
+	for _, want := range []string{`level=ERROR msg="deploy failed" app=../../etc`,
+		`level=WARN msg="the Control Plane is gone: the Sync's result waits in the outbox" app=../../etc`} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("no %s:\n%s", want, logs.String())
+		}
+	}
 	ag.removeApp(ctx, conn, 3, &agentv1.RemoveApp{App: ".."})
 	if !strings.Contains(logs.String(), `msg="remove application"`) || !strings.Contains(logs.String(), "name must be") {
 		t.Errorf("removal: %s", logs.String())
@@ -137,7 +143,10 @@ func TestListAppsFailingIsLogged(t *testing.T) {
 	}
 	cancel()
 	<-done
-	if !strings.Contains(logs.String(), "after the engine's events came back: list applications to check") {
-		t.Fatalf("logs:\n%s", logs.String())
+	for _, want := range []string{"after the engine's events came back: list applications to check", `msg="read the outbox"`,
+		`msg="resync: list applications"`} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("no %s:\n%s", want, logs.String())
+		}
 	}
 }

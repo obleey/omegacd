@@ -1671,14 +1671,14 @@ func (*LogsStop) Descriptor() ([]byte, []int) {
 	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{17}
 }
 
-// OutboxEntry is something that happened while offline, sent on reconnect in seq order.
+// OutboxEntry is something that happened while offline, sent on reconnect in seq order. Status goes live, never
+// through the outbox (M4-02): status_report was never recorded (Q144).
 type OutboxEntry struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	Seq      uint64                 `protobuf:"varint,1,opt,name=seq,proto3" json:"seq,omitempty"`
 	TimeUnix int64                  `protobuf:"varint,2,opt,name=time_unix,json=timeUnix,proto3" json:"time_unix,omitempty"`
 	// Types that are valid to be assigned to Event:
 	//
-	//	*OutboxEntry_StatusReport
 	//	*OutboxEntry_SyncOperationReport
 	//	*OutboxEntry_AppRemoved
 	Event         isOutboxEntry_Event `protobuf_oneof:"event"`
@@ -1737,15 +1737,6 @@ func (x *OutboxEntry) GetEvent() isOutboxEntry_Event {
 	return nil
 }
 
-func (x *OutboxEntry) GetStatusReport() *StatusReport {
-	if x != nil {
-		if x, ok := x.Event.(*OutboxEntry_StatusReport); ok {
-			return x.StatusReport
-		}
-	}
-	return nil
-}
-
 func (x *OutboxEntry) GetSyncOperationReport() *SyncOperationReport {
 	if x != nil {
 		if x, ok := x.Event.(*OutboxEntry_SyncOperationReport); ok {
@@ -1768,10 +1759,6 @@ type isOutboxEntry_Event interface {
 	isOutboxEntry_Event()
 }
 
-type OutboxEntry_StatusReport struct {
-	StatusReport *StatusReport `protobuf:"bytes,3,opt,name=status_report,json=statusReport,proto3,oneof"`
-}
-
 type OutboxEntry_SyncOperationReport struct {
 	SyncOperationReport *SyncOperationReport `protobuf:"bytes,4,opt,name=sync_operation_report,json=syncOperationReport,proto3,oneof"`
 }
@@ -1779,8 +1766,6 @@ type OutboxEntry_SyncOperationReport struct {
 type OutboxEntry_AppRemoved struct {
 	AppRemoved *AppRemoved `protobuf:"bytes,5,opt,name=app_removed,json=appRemoved,proto3,oneof"`
 }
-
-func (*OutboxEntry_StatusReport) isOutboxEntry_Event() {}
 
 func (*OutboxEntry_SyncOperationReport) isOutboxEntry_Event() {}
 
@@ -2443,15 +2428,14 @@ const file_omegacd_agent_v1_agent_proto_rawDesc = "" +
 	"\x04done\x18\x02 \x01(\bR\x04done\x12\x14\n" +
 	"\x05error\x18\x03 \x01(\tR\x05error\"\n" +
 	"\n" +
-	"\bLogsStop\"\xaa\x02\n" +
+	"\bLogsStop\"\xf8\x01\n" +
 	"\vOutboxEntry\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x04R\x03seq\x12\x1b\n" +
-	"\ttime_unix\x18\x02 \x01(\x03R\btimeUnix\x12E\n" +
-	"\rstatus_report\x18\x03 \x01(\v2\x1e.omegacd.agent.v1.StatusReportH\x00R\fstatusReport\x12[\n" +
+	"\ttime_unix\x18\x02 \x01(\x03R\btimeUnix\x12[\n" +
 	"\x15sync_operation_report\x18\x04 \x01(\v2%.omegacd.agent.v1.SyncOperationReportH\x00R\x13syncOperationReport\x12?\n" +
 	"\vapp_removed\x18\x05 \x01(\v2\x1c.omegacd.agent.v1.AppRemovedH\x00R\n" +
 	"appRemovedB\a\n" +
-	"\x05event\"`\n" +
+	"\x05eventJ\x04\b\x03\x10\x04R\rstatus_report\"`\n" +
 	"\tRemoveApp\x12\x10\n" +
 	"\x03app\x18\x01 \x01(\tR\x03app\x12\x18\n" +
 	"\avolumes\x18\x02 \x01(\bR\avolumes\x12'\n" +
@@ -2560,16 +2544,15 @@ var file_omegacd_agent_v1_agent_proto_depIdxs = []int32{
 	26, // 25: omegacd.agent.v1.Envelope.diff_result:type_name -> omegacd.agent.v1.DiffResult
 	9,  // 26: omegacd.agent.v1.DesiredState.files:type_name -> omegacd.agent.v1.File
 	29, // 27: omegacd.agent.v1.Resync.checksums:type_name -> omegacd.agent.v1.Resync.ChecksumsEntry
-	13, // 28: omegacd.agent.v1.OutboxEntry.status_report:type_name -> omegacd.agent.v1.StatusReport
-	14, // 29: omegacd.agent.v1.OutboxEntry.sync_operation_report:type_name -> omegacd.agent.v1.SyncOperationReport
-	20, // 30: omegacd.agent.v1.OutboxEntry.app_removed:type_name -> omegacd.agent.v1.AppRemoved
-	23, // 31: omegacd.agent.v1.RegistryAuth.credentials:type_name -> omegacd.agent.v1.SealedCredential
-	8,  // 32: omegacd.agent.v1.DiffRequest.desired_state:type_name -> omegacd.agent.v1.DesiredState
-	33, // [33:33] is the sub-list for method output_type
-	33, // [33:33] is the sub-list for method input_type
-	33, // [33:33] is the sub-list for extension type_name
-	33, // [33:33] is the sub-list for extension extendee
-	0,  // [0:33] is the sub-list for field type_name
+	14, // 28: omegacd.agent.v1.OutboxEntry.sync_operation_report:type_name -> omegacd.agent.v1.SyncOperationReport
+	20, // 29: omegacd.agent.v1.OutboxEntry.app_removed:type_name -> omegacd.agent.v1.AppRemoved
+	23, // 30: omegacd.agent.v1.RegistryAuth.credentials:type_name -> omegacd.agent.v1.SealedCredential
+	8,  // 31: omegacd.agent.v1.DiffRequest.desired_state:type_name -> omegacd.agent.v1.DesiredState
+	32, // [32:32] is the sub-list for method output_type
+	32, // [32:32] is the sub-list for method input_type
+	32, // [32:32] is the sub-list for extension type_name
+	32, // [32:32] is the sub-list for extension extendee
+	0,  // [0:32] is the sub-list for field type_name
 }
 
 func init() { file_omegacd_agent_v1_agent_proto_init() }
@@ -2606,7 +2589,6 @@ func file_omegacd_agent_v1_agent_proto_init() {
 		(*Envelope_DiffResult)(nil),
 	}
 	file_omegacd_agent_v1_agent_proto_msgTypes[18].OneofWrappers = []any{
-		(*OutboxEntry_StatusReport)(nil),
 		(*OutboxEntry_SyncOperationReport)(nil),
 		(*OutboxEntry_AppRemoved)(nil),
 	}

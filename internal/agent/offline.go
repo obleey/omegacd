@@ -275,7 +275,7 @@ func running(live domain.LiveState) bool {
 }
 
 // selfHealDelay lets a burst of engine events (a restart is several) settle before the Agent looks.
-const selfHealDelay = 3 * time.Second
+var selfHealDelay = 3 * time.Second // tests wait less
 
 // Run keeps the Host's Applications as deployed until ctx ends (Q24): it restores them, then watches the engine and
 // self-heals those that have Self-Heal on. It works the same with or without a Control Plane.
