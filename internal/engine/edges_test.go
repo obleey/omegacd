@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,6 +13,7 @@ import (
 	"github.com/docker/cli/cli/command"
 	"github.com/docker/compose/v5/pkg/api"
 	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/events"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 
@@ -219,5 +221,28 @@ func TestDiffWithoutTheReferencedContainer(t *testing.T) {
 	}
 	if !slices.ContainsFunc(diffs, func(d domain.ServiceDiff) bool { return d.Service == "web" && d.Change == "changed" }) {
 		t.Fatalf("%+v", diffs)
+	}
+}
+
+// eventsClient answers the ping, and its event stream fails at once.
+type eventsClient struct{ resourcesClient }
+
+func (eventsClient) Ping(context.Context, client.PingOptions) (client.PingResult, error) {
+	return client.PingResult{}, nil
+}
+
+func (eventsClient) Events(context.Context, client.EventsListOptions) client.EventsResult {
+	errs := make(chan error, 1)
+	errs <- errors.New("stream broken off")
+	return client.EventsResult{Messages: make(chan events.Message), Err: errs}
+}
+
+// A live event stream that breaks (the engine restarting) ends with its error, for Watch to say and retry.
+func TestEventStreamBreaks(t *testing.T) {
+	e := &Engine{cfg: Config{Log: logging.Discard}, hc: &hostConn{cli: fakeCLI{c: eventsClient{}}}}
+	connected := false
+	err := e.streamEvents(t.Context(), client.Filters{}, func(string) {}, func() { connected = true })
+	if err == nil || err.Error() != "stream broken off" || !connected {
+		t.Fatalf("%v, connected %v", err, connected)
 	}
 }
