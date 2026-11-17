@@ -332,7 +332,7 @@ services:
     depends_on: {migrate: {condition: service_completed_successfully}}
 ```
 
-The migration runs on **every** Sync, and again when the Host restores the Application after a reboot, so it must be idempotent: running it twice changes nothing the second time. Laravel's, Django's and Rails' migrations are (they record what ran). A completed migration counts as Healthy and Self-Heal leaves it alone. Something that should run once per change rather than on every Sync, like a backup before an upgrade, is a Sync hook ([Roadmap](ROADMAP.md)).
+The migration runs on **every** Sync, and again when the Host restores the Application after a reboot, so it must be idempotent: running it twice changes nothing the second time. Laravel's, Django's and Rails' migrations are (they record what ran). A completed migration counts as Healthy and Self-Heal leaves it alone. A migration in a profile that is off, waited for with `required: false`, doesn't run, as with `docker compose up`. Something that should run once per change rather than on every Sync, like a backup before an upgrade, is a Sync hook ([Roadmap](ROADMAP.md)).
 
 **Labels.** Every container OmegaCD creates carries `managed-by=omegacd` and `dev.omegacd.application=<name>` (on Docker and Podman alike), so `docker ps --filter label=managed-by=omegacd` lists everything OmegaCD manages. Containers created before an upgrade get the label on their next recreate.
 

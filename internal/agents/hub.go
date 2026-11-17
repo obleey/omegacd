@@ -268,6 +268,8 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.outbox(ctx, host.Name, s, e.GetOutboxEntry())
 		case e.GetResync() != nil:
 			h.resync(ctx, host.Name, s, e.GetResync())
+		default: // a newer Agent's, or an answer to a request no longer waiting (Q144)
+			h.log.DebugContext(ctx, "an envelope the hub doesn't handle: ignored", "id", e.Id, "replyTo", e.ReplyTo, "body", fmt.Sprintf("%T", e.Body))
 		}
 	}
 }
@@ -614,7 +616,8 @@ func (h *Hub) outbox(ctx context.Context, host string, s *session, e *agentv1.Ou
 		return
 	}
 	r := e.GetSyncOperationReport()
-	if r == nil { // a StatusReport: Health and drift come with M4-02
+	if r == nil { // Q144: an Agent is never newer than its Control Plane (Q41); unacknowledged it would come back forever
+		h.log.WarnContext(ctx, "outbox entry of a kind this Control Plane doesn't know: acknowledged and dropped; upgrade the Control Plane", "seq", e.Seq)
 		s.conn.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_OutboxAck{OutboxAck: &agentv1.OutboxAck{Seq: e.Seq}}})
 		return
 	}
@@ -786,6 +789,11 @@ func (h *Hub) Remove(ctx context.Context, host, app string, volumes, keepContain
 	err = s.conn.Send(ctx, e)
 	s.removes[e.Id] = answer
 	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.removes, e.Id)
+		s.mu.Unlock()
+	}()
 	if err != nil {
 		return fmt.Errorf("host %s: %w", host, ErrDisconnected)
 	}

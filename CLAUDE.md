@@ -6,7 +6,7 @@ https://github.com/obleey/omegacd.
 ## Where things stand
 
 - **`main` is v0.2 in development**: a breaking redesign to pull-based Agents and a separate Source Server. Read
-  [docs/v0.2/README.md](docs/v0.2/README.md) first: architecture, every design decision (Q1–Q141), and the work as
+  [docs/v0.2/README.md](docs/v0.2/README.md) first: architecture, every design decision (Q1–Q146), and the work as
   tickets in [docs/v0.2/milestones/](docs/v0.2/milestones/). Work milestones in order (M1 → M8).
 - **v0.1 is deprecated** (Q97): `release-0.1` (push over SSH/TLS, last tag `v0.1.0-rc.10`) is frozen, no fixes; there
   is no v0.1.0 release. v0.2.0 is OmegaCD's first stable release. Write no tests or features for v0.1-only code: M4-05
@@ -26,8 +26,9 @@ https://github.com/obleey/omegacd.
 - **Before each milestone starts**: walk its tickets against decisions.md, architecture.md and ROADMAP.md (later items
   too: they can change what's built now) and settle what's open, recorded as decisions. Between M2 and M3 that was the
   roadmap's later features, decided as [Q63–Q72](docs/v0.2/decisions.md#later-features-design-check-before-m3-2026-11-08).
-- **Before each ticket**: a short grilling (the `mattpocock-skills:grilling` skill): read the ticket with the code it
-  will touch and its decisions, list what is open (what the docs don't settle, where the code contradicts the plan),
+- **Before each ticket**: a short grilling (the `mattpocock-skills:grilling` skill). First read the whole codebase,
+  end to end (every package, how it all fits together, and the tests), not only the code the ticket touches; then
+  the ticket's requirements and its decisions. Only then list what is open (what the docs don't settle, where the code contradicts the plan),
   and ask it all in one round with recommendations before writing code; or say "nothing open" and start. Decisions
   found mid-ticket cost a stop and rework (M4: Q99–Q103 all came up while coding).
 - **When a ticket shows a decision is wrong** (step 5): a focused grilling on that question before going on.

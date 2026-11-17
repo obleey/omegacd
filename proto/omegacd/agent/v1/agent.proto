@@ -186,12 +186,14 @@ message LogChunk {
 // LogsStop ends a LogsRequest (reply_to) that follows: the viewer went away.
 message LogsStop {}
 
-// OutboxEntry is something that happened while offline, sent on reconnect in seq order.
+// OutboxEntry is something that happened while offline, sent on reconnect in seq order. Status goes live, never
+// through the outbox (M4-02): status_report was never recorded (Q144).
 message OutboxEntry {
+  reserved 3;
+  reserved "status_report";
   uint64 seq = 1;
   int64 time_unix = 2;
   oneof event {
-    StatusReport status_report = 3;
     SyncOperationReport sync_operation_report = 4;
     AppRemoved app_removed = 5;
   }

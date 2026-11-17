@@ -181,7 +181,9 @@ func TestPrivateCA(t *testing.T) {
 		go New(nil, nil, nil, nil, nil, l).Connect(cctx, Connection{URL: srv.URL, Invite: invite, Key: key, AgeRecipient: testRecipient, HTTPClient: client})
 		return &log
 	}
-	waitLog(t, connect(nil), "certificate signed by unknown authority")
+	untrusted := connect(nil)
+	waitLog(t, untrusted, "certificate signed by unknown authority")
+	waitLog(t, untrusted, `level=WARN msg="no connection to the Control Plane; trying again"`)
 
 	ca := filepath.Join(t.TempDir(), "ca.pem")
 	os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}), 0o644)

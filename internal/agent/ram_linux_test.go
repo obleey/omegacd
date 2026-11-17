@@ -12,6 +12,9 @@ func TestOnRAM(t *testing.T) {
 	if !onRAM("/dev/shm") {
 		t.Error("/dev/shm (tmpfs) doesn't count as RAM")
 	}
+	if onRAM("/nonexistent") {
+		t.Error("a folder that isn't there counts as RAM")
+	}
 	if onRAM("/") && os.Getenv("CI") != "" {
 		t.Error("/ counts as RAM on a CI runner")
 	}

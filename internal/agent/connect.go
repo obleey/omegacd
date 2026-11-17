@@ -68,7 +68,7 @@ func SigningKey(stateDir string) (ed25519.PrivateKey, error) {
 // newSigningKey writes a new key to path, owner-only; never over an existing file.
 func newSigningKey(path string) (ed25519.PrivateKey, error) {
 	_, key, err := ed25519.GenerateKey(nil)
-	if err != nil {
+	if err != nil { // coverage: unreachable, generating reads the system's randomness, which doesn't fail
 		return nil, err
 	}
 	pem := fmt.Sprintf("# created: %s\n# fingerprint: %s\n%s\n", time.Now().Format(time.RFC3339),
@@ -91,7 +91,7 @@ func TrustCA(file string) (*http.Client, error) {
 		return nil, fmt.Errorf("OMEGACD_AGENT_CA_FILE: %w", err)
 	}
 	pool, err := x509.SystemCertPool()
-	if err != nil {
+	if err != nil { // coverage: unreachable, on Linux and macOS it returns an empty pool rather than fail
 		pool = x509.NewCertPool()
 	}
 	if !pool.AppendCertsFromPEM(pem) {
@@ -159,12 +159,13 @@ func (ag *Agent) serve(ctx context.Context, conn *wire.Conn, c *Connection) erro
 			out = append(out, &agentv1.Envelope{Body: &agentv1.Envelope_ChallengeResponse{ChallengeResponse: &agentv1.ChallengeResponse{
 				PublicKey: c.Key.Public().(ed25519.PublicKey), Signature: sig}}})
 			for _, o := range out {
-				if err := conn.Send(ctx, o); err != nil {
+				if err := conn.Send(ctx, o); err != nil { // coverage: unreachable, Send only queues; a connection gone is what this loop's next Recv reports
 					return err
 				}
 			}
 		case e.GetRotateKey() != nil:
 			if rotation != 0 {
+				ag.log.Debug("key rotation asked again while one waits for its answer: ignored")
 				continue
 			}
 			var err error
@@ -175,7 +176,7 @@ func (ag *Agent) serve(ctx context.Context, conn *wire.Conn, c *Connection) erro
 			pub := next.Public().(ed25519.PublicKey)
 			r := &agentv1.Envelope{Body: &agentv1.Envelope_KeyRotation{KeyRotation: &agentv1.KeyRotation{PublicKey: pub,
 				Signature: ed25519.Sign(c.Key, append([]byte(agents.RotatePrefix), pub...))}}}
-			if err := conn.Send(ctx, r); err != nil {
+			if err := conn.Send(ctx, r); err != nil { // coverage: unreachable, Send only queues; a connection gone is what this loop's next Recv reports
 				return err
 			}
 			rotation = r.Id
@@ -243,6 +244,8 @@ func (ag *Agent) serve(ctx context.Context, conn *wire.Conn, c *Connection) erro
 		case e.GetError() != nil && e.ReplyTo != 0 && b.refused(e.ReplyTo, e.GetError().Message):
 		case e.GetError() != nil:
 			return fmt.Errorf("the Control Plane refused this Agent: %s", e.GetError().Message)
+		default: // a newer Control Plane's, or an answer to a request no longer waiting (Q144)
+			ag.log.Debug("an envelope this Agent doesn't handle: ignored", "id", e.Id, "replyTo", e.ReplyTo, "body", fmt.Sprintf("%T", e.Body))
 		}
 	}
 }

@@ -462,3 +462,20 @@ is declared. Their details (syntax, UI, messages) are decided when each is built
   credentials file, `ageKeys.Encrypt` (decrypting never calls it), `Chmod`/`Write` on a file just opened.
 - **Q141** `workdir.Claim` ignores a marker it can't remove, said in a comment: it is this Application's, and the next
   Write deletes it.
+
+## Agent, hub, engine (before M4-10c, 2026-11-17)
+
+- **Q142** Engine failures where code calls Docker itself (`engine`; the Agent's `reclaim`, `DetectEngine`,
+  `CheckPathParity`) are tested through a fault-injecting proxy in front of the real engine (`internal/enginetest`, a
+  package only tests import, so `engine`, `agent` and later `importer` share it): a test-side `DOCKER_HOST`, not a hook in
+  shipped code (Q96). Engine failures seen from the Agent stay on its fake engines (Q130).
+- **Q143** The containerised Agent's restore after a reboot (Docker's placeholders reclaimed with the Agent's own image)
+  is tested end to end in `agent-self.sh`: the app's files removed while the Agent is stopped, its container restarted
+  by Docker, then the Agent started again.
+- **Q144** `OutboxEntry.status_report` (3) is reserved: Status goes live since M4-02 and no Agent records one. An
+  outbox entry of a kind the hub doesn't know is acknowledged and logged at Warn (an Agent is never newer than its
+  Control Plane, Q41; unacknowledged it would be sent forever); a live envelope of a kind the hub or the Agent doesn't
+  handle is logged at debug.
+- **Q145** (not needed: a Sync's engine errors already reach its report and the Agent's "deploy failed" Error.)
+- **Q146** `Engine.Status` skips a container gone between listing and inspecting it (Compose recreating a service),
+  logged at debug, instead of failing: Self-Heal, status reports and Logs read it exactly then.

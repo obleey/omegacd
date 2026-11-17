@@ -65,14 +65,14 @@ type Engine struct {
 func New(cfg Config) (*Engine, error) {
 	cfg.Log = cmp.Or(cfg.Log, logging.Discard)
 	dcli, err := command.NewDockerCli()
-	if err != nil {
+	if err != nil { // coverage: unreachable, without options it only sets defaults
 		return nil, fmt.Errorf("docker cli: %w", err)
 	}
-	if err := dcli.Initialize(&flags.ClientOptions{}); err != nil {
+	if err := dcli.Initialize(&flags.ClientOptions{}); err != nil { // coverage: unreachable, fails only on options it isn't given (hosts and a context together)
 		return nil, fmt.Errorf("docker cli: %w", err)
 	}
 	svc, err := newCompose(dcli, nil)
-	if err != nil {
+	if err != nil { // coverage: unreachable, newCompose's options (prompt, event processor) never fail
 		return nil, err
 	}
 	return &Engine{cfg: cfg, hc: &hostConn{cli: dcli, compose: svc}, desired: map[string][]string{}}, nil
@@ -306,7 +306,7 @@ func (e *Engine) Diff(ctx context.Context, app domain.Application, dir, asDir st
 			continue
 		}
 		hash, err := serviceHash(resolved)
-		if err != nil {
+		if err != nil { // coverage: unreachable, a service loaded from YAML always encodes as JSON
 			return nil, fmt.Errorf("hash service %q: %w", name, err)
 		}
 		if keepsRunning(svc.Restart) && slices.ContainsFunc(live, func(c container.Summary) bool { return c.State != "running" }) {
@@ -415,7 +415,7 @@ func (e *Engine) Sync(ctx context.Context, app domain.Application, dir string, o
 		opts.Registries = append(slices.Clip(opts.Registries), creds...)
 	}
 	svc, err := newCompose(authCLI{Cli: hc.cli, cf: registryConfig(opts.Registries)}, opts.Progress)
-	if err != nil {
+	if err != nil { // coverage: unreachable, newCompose's options (prompt, event processor) never fail
 		return err
 	}
 	// Up pulls by each service's pull_policy (default: only missing images), so a registry outage
@@ -620,6 +620,14 @@ func (e *Engine) Status(ctx context.Context, app domain.Application) (domain.Liv
 		}
 	}
 	for _, ct := range ctrs {
+		insp, err := c.ContainerInspect(ctx, ct.ID, client.ContainerInspectOptions{})
+		if cerrdefs.IsNotFound(err) { // Q146: Compose replaced it meanwhile; the next change reads its successor
+			e.cfg.Log.DebugContext(ctx, "container gone while reading the project: being replaced", "app", app.Name, "container", ct.ID[:12])
+			continue
+		}
+		if err != nil {
+			return domain.LiveState{}, fmt.Errorf("inspect container %s: %w", ct.ID, err)
+		}
 		for _, m := range ct.Mounts {
 			if m.Name != "" {
 				use("volume/"+m.Name, ct.Labels[api.ServiceLabel])
@@ -629,10 +637,6 @@ func (e *Engine) Status(ctx context.Context, app domain.Application) (domain.Liv
 			for n := range ct.NetworkSettings.Networks {
 				use("network/"+n, ct.Labels[api.ServiceLabel])
 			}
-		}
-		insp, err := c.ContainerInspect(ctx, ct.ID, client.ContainerInspectOptions{})
-		if err != nil {
-			return domain.LiveState{}, fmt.Errorf("inspect container %s: %w", ct.ID, err)
 		}
 		st := insp.Container.State
 		health := ""
@@ -868,12 +872,14 @@ func (p *progressSink) On(events ...api.Resource) {
 }
 
 // initServices names the services another waits for to complete (depends_on with service_completed_successfully):
-// one-shots such as a database migration.
+// one-shots such as a database migration. One whose profile is off (depends_on with required: false) isn't run,
+// as Compose doesn't.
 func initServices(p *types.Project) []string {
 	var names []string
 	for _, s := range p.Services {
 		for dep, d := range s.DependsOn {
-			if d.Condition == types.ServiceConditionCompletedSuccessfully && !slices.Contains(names, dep) {
+			_, enabled := p.Services[dep]
+			if enabled && d.Condition == types.ServiceConditionCompletedSuccessfully && !slices.Contains(names, dep) {
 				names = append(names, dep)
 			}
 		}
@@ -886,7 +892,7 @@ func initServices(p *types.Project) []string {
 // for each to exit: one that fails stops the Sync with its last log lines, before anything else changed.
 func (e *Engine) runInits(ctx context.Context, svc api.Compose, c client.APIClient, p *types.Project, inits []string, create api.CreateOptions) error {
 	pre, err := p.WithSelectedServices(inits)
-	if err != nil {
+	if err != nil { // coverage: unreachable, initServices names only services of the project
 		return err
 	}
 	create.RemoveOrphans = false // the rest of the project is not orphaned, only not touched yet
@@ -901,7 +907,7 @@ func (e *Engine) runInits(ctx context.Context, svc api.Compose, c client.APIClie
 		res, err := c.ContainerList(ctx, client.ContainerListOptions{All: true,
 			Filters: projectFilter(p.Name).Add("label", api.ServiceLabel+"="+name).Add("label", api.OneoffLabel+"=False")})
 		if err != nil {
-			return err
+			return fmt.Errorf("list init service %s: %w", name, err)
 		}
 		for _, ct := range res.Items {
 			wait := c.ContainerWait(ctx, ct.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})

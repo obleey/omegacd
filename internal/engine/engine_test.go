@@ -154,6 +154,7 @@ func TestInitServices(t *testing.T) {
 		"migrate": svc("migrate", map[string]string{"db": healthy}),
 		"db":      svc("db", nil),
 		"seed":    svc("seed", nil),
+		"api":     svc("api", map[string]string{"backfill": done}), // its profile off: depends_on with required: false
 	}}
 	if got := initServices(p); !slices.Equal(got, []string{"migrate", "seed"}) {
 		t.Fatalf("got %v", got)

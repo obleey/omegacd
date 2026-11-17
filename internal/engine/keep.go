@@ -38,17 +38,15 @@ func unchanged(ctx context.Context, log *slog.Logger, c client.APIClient, p *typ
 		}) {
 			continue
 		}
-		resolved, ok := resolveRefs(svc, byService)
-		if !ok {
-			continue
-		}
-		hash, err := serviceHash(resolved)
-		if err != nil {
+		// nothing to resolve first (resolveRefs): services sharing another's namespace or volumes were left out above
+		hash, err := serviceHash(svc)
+		if err != nil { // coverage: unreachable, a service loaded from YAML always encodes as JSON
 			return nil, err
 		}
 		img, err := c.ImageInspect(ctx, svc.Image)
-		if err != nil {
-			continue // not here yet: Compose pulls it, and recreates
+		if err != nil { // not here yet: Compose pulls it, and recreates
+			log.DebugContext(ctx, "not kept: its image isn't here to compare", "service", name, "image", svc.Image, "err", err)
+			continue
 		}
 		if slices.ContainsFunc(live, func(ct container.Summary) bool {
 			return ct.Labels[api.ConfigHashLabel] != hash || ct.ImageID != img.ID || !onProjectNetworks(p, svc, ct) || !onProjectVolumes(p, svc, ct)

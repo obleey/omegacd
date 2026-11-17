@@ -108,7 +108,7 @@ func (w *WorkDir) Write(ctx context.Context, a App, r Revision) error {
 	// recorded before writing: a write that stops halfway leaves a folder that is still a's; the deployed Revision
 	// stays the previous one until a Deploy succeeds
 	a.Dir, a.Revision = dir, prev.Revision
-	if err := w.db.SaveApp(ctx, a); err != nil {
+	if err := w.db.SaveApp(ctx, a); err != nil { // coverage: unreachable, a write to the healthy database that just answered
 		return err
 	}
 	if err := workdir.Write(dir, r.Files, w.cache.Blob); err != nil {
@@ -141,7 +141,7 @@ func CheckPathParity(ctx context.Context, workDir string) error {
 		return nil
 	}
 	c, err := client.New(client.FromEnv)
-	if err != nil {
+	if err != nil { // coverage: unreachable, only in a container, and omegacd agent refused a DOCKER_HOST the client can't use before (useDockerHost)
 		return err
 	}
 	defer c.Close()

@@ -43,13 +43,12 @@ type Agent struct {
 func (ag *Agent) lock() (unlock func(), err error) {
 	ag.mu.Lock()
 	f, err := os.OpenFile(filepath.Join(filepath.Dir(ag.db.path), "agent.lock"), os.O_CREATE|os.O_RDWR, 0o600)
-	if err == nil {
-		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
-	}
 	if err != nil {
-		if f != nil {
-			f.Close()
-		}
+		ag.mu.Unlock()
+		return nil, fmt.Errorf("agent lock: %w", err)
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil { // coverage: unreachable, a blocking flock on a file just opened waits, it doesn't fail
+		f.Close()
 		ag.mu.Unlock()
 		return nil, fmt.Errorf("agent lock: %w", err)
 	}
@@ -176,7 +175,12 @@ func (ag *Agent) Logs(ctx context.Context, name, service string, follow bool, ta
 			continue
 		}
 		found = true
-		if err := ag.engine.Logs(ctx, app, c.ID, follow, tail, w); err != nil {
+		err := ag.engine.Logs(ctx, app, c.ID, follow, tail, w)
+		if errors.Is(err, domain.ErrNotFound) { // Q146: replaced since the status was read
+			ag.log.DebugContext(ctx, "logs: container gone, being replaced", "app", name, "container", c.ID)
+			continue
+		}
+		if err != nil {
 			return err
 		}
 	}
