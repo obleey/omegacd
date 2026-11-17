@@ -48,8 +48,14 @@ type Git struct {
 
 type repo struct {
 	mu        sync.Mutex
+	dir       string
 	r         *git.Repository
 	lastFetch time.Time
+}
+
+// damaged is err from reading the repo cache, naming its folder (Q139): an error that persists may be a damaged cache.
+func (e *repo) damaged(err error) error {
+	return fmt.Errorf("%w (if this persists, the repo cache %s may be damaged: delete it, the next fetch clones the Repository again)", err, e.dir)
 }
 
 func New(cacheDir string, creds func(ctx context.Context) ([]domain.RepoCredential, error)) *Git {
@@ -63,23 +69,22 @@ func (g *Git) open(url string) (*repo, func(), error) {
 	g.mu.Lock()
 	e, ok := g.repos[key]
 	if !ok {
-		e = &repo{}
+		e = &repo{dir: filepath.Join(g.cacheDir, key)}
 		g.repos[key] = e
 	}
 	g.mu.Unlock()
 	e.mu.Lock()
 	if e.r == nil {
-		dir := filepath.Join(g.cacheDir, key)
-		r, err := git.PlainOpen(dir)
+		r, err := git.PlainOpen(e.dir)
 		if errors.Is(err, git.ErrRepositoryNotExists) {
-			r, err = git.PlainInit(dir, true)
+			r, err = git.PlainInit(e.dir, true)
 			if err == nil {
 				_, err = r.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{url}})
 			}
 		}
 		if err != nil {
 			e.mu.Unlock()
-			return nil, nil, fmt.Errorf("open repo cache for %s: %w", redact(url), err)
+			return nil, nil, fmt.Errorf("open repo cache %s for %s: %w", e.dir, redact(url), err)
 		}
 		e.r = r
 	}
@@ -304,7 +309,10 @@ func (g *Git) commit(ctx context.Context, e *repo, url, sha string) (*object.Com
 	if errors.Is(err, plumbing.ErrObjectNotFound) {
 		return nil, fmt.Errorf("commit %s: %w", sha, domain.ErrNotFound)
 	}
-	return c, err
+	if err != nil {
+		return nil, e.damaged(fmt.Errorf("commit %s: %w", sha, err))
+	}
+	return c, nil
 }
 
 func cleanPath(p string) string {
@@ -336,13 +344,16 @@ func (g *Git) tree(ctx context.Context, repoURL, sha, p string) ([]treeFile, err
 		return nil, err
 	}
 	t, err := subtree(c, cleanPath(p))
-	if err != nil || t == nil {
-		return nil, err
+	if err != nil {
+		return nil, hide(repoURL, e.damaged(fmt.Errorf("read %s@%s:%s: %w", repoURL, sha, p, err)))
+	}
+	if t == nil {
+		return nil, nil
 	}
 	var files []treeFile
 	err = t.Files().ForEach(func(f *object.File) error {
 		content, err := f.Contents()
-		if err != nil {
+		if err != nil { // coverage: unreachable, the iterator just read the blob (a missing one fails there)
 			return err
 		}
 		mode := fs.FileMode(0o644)
@@ -356,7 +367,7 @@ func (g *Git) tree(ctx context.Context, repoURL, sha, p string) ([]treeFile, err
 		return nil
 	})
 	if err != nil {
-		return nil, hide(repoURL, fmt.Errorf("read %s@%s:%s: %w", repoURL, sha, p, err))
+		return nil, hide(repoURL, e.damaged(fmt.Errorf("read %s@%s:%s: %w", repoURL, sha, p, err)))
 	}
 	return files, nil
 }
@@ -373,6 +384,9 @@ func (g *Git) Diff(ctx context.Context, repoURL, fromSHA, toSHA, p string) (stri
 		return "", err
 	}
 	defer unlock()
+	fail := func(err error) (string, error) {
+		return "", hide(repoURL, e.damaged(fmt.Errorf("diff %s %s..%s: %w", repoURL, fromSHA, toSHA, err)))
+	}
 	var from *object.Tree
 	if fromSHA != "" {
 		c, err := g.commit(ctx, e, repoURL, fromSHA)
@@ -380,7 +394,7 @@ func (g *Git) Diff(ctx context.Context, repoURL, fromSHA, toSHA, p string) (stri
 			return "", err
 		}
 		if from, err = c.Tree(); err != nil {
-			return "", err
+			return fail(err)
 		}
 	}
 	c, err := g.commit(ctx, e, repoURL, toSHA)
@@ -389,11 +403,11 @@ func (g *Git) Diff(ctx context.Context, repoURL, fromSHA, toSHA, p string) (stri
 	}
 	to, err := c.Tree()
 	if err != nil {
-		return "", err
+		return fail(err)
 	}
 	changes, err := object.DiffTreeWithOptions(ctx, from, to, nil)
 	if err != nil {
-		return "", err
+		return fail(err)
 	}
 	prefix := cleanPath(p)
 	under := func(name string) bool {
@@ -404,7 +418,7 @@ func (g *Git) Diff(ctx context.Context, repoURL, fromSHA, toSHA, p string) (stri
 	})
 	patch, err := changes.PatchContext(ctx)
 	if err != nil {
-		return "", err
+		return fail(err)
 	}
 	return patch.String(), nil
 }

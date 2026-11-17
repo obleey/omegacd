@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -17,6 +18,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/obleey/omegacd/internal/domain"
+	"github.com/obleey/omegacd/internal/logging"
 )
 
 func server(t *testing.T) *Server {
@@ -146,7 +148,7 @@ func TestValidateBindSources(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		err := validate(context.Background(), domain.Application{Name: "web"}, dir)
+		err := validate(context.Background(), logging.Discard, domain.Application{Name: "web"}, dir)
 		switch {
 		case tt.wantErr == "" && err != nil:
 			t.Errorf("%s: validate = %v, want accepted", tt.volume, err)
@@ -160,7 +162,7 @@ func TestValidateBindSources(t *testing.T) {
 func TestValidateNeedsSecrets(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte("services:\n  web:\n    image: ${IMAGE:?set in .env}\n"), 0o644)
-	if err := validate(context.Background(), domain.Application{Name: "web"}, dir); err != nil {
+	if err := validate(context.Background(), logging.Discard, domain.Application{Name: "web"}, dir); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -187,7 +189,7 @@ func TestPlainSecrets(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "prod.yaml"), []byte("services:\n  web:\n    environment: {AWS_SECRET_ACCESS_KEY: wJalr}\n"), 0o644)
 	os.WriteFile(filepath.Join(dir, "broken.yaml"), []byte("services: [\n"), 0o644)
 
-	got := plainSecrets(domain.Application{ComposeFiles: []string{"compose.yaml", "prod.yaml", "broken.yaml", "missing.yaml"}}, dir)
+	got := plainSecrets(t.Context(), logging.Discard, domain.Application{ComposeFiles: []string{"compose.yaml", "prod.yaml", "broken.yaml", "missing.yaml"}}, dir)
 	var keys []string
 	for _, w := range got {
 		keys = append(keys, strings.SplitN(w, " is in plain text", 2)[0])
@@ -271,4 +273,67 @@ func ageBlobs(t *testing.T, s *Server) {
 		}
 		return err
 	})
+}
+
+// A Source Server folder it can't use stops the start; a render it can't make fails with the reason; the hourly
+// blob collection logs what it removed, and at Warn when it can't (Q132).
+func TestServerFailures(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "file")
+	os.WriteFile(file, nil, 0o600)
+	staging := t.TempDir()
+	os.WriteFile(filepath.Join(staging, "staging"), nil, 0o600)
+	for name, dir := range map[string]string{"a file": file, "staging a file": staging} {
+		if _, err := NewServer(dir); err == nil {
+			t.Errorf("%s: started", name)
+		}
+	}
+
+	f := newFixture(t)
+	sha := f.commit(map[string]string{"compose.yaml": "services: {web: {image: x}}\n"})
+	s := server(t)
+	ctx := t.Context()
+	if _, err := s.Render(ctx, domain.RenderSpec{RepoURL: filepath.Join(f.dir, "missing"), Revision: sha}); err == nil {
+		t.Error("rendered a Repository that isn't there")
+	}
+	os.RemoveAll(s.staging)
+	if _, err := s.Render(ctx, domain.RenderSpec{RepoURL: f.dir, Revision: sha}); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("without its staging folder: %v", err)
+	}
+
+	collectEvery = 10 * time.Millisecond
+	t.Cleanup(func() { collectEvery = blobGrace })
+	logs := &logging.Buffer{}
+	s.Log = slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	cctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() { s.CollectBlobs(cctx); close(done) }()
+	waitLog := func(want string) {
+		t.Helper()
+		for deadline := time.Now().Add(5 * time.Second); !strings.Contains(logs.String(), want); time.Sleep(10 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatalf("no %q:\n%s", want, logs)
+			}
+		}
+	}
+	waitLog(`msg="collected source server blobs" removed=0`)
+	os.RemoveAll(filepath.Join(filepath.Dir(s.staging), "blobs"))
+	waitLog(`level=WARN msg="collect source server blobs; they are only a cache, the next collection tries again" err=`)
+	cancel()
+	<-done
+}
+
+// A blob folder it can't write fails the render with the filesystem's error.
+func TestRenderUnwritableBlobs(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root writes anywhere") // the suite runs as a normal user
+	}
+	f := newFixture(t)
+	sha := f.commit(map[string]string{"compose.yaml": "services: {web: {image: x}}\n"})
+	s := server(t)
+	blobs := filepath.Join(filepath.Dir(s.staging), "blobs")
+	os.Chmod(blobs, 0o500)
+	t.Cleanup(func() { os.Chmod(blobs, 0o700) })
+	if _, err := s.Render(t.Context(), domain.RenderSpec{RepoURL: f.dir, Revision: sha}); !errors.Is(err, fs.ErrPermission) {
+		t.Errorf("%v, want a permission error", err)
+	}
 }

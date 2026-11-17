@@ -206,11 +206,11 @@ From a review of the wiring before M4-10 (2026-11-13), settled as Q134:
 `version` and `secretkey` are at 100% (or marked, Q130) with no silent path.
 
 ### M4-10b · source, workdir, secrets, appdef to 100%
-**Status:** todo
+**Status:** done (2026-11-13, PR #135)
 **Depends on:** M4-10a
 
 **Done when:** `internal/source`, `workdir`, `secrets` and `appdef` are at 100% (or marked, Q130) with no silent path,
-the Source Server's operator-facing Warn and Error lines tested (Q132).
+the Source Server's operator-facing Warn and Error lines tested (Q132); Q136–Q141.
 
 ### M4-10c · agent, agents, engine to 100%
 **Status:** todo

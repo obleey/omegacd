@@ -104,7 +104,7 @@ func run(log *slog.Logger) error {
 	var src domain.Source
 	var backupFiles []string // a standalone Source Server's credentials are backed up with it
 	if u := os.Getenv("OMEGACD_SOURCE_SERVER"); u != "" {
-		c, err := source.Dial(u, sourceTLSDir())
+		c, err := source.Dial(u, sourceTLSDir(), log.With("component", "source"))
 		if err != nil {
 			return err
 		}
@@ -211,7 +211,7 @@ func runSourceServer(log *slog.Logger) error {
 	src.KnownHostsFile = cmp.Or(os.Getenv("OMEGACD_SSH_KNOWN_HOSTS"), "/etc/omegacd/known_hosts")
 	src.Log = log.With("component", "source")
 	g := grpc.NewServer(grpc.Creds(credentials.NewTLS(cfg)))
-	source.Serve(g, src)
+	source.Serve(g, src, src.Log)
 	l, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err

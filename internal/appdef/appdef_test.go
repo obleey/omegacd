@@ -2,6 +2,7 @@ package appdef
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,6 +28,7 @@ func TestParse(t *testing.T) {
 		{"no host", map[string]string{"a.yaml": "name: web\nrepoURL: x\n"}, nil, `"web" has no host:`},
 		{"duplicate name", map[string]string{"a.yaml": "name: web\nrepoURL: x\nhost: local\n", "b.yaml": "name: web\nrepoURL: y\nhost: local\n"}, nil, `"web" is already declared in a.yaml`},
 		{"nested", map[string]string{"a.yaml": "name: web\nkind: apps\nrepoURL: x\n"}, nil, "nested App of Apps"},
+		{"unknown kind", map[string]string{"a.yaml": "name: web\nkind: helm\nrepoURL: x\n"}, nil, `unknown kind "helm"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -54,6 +56,18 @@ func TestParse(t *testing.T) {
 				t.Fatalf("got %v want %v", names, tc.want)
 			}
 		})
+	}
+}
+
+// A folder or a definition that can't be read is the filesystem's error.
+func TestParseUnreadable(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Parse(filepath.Join(dir, "missing")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("a missing folder: %v", err)
+	}
+	os.Symlink("nowhere", filepath.Join(dir, "a.yaml"))
+	if _, err := Parse(dir); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("a dangling a.yaml: %v", err)
 	}
 }
 

@@ -2,6 +2,7 @@ package source
 
 import (
 	"errors"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -96,5 +97,33 @@ func TestCredentials(t *testing.T) {
 	os.Remove(filepath.Join(dir, "source.key"))
 	if _, err := NewServer(dir); err == nil {
 		t.Fatal("started with credentials it can't decrypt")
+	}
+}
+
+// A key or credentials file that can't be read stops the start; a credential that can't be saved is an error and
+// leaves the list as it was.
+func TestCredentialsFailures(t *testing.T) {
+	for _, name := range []string{"source.key", "credentials.age"} {
+		dir := t.TempDir()
+		os.MkdirAll(filepath.Join(dir, name), 0o700)
+		if _, err := NewServer(dir); err == nil {
+			t.Errorf("%s a folder: started", name)
+		}
+	}
+	dir := t.TempDir()
+	s, err := NewServer(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.MkdirAll(filepath.Join(dir, "credentials.age", "x"), 0o700) // nothing renames over a folder that isn't empty
+	if _, err := s.SaveCredential(t.Context(), domain.RepoCredential{URLPrefix: "https://a/", Password: token}); err == nil {
+		t.Error("saved over a folder")
+	}
+	os.RemoveAll(dir)
+	if _, err := s.SaveCredential(t.Context(), domain.RepoCredential{URLPrefix: "https://a/", Password: token}); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("saved without its folder: %v", err)
+	}
+	if list, _ := s.ListCredentials(t.Context()); len(list) != 0 {
+		t.Errorf("unsaved credentials listed: %+v", list)
 	}
 }

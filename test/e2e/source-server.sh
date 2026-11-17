@@ -60,6 +60,11 @@ check "app syncs through the Source Server" '[ $rc -eq 0 ]'
 check "the file from Git is mounted" 'docker logs $(docker ps -q --filter label=dev.omegacd.application=e2e-src) 2>&1 | grep -q "from the source server"'
 check "the Source Server cloned the repository, the Control Plane did not" '[ -d "$T/src-data/repos" ] && [ ! -d "$T/data/repos" ]'
 check "diff works through it" '"$BIN" app diff e2e-src >/dev/null 2>&1'
+"$BIN" app create e2e-src-bad --repo "$REPO" --path nowhere --host box >/dev/null 2>&1
+"$BIN" app sync e2e-src-bad --wait --timeout 1m >/dev/null 2>&1
+check "the Source Server logs a render it can't make at Warn, with the reason (Q136)" \
+  'grep "level=WARN" "$T/source.log" | grep "source server request failed" | grep nowhere | grep -q "not found"'
+"$BIN" app delete e2e-src-bad --yes >/dev/null 2>&1
 access=$(curl -sf "${H[@]}" -d "{\"repoURL\":\"$REPO\"}" $API/repos/check)
 check "the repository access check goes through it" 'echo "$access" | grep -q "\"access\":\"public\""'
 
