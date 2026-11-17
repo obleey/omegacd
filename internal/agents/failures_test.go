@@ -279,9 +279,7 @@ func TestHostChangedTold(t *testing.T) {
 	}
 	ctx := t.Context()
 	key := approvedAgent(t, h, st, url, "web") // Hello, connected, approved, left
-	if count() < 4 {
-		t.Fatalf("told %d times through enrollment", count())
-	}
+	more("enrollment, through the Agent leaving", 3) // leaving is told after the connection ends: wait for it
 	c, _ := agent(t, url, key, "", nil)
 	got := reading(c)
 	n := count()
