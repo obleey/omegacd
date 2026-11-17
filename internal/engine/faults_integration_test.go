@@ -184,6 +184,7 @@ func TestEngineFailures(t *testing.T) {
 		}
 	})
 	for _, tc := range []struct{ name, method, pattern, want string }{
+		{"listing the containers", "GET", "/containers/json", "list containers"},
 		{"inspecting a container", "GET", "/containers/*/json", "inspect container"},
 		{"listing the networks", "GET", "/networks", "list networks"},
 		{"listing the volumes", "GET", "/volumes", "list volumes"},

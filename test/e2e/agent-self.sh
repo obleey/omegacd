@@ -17,6 +17,7 @@ cleanup() {
   for a in $SELF e2e-other; do "$BIN" app delete $a --yes >/dev/null 2>&1; done
   docker compose -p e2e-other down >/dev/null 2>&1
   docker compose -p $SELF -f "$T/agent.yaml" down >/dev/null 2>&1
+  docker rmi omegacd-e2e-agent:self >/dev/null 2>&1
   # the Agent ran as root: what it made goes the same way
   docker run --rm -v "$T:$T" busybox:1.38 rm -rf "$T/work" "$T/state" >/dev/null 2>&1
   kill $SRV 2>/dev/null; wait $SRV 2>/dev/null; rm -rf "$T"
@@ -44,10 +45,12 @@ export OMEGACD_TOKEN=$(curl -sf -b "$T/j" -H 'Content-Type: application/json' -H
 # where the e2e binary writes it. Its own network, so its hostname is its container ID; a sidecar in its network
 # namespace forwards its loopback to the Control Plane on this machine (plain http only over loopback, Q95)
 INVITE=$("$BIN" host add box | grep -o 'omegacd-invite-[0-9a-f]*' | head -1)
+# an image of its own, which this test can take away
+docker pull -q busybox:1.38 >/dev/null && docker tag busybox:1.38 omegacd-e2e-agent:self
 cat > "$T/agent.yaml" <<EOF
 services:
   agent:
-    image: busybox:1.38
+    image: omegacd-e2e-agent:self
     command: ["/omegacd", "agent"]
     extra_hosts: ["host.docker.internal:host-gateway"]
     environment:
@@ -98,10 +101,14 @@ docker run --rm -v "$T:$T" busybox:1.38 rm -rf "$T/work/e2e-other"
 # it fails to start (a folder can't be mounted where the file was), having made the folder: as after a reboot
 docker restart $(docker ps -aq --filter label=com.docker.compose.project=e2e-other) >/dev/null 2>&1
 check "Docker made the missing file a folder" '[ -d "$T/work/e2e-other/conf.txt" ]'
+docker rmi -f omegacd-e2e-agent:self >/dev/null # its image pruned meanwhile: it can't reclaim
 docker compose -p $SELF -f "$T/agent.yaml" start agent >/dev/null 2>&1
-check "the Agent reclaims the work dir from Docker's placeholders with its own image" 'waitlog "reclaim the work dir from Docker"'
+check "an Agent whose own image is gone says it can't reclaim the work dir" 'waitlog "restore failed; fix the cause" && agentlog | grep "restore failed" | grep -q "reclaim .*/work/e2e-other: .*No such image"'
+docker compose -p $SELF -f "$T/agent.yaml" stop agent >/dev/null 2>&1
+docker tag busybox:1.38 omegacd-e2e-agent:self
+docker compose -p $SELF -f "$T/agent.yaml" start agent >/dev/null 2>&1 # restarted, as the error says
 running() { [ -f "$T/work/e2e-other/conf.txt" ] && docker logs "$(docker ps -q --filter label=com.docker.compose.project=e2e-other)" 2>&1 | grep -q "conf from git"; }
-check "and restores the app: its file back, read by its container" 'for _ in $(seq 150); do running && break; sleep 0.2; done; running'
+check "with its image back it reclaims the work dir from Docker's placeholders and restores the app: its file back, read by its container" 'for _ in $(seq 150); do running && break; sleep 0.2; done; running'
 
 # an Agent container whose hostname isn't its ID can't find itself to check its work dir's path: it says what to do
 out=$(docker run --rm --hostname not-its-id -v "$LBIN:/omegacd:ro" -v /var/run/docker.sock:/var/run/docker.sock \

@@ -159,7 +159,7 @@ func (ag *Agent) serve(ctx context.Context, conn *wire.Conn, c *Connection) erro
 			out = append(out, &agentv1.Envelope{Body: &agentv1.Envelope_ChallengeResponse{ChallengeResponse: &agentv1.ChallengeResponse{
 				PublicKey: c.Key.Public().(ed25519.PublicKey), Signature: sig}}})
 			for _, o := range out {
-				if err := conn.Send(ctx, o); err != nil {
+				if err := conn.Send(ctx, o); err != nil { // coverage: unreachable, Send only queues; a connection gone is what this loop's next Recv reports
 					return err
 				}
 			}
