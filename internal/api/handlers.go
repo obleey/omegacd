@@ -427,6 +427,23 @@ func (s *server) deleteHost(w http.ResponseWriter, r *http.Request) {
 	respond(w, http.StatusNoContent, nil, err)
 }
 
+// renameHost renames a Host no Application uses (Q162); its Agent's connection is closed, as the hub knows it by
+// name, and the Agent reconnects under the new one.
+func (s *server) renameHost(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := decode(w, r, &req); err != nil {
+		writeError(w, err)
+		return
+	}
+	err := s.Controller.RenameHost(r.Context(), r.PathValue("name"), req.Name)
+	if err == nil && s.Agents != nil {
+		s.Agents.Disconnect(r.PathValue("name"))
+	}
+	respond(w, http.StatusNoContent, nil, err)
+}
+
 // hostKeys is the public half of the Host's Host Key, from its Agent (Q108).
 func (s *server) hostKeys(w http.ResponseWriter, r *http.Request) {
 	keys, err := s.Controller.HostKeys(r.Context(), r.PathValue("name"))

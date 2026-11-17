@@ -1364,6 +1364,29 @@ func (c *Controller) DeleteHost(ctx context.Context, name string) error {
 	return nil
 }
 
+// RenameHost renames a Host no Application uses (Q53, Q162): Applications name their Host in Git.
+func (c *Controller) RenameHost(ctx context.Context, old, name string) error {
+	name = strings.TrimSpace(name)
+	if err := domain.CheckName(name); err != nil {
+		return err
+	}
+	byHost, err := c.appsByHost(ctx)
+	if err != nil {
+		return err
+	}
+	if apps := byHost[old]; len(apps) > 0 {
+		return fmt.Errorf("%w: host %q is used by Applications %s: a Host is renamed only while none uses it",
+			domain.ErrInvalid, old, strings.Join(apps, ", "))
+	}
+	if err := c.cfg.Store.RenameHost(ctx, old, name); err != nil {
+		return err
+	}
+	c.cfg.Log.InfoContext(ctx, "host renamed", "host", old, "to", name)
+	c.HostChanged(ctx, old)
+	c.HostChanged(ctx, name)
+	return nil
+}
+
 func (c *Controller) CheckRepo(ctx context.Context, repoURL string) (domain.RepoAccess, error) {
 	repoURL = strings.TrimSpace(repoURL)
 	if repoURL == "" {

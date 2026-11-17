@@ -18,7 +18,7 @@ line `host add` prints, and a `docker run` of the published image with the same 
 **Done when:** an admin can enroll a Host end to end from the UI, copying one command.
 
 ### M5-02 · Host cards
-**Status:** todo
+**Status:** done (2026-11-17, PR #143)
 **Depends on:** M5-01, M3-04
 
 Name and hostname, online or last seen, Agent version (outdated flag), engine badge (Docker/Podman + version),
@@ -27,6 +27,9 @@ unlock action, IP allowlist editor; rename only while no Application uses the Ho
 The Host's **public Host Key** (`age1…`, the Agent's, registered at enrollment) with **one-click copy**, and its
 `.sops.yaml` rule ready to copy, plus **Copy .sops.yaml for all Hosts**, as v0.1's Keys dialog has: so developers
 encrypt secrets for a Host without asking anyone (the CLI has it in `omegacd host list`; M6-08 writes the file).
+Cards replace M5-01's table (Q161); rename through the API and `omegacd host rename` (Q162); `outdated` decided by
+the Control Plane (Q163); confirmations (Q164); the allowlist editor shows the Agent's last address (Q165); the e2e
+(Q166).
 
 **Done when:** every field is live over SSE, each action works with a confirmation where it's destructive, and a
 secret encrypted with the copied key (or the copied `.sops.yaml` rule) deploys to that Host.

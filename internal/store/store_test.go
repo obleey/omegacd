@@ -327,6 +327,27 @@ func TestHosts(t *testing.T) {
 	wantErr(t, s.DeleteHost(ctx, "prod"), domain.ErrNotFound)
 }
 
+// A renamed Host keeps its invite (Q162); a name taken or a Host that isn't there is refused.
+func TestRenameHost(t *testing.T) {
+	s, _ := open(t)
+	now := time.Now()
+	invite, err := s.CreateInvite(ctx, "web", now.Add(time.Hour))
+	must(t, err)
+	_, err = s.CreateInvite(ctx, "db", now.Add(time.Hour))
+	must(t, err)
+	wantErr(t, s.RenameHost(ctx, "web", "db"), domain.ErrAlreadyExists)
+	wantErr(t, s.RenameHost(ctx, "gone", "x"), domain.ErrNotFound)
+	must(t, s.RenameHost(ctx, "web", "web-1"))
+	if _, err := s.GetHost(ctx, "web"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("the old name: %v", err)
+	}
+	h, err := s.Enroll(ctx, invite, []byte("key-1"), "age1web", now)
+	must(t, err)
+	if h.Name != "web-1" {
+		t.Fatalf("the invite enrolled %+v", h)
+	}
+}
+
 func TestEnrollment(t *testing.T) {
 	s, _ := open(t)
 	now := time.Now()

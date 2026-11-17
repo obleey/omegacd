@@ -521,3 +521,21 @@ is declared. Their details (syntax, UI, messages) are decided when each is built
   `OMEGACD_AGENT_ALLOW_ROOT=true`: root in a container holding the socket is root on the Host already.
 - **Q160** Add Host's commands use an address field prefilled with the browser's address; opened over plain http on
   another address than localhost, the dialog warns that Agents connect over https only (Q95).
+
+## Host cards (before M5-02, 2026-11-17)
+
+- **Q161** The Hosts page shows one card per Host in a grid (one column on a phone), in place of M5-01's table.
+- **Q162** A Host is renamed with `POST /api/settings/hosts/{name}/rename` and `omegacd host rename OLD NEW`, refused
+  while an Application uses it (Q53). The Agent is found by its key, not its name; the rename drops its live
+  connection, as the hub tracks connections by name, and the Agent reconnects under the new name.
+- **Q163** "Agent outdated" (Q41) is decided by the Control Plane: `outdated` in the Agent's info when it is older than
+  the Control Plane but still served; a development build is never outdated. `host list` shows it; M5-03's badge
+  reuses it.
+- **Q164** Revoke (delete) confirms in a dialog saying the Agent is cut off and enrolls again while its Applications
+  keep running; Unlock confirms naming the two connections (Q75); Rotate key needs no confirmation and is enabled only
+  while the Agent is connected.
+- **Q165** The allowlist editor takes one address or CIDR per line, empty for any, validated by the server as
+  `host allow` is; it shows the address the Agent last connected from, recorded with the Agent's info (`address`).
+- **Q166** M5-02's e2e: `secrets.sh` encrypts with the `.sops.yaml` rule from `GET /api/settings/hosts/{name}/keys`
+  (what the UI copies) and the secret deploys to that Host; `enrollment.sh` drives rename, rotate, unlock and the
+  allowlist through the API.

@@ -22,7 +22,7 @@ var everyCommand = [][]string{
 	{"app", "sync", "web"}, {"app", "refresh", "web"}, {"app", "diff", "web"}, {"app", "history", "web"},
 	{"app", "rollback", "web", "1"}, {"app", "wait", "web"}, {"app", "logs", "web"}, {"app", "export", "web"},
 	{"host", "list"}, {"host", "add", "edge"}, {"host", "approve", "edge", "SHA256:x"}, {"host", "rotate", "edge"},
-	{"host", "allow", "edge"}, {"host", "unlock", "edge"}, {"host", "delete", "edge"}, {"host", "key", "show", "edge"},
+	{"host", "allow", "edge"}, {"host", "unlock", "edge"}, {"host", "rename", "edge", "edge-1"}, {"host", "delete", "edge"}, {"host", "key", "show", "edge"},
 }
 
 // Every command refuses a flag it doesn't know (with its usage), says to log in without a server and token, and fails

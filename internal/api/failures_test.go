@@ -133,6 +133,7 @@ func TestBadRequests(t *testing.T) {
 		{"DELETE", "/api/settings/repo-credentials/2", "", 404},
 		{"DELETE", "/api/settings/repo-credentials/1", "", 204},
 		{"POST", "/api/settings/hosts/edge/approve", "not json", 400},
+		{"POST", "/api/settings/hosts/edge/rename", "not json", 400},
 		{"PUT", "/api/settings/hosts/edge/allow-ips", "not json", 400},
 		{"POST", "/api/settings/registry-credentials", `{"username":"x"}`, 400},
 		{"PUT", "/api/settings/registry-credentials/9", `{"registry":"ghcr.io"}`, 404},

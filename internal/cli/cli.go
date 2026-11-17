@@ -101,6 +101,7 @@ func init() { // init breaks the cycle commands → run funcs → flags → comm
 		"host approve":  {"host approve NAME FINGERPRINT   (after comparing it with the fingerprint the Agent printed)", (*CLI).hostApprove},
 		"host rotate":   {"host rotate NAME   (the Host's connected Agent makes a new signing key; prints its fingerprint)", (*CLI).hostRotate},
 		"host allow":    {"host allow NAME [CIDR]...   (the addresses its Agent may connect from, e.g. 203.0.113.7 or 10.0.0.0/8; none: anywhere)", (*CLI).hostAllow},
+		"host rename":   {"host rename NAME NEW   (only while no Application uses it; its Agent reconnects under the new name)", (*CLI).hostRename},
 		"host unlock":   {"host unlock NAME   (a Host locked by two connections with its key: when the second had a harmless cause)", (*CLI).hostUnlock},
 		"host delete":   {"host delete NAME   (revokes its Agent's key and closes its connection; a key that may be stolen: delete, then add the Host again)", (*CLI).hostDelete},
 		"host key show": {"host key show HOST", (*CLI).hostKeyShow},
@@ -108,7 +109,7 @@ func init() { // init breaks the cycle commands → run funcs → flags → comm
 }
 
 var order = []string{"login", "logout", "version", "keygen", "source-certs", "import", "app list", "app get", "app create", "app delete", "app sync", "app refresh",
-	"app diff", "app history", "app rollback", "app wait", "app logs", "app export", "host list", "host add", "host approve", "host rotate", "host allow", "host unlock", "host delete",
+	"app diff", "app history", "app rollback", "app wait", "app logs", "app export", "host list", "host add", "host approve", "host rotate", "host allow", "host unlock", "host rename", "host delete",
 	"host key show"}
 
 func (c *CLI) usage() {

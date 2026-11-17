@@ -119,6 +119,11 @@ CREATE TABLE renders (
 	tree TEXT PRIMARY KEY,
 	files TEXT NOT NULL
 );
+`, `
+-- M5-02: a renamed Host keeps its invite (Q162); the foreign key is checked when the statement ends, trigger included
+CREATE TRIGGER hosts_rename AFTER UPDATE OF name ON hosts BEGIN
+	UPDATE invites SET host = NEW.name WHERE host = OLD.name;
+END;
 `}
 
 type Store struct {
@@ -834,6 +839,10 @@ func (s *Store) ApproveHost(ctx context.Context, host, fingerprint string) error
 
 func (s *Store) DeleteHost(ctx context.Context, name string) error {
 	return affected(s.db.ExecContext(ctx, `DELETE FROM hosts WHERE name = ?`, name))
+}
+
+func (s *Store) RenameHost(ctx context.Context, old, name string) error {
+	return affected(s.db.ExecContext(ctx, `UPDATE hosts SET name = ? WHERE name = ?`, name, old))
 }
 
 // ---- tokens ----

@@ -128,6 +128,20 @@ check "with its address in the list, the Agent connects again" \
 check "an invalid entry is refused" '! "$BIN" host allow web 10.9.0.0/99 >/dev/null 2>&1'
 check "no list: anywhere" '"$BIN" host allow web | grep -q "from anywhere" && ! "$BIN" host list | grep -q "^web .*only from"'
 
+# M5-02: renamed as a Host card renames it (Q162), while its Agent is connected: the Agent reconnects under the new name
+check "the Agent's address is recorded with its info (Q165)" '"$BIN" host list -o json | python3 -c "
+import json,sys; assert [h for h in json.load(sys.stdin) if h[\"name\"]==\"web\"][0][\"agent\"][\"address\"]==\"127.0.0.1\""'
+: > "$T/web.log"
+code=$(curl -s -o /dev/null -w '%{http_code}' -b "$T/j" -H 'Content-Type: application/json' -H 'X-Requested-With: omegacd' \
+  -d '{"name":"web-1"}' $API/settings/hosts/web/rename)
+check "renamed through the API: its Agent's connection is closed and it reconnects under the new name" \
+  '[ "$code" = 204 ] && waitfor "$T/web.log" "connected to the Control Plane, approved" 70 && "$BIN" host list | grep -q "^web-1 .*true .*approved $NEWFP"'
+: > "$T/web.log"
+check "host rename renames it back" '"$BIN" host rename web-1 web | grep -q "Host web-1 renamed web" &&
+  waitfor "$T/web.log" "connected to the Control Plane, approved" 70 && "$BIN" host list | grep -q "^web .*true"'
+out=$("$BIN" host rename web Bad 2>&1); rc=$?
+check "an invalid name is refused" '[ $rc -ne 0 ] && "$BIN" host list | grep -q "^web "'
+
 check "host delete revokes the key: the live connection closes" '"$BIN" host delete web | grep -q "key is revoked" && waitfor "$T/web.log" "no Host has the key" 70'
 
 check "no invite in any log (Q62)" '! grep -qF "$INVITE" "$T/server.log" "$T/web.log" "$T/thief.log" "$T/stranger.log" "$T/clone.log"'

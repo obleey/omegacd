@@ -89,6 +89,7 @@ func New(cfg Config) http.Handler {
 	mux.HandleFunc("DELETE /api/settings/hosts/{name}", s.deleteHost)
 	mux.HandleFunc("POST /api/settings/hosts/{name}/invite", s.inviteHost)
 	mux.HandleFunc("POST /api/settings/hosts/{name}/approve", s.approveHost)
+	mux.HandleFunc("POST /api/settings/hosts/{name}/rename", s.renameHost)
 	mux.HandleFunc("POST /api/settings/hosts/{name}/rotate", s.rotateHost)
 	mux.HandleFunc("POST /api/settings/hosts/{name}/unlock", s.unlockHost)
 	mux.HandleFunc("PUT /api/settings/hosts/{name}/allow-ips", s.setHostAllowIPs)

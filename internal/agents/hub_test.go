@@ -445,17 +445,48 @@ func TestRevocation(t *testing.T) {
 	refused(t, e, "no Host has the key")
 }
 
+// Q162: a renamed Host's connection is closed; its Agent, found by its key, reconnects under the new name.
+func TestRenamedHostReconnects(t *testing.T) {
+	h, st, url := newHub(t)
+	key := approvedAgent(t, h, st, url, "web")
+	c, _ := agent(t, url, key, "", nil)
+	got := reading(c)
+	if err := st.RenameHost(t.Context(), "web", "web-1"); err != nil {
+		t.Fatal(err)
+	}
+	h.Disconnect("web")
+	select {
+	case _, ok := <-got:
+		if ok {
+			t.Fatal("got a message instead of the close")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("still connected under the old name")
+	}
+	_, e := agent(t, url, key, "", nil)
+	if !e.GetEnrollmentStatus().GetApproved() {
+		t.Fatalf("reconnecting: %v", e)
+	}
+	if host, _ := st.GetHost(t.Context(), "web-1"); host.Agent == nil || !host.Approved {
+		t.Fatalf("renamed: %+v", host)
+	}
+}
+
 // Q41: Agents of the Control Plane's minor version and one behind are served; two behind and newer ones are refused
 // with what to upgrade. Every Agent's Hello is recorded, a refused one with the reason.
 func TestVersionHandshake(t *testing.T) {
 	h, st, url := newHub(t)
 	h.version = "v0.3.1"
 	key := approvedAgent(t, h, st, url, "web")
-	for _, tc := range []struct{ version, refused string }{
-		{"v0.3.0", ""},
-		{"v0.2.7", ""},
-		{"v0.1.9", "Agent v0.1.9 is too old for this Control Plane (v0.3.1), which serves Agents from v0.2 on: upgrade the Agent"},
-		{"v0.4.0", "Agent v0.4.0 is newer than this Control Plane (v0.3.1): upgrade the Control Plane to v0.4 or later first"},
+	for _, tc := range []struct {
+		version, refused string
+		outdated         bool // older but served (Q163)
+	}{
+		{"v0.3.1", "", false},
+		{"v0.3.0", "", true},
+		{"v0.2.7", "", true},
+		{"v0.1.9", "Agent v0.1.9 is too old for this Control Plane (v0.3.1), which serves Agents from v0.2 on: upgrade the Agent", false},
+		{"v0.4.0", "Agent v0.4.0 is newer than this Control Plane (v0.3.1): upgrade the Control Plane to v0.4 or later first", false},
 	} {
 		hello := &agentv1.Hello{AgentVersion: tc.version, ProtocolVersion: 1, Hostname: "web-1", Os: "linux", Arch: "arm64",
 			Engine: "podman", EngineVersion: "5.4.2", Rootless: true}
@@ -471,7 +502,8 @@ func TestVersionHandshake(t *testing.T) {
 		a := host.Agent
 		if a == nil || a.Version != tc.version || a.Hostname != "web-1" || a.OS != "linux" || a.Arch != "arm64" ||
 			a.Engine != "podman" || a.EngineVersion != "5.4.2" || !a.Rootless || a.Protocol != 1 || a.SeenAt.IsZero() ||
-			!strings.Contains(a.Refused, tc.refused) || (tc.refused == "") != (a.Refused == "") {
+			!strings.Contains(a.Refused, tc.refused) || (tc.refused == "") != (a.Refused == "") || a.Outdated != tc.outdated ||
+			a.Address != "127.0.0.1" {
 			t.Fatalf("%s: recorded %+v", tc.version, a)
 		}
 	}

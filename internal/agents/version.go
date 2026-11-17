@@ -29,6 +29,12 @@ func compatible(cp, agent string) error {
 	}
 }
 
+// outdated is an Agent older than its Control Plane, both releases (Q163): served, if compatible, but to upgrade.
+func outdated(cp, agent string) bool {
+	release := func(v string) bool { return semver.IsValid(v) && semver.Prerelease(v) == "" && semver.Build(v) == "" }
+	return release(cp) && release(agent) && semver.Compare(agent, cp) < 0
+}
+
 func majorMinor(v string) (int, int) {
 	major, minor, _ := strings.Cut(strings.TrimPrefix(semver.MajorMinor(v), "v"), ".")
 	a, _ := strconv.Atoi(major)
