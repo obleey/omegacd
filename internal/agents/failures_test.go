@@ -242,3 +242,51 @@ func TestOutboxNotApplied(t *testing.T) {
 	waitLog(t, logs, `level=ERROR msg="apply the agent's report" seq=1 err="database is locked" host=web`)
 	waitLog(t, logs, `level=ERROR msg="apply the agent's removal" seq=2 err="database is locked" host=web`)
 }
+
+// Q153: the hub tells HostChanged of each change to a Host: its Agent's Hello, connecting and leaving, approval, a new
+// allowlist, a rotated key, a lock and an unlock.
+func TestHostChangedTold(t *testing.T) {
+	h, st, url := newHub(t)
+	var mu sync.Mutex
+	told := 0
+	h.HostChanged = func(_ context.Context, host string) {
+		mu.Lock()
+		defer mu.Unlock()
+		if host == "web" {
+			told++
+		}
+	}
+	count := func() int { mu.Lock(); defer mu.Unlock(); return told }
+	more := func(what string, before int) {
+		t.Helper()
+		for deadline := time.Now().Add(5 * time.Second); count() <= before; time.Sleep(5 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatalf("not told of %s", what)
+			}
+		}
+	}
+	ctx := t.Context()
+	key := approvedAgent(t, h, st, url, "web") // Hello, connected, approved, left
+	if count() < 4 {
+		t.Fatalf("told %d times through enrollment", count())
+	}
+	c, _ := agent(t, url, key, "", nil)
+	got := reading(c)
+	n := count()
+	if _, err := h.SetAllowlist(ctx, "web", []string{"127.0.0.1"}); err != nil {
+		t.Fatal(err)
+	}
+	more("the allowlist", n)
+	n = count()
+	go h.Rotate(ctx, "web")
+	rotateWith(t, c, got, newKey(), key)
+	more("the rotation", n)
+	n = count()
+	agent(t, url, key, "", nil) // the old key, still the Host's previous one, while the live connection answers: locked
+	more("the lock", n)
+	n = count()
+	if err := h.Unlock(ctx, "web"); err != nil {
+		t.Fatal(err)
+	}
+	more("the unlock", n)
+}

@@ -64,6 +64,7 @@
 
 	const nav = [
 		{ href: '/', label: 'Applications', icon: 'app', match: (p: string) => p === '/' || p.startsWith('/apps') },
+		{ href: '/hosts', label: 'Hosts', icon: 'server', match: (p: string) => p.startsWith('/hosts') },
 		{ href: '/settings', label: 'Settings', icon: 'settings', match: (p: string) => p.startsWith('/settings') }
 	] as const;
 </script>

@@ -392,3 +392,53 @@ func TestOperatorLines(t *testing.T) {
 	r.c.finishDeleting(ctx, "web")
 	waitLog(t, logs, `level=ERROR msg="finish deleting" app=web err="volume in use"`)
 }
+
+// Q153: a Host's change is shown live, as its view, with the Applications on it; a Host gone, as deleted; one the store
+// can't read is logged. Inviting and deleting a Host show it too.
+func TestHostChangedEvents(t *testing.T) {
+	r := newRig(t)
+	ctx := t.Context()
+	logs := logTo(r)
+	r.c.CreateApp(ctx, app("web"))
+	events, stop := r.c.Subscribe()
+	defer stop()
+	next := func() domain.Event {
+		t.Helper()
+		select {
+		case e := <-events:
+			return e
+		case <-time.After(5 * time.Second):
+			t.Fatal("no event")
+			return domain.Event{}
+		}
+	}
+	r.c.HostChanged(ctx, "edge")
+	if e := next(); e.Type != "host" || e.Data.(domain.HostView).Name != "edge" || e.Data.(domain.HostView).Apps[0] != "web" {
+		t.Fatalf("%+v", e)
+	}
+	if _, _, err := r.c.InviteHost(ctx, "new"); err != nil {
+		t.Fatal(err)
+	}
+	if e := next(); e.Type != "host" || e.Data.(domain.HostView).Name != "new" {
+		t.Fatalf("invited: %+v", e)
+	}
+	if err := r.c.DeleteHost(ctx, "new"); err != nil {
+		t.Fatal(err)
+	}
+	if e := next(); e.Type != "host-deleted" || e.Data != "new" {
+		t.Fatalf("deleted: %+v", e)
+	}
+	r.st.breaks("GetHost", errLocked)
+	r.c.HostChanged(ctx, "edge")
+	r.st.breaks("GetHost", nil)
+	r.st.breaks("ListApps", errLocked)
+	r.c.HostChanged(ctx, "edge")
+	if strings.Count(logs.String(), `level=ERROR msg="a host's change not shown" host=edge err="database is locked"`) != 2 {
+		t.Fatalf("logs:\n%s", logs.String())
+	}
+	r.st.breaks("ListApps", nil)
+	r.st.breaks("DeleteHost", errLocked)
+	if err := r.c.DeleteHost(ctx, "edge2"); !errors.Is(err, errLocked) {
+		t.Errorf("delete: %v", err)
+	}
+}

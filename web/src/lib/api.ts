@@ -146,14 +146,32 @@ export interface HostStatus {
 	os?: string;
 }
 
+/** What a Host's Agent said about itself when it last connected (Q41). */
+export interface AgentInfo {
+	version: string;
+	protocol: number;
+	hostname?: string;
+	os?: string;
+	arch?: string;
+	engine?: string; // docker or podman
+	engineVersion?: string;
+	rootless?: boolean;
+	seenAt: string;
+	leftAt?: string; // when its connection ended; none while connected
+	refused?: string; // why the Control Plane refused it, e.g. an outdated version
+}
+
 /** A Host and its Agent (Q9): every Host is reached through one. */
 export interface HostView {
 	name: string;
+	createdAt: string;
 	fingerprint?: string; // the Agent's signing key; none while the Host is only invited
 	ageRecipient?: string; // the public half of its Host Key, born on its Agent (Q108)
 	approved: boolean;
 	locked?: { address: string; since: string }[];
-	agent?: { version: string };
+	allowIPs?: string[];
+	agent?: AgentInfo;
+	unmanaged?: string[]; // Applications its Agent runs that OmegaCD doesn't know (Q118)
 	status: HostStatus;
 	apps: string[];
 }

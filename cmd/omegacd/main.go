@@ -136,8 +136,8 @@ func run(log *slog.Logger) error {
 		Log:          log.With("component", "controller"),
 	})
 	hub.Blob = ctl.Blob // the files as rendered, secrets still encrypted: only the Agent decrypts (Q19)
-	hub.Reported, hub.Resynced, hub.Removed, hub.Progress, hub.Status = ctl.AgentReported, ctl.Resynced, ctl.AgentRemoved,
-		ctl.AgentProgress, ctl.AgentStatusChanged
+	hub.Reported, hub.Resynced, hub.Removed, hub.Progress, hub.Status, hub.HostChanged = ctl.AgentReported, ctl.Resynced,
+		ctl.AgentRemoved, ctl.AgentProgress, ctl.AgentStatusChanged, ctl.HostChanged
 
 	if err := api.EnsureAdmin(ctx, st, os.Getenv("OMEGACD_ADMIN_PASSWORD"), log.With("component", "api")); err != nil {
 		return err
