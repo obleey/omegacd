@@ -220,11 +220,11 @@ the Source Server's operator-facing Warn and Error lines tested (Q132); Q136–Q
 the hub's operator-facing Warn and Error lines tested (Q132); Q142–Q146.
 
 ### M4-10d · controller, api, cmd/omegacd to 100%
-**Status:** todo
+**Status:** done (2026-11-17, PR #139)
 **Depends on:** M4-10a
 
 **Done when:** `internal/controller`, `api` and `cmd/omegacd` are at 100% (or marked, Q130) with no silent path, the
-server's operator-facing Warn and Error lines tested (Q132).
+server's operator-facing Warn and Error lines tested (Q132); Q147–Q149.
 
 ### M4-10e · cli, importer to 100%; CI requires 100%
 **Status:** todo

@@ -41,6 +41,7 @@ type fakeStore struct {
 	saveErr      error                         // SaveRender fails with it
 	createOpErr  error                         // CreateOp fails with it
 	statusErr    error                         // AgentStatus fails with it
+	fail         map[string]error              // the methods named fail with their error (breaks)
 	mu           sync.Mutex
 	apps         map[string]domain.Application
 	ops          []domain.SyncOperation
@@ -48,10 +49,26 @@ type fakeStore struct {
 }
 
 func newStore() *fakeStore {
-	return &fakeStore{apps: map[string]domain.Application{}, hosts: map[string]domain.Host{}}
+	return &fakeStore{apps: map[string]domain.Application{}, hosts: map[string]domain.Host{}, fail: map[string]error{}}
+}
+
+// breaks makes method fail with err from now on; nil mends it.
+func (s *fakeStore) breaks(method string, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fail[method] = err
+}
+
+func (s *fakeStore) broken(method string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.fail[method]
 }
 
 func (s *fakeStore) ListHosts(context.Context) ([]domain.Host, error) {
+	if err := s.broken("ListHosts"); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return slices.Collect(maps.Values(s.hosts)), nil
@@ -73,6 +90,9 @@ func (s *fakeStore) DeleteHost(_ context.Context, n string) error {
 }
 
 func (s *fakeStore) ListApps(context.Context) ([]domain.Application, error) {
+	if err := s.broken("ListApps"); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var out []domain.Application
@@ -82,6 +102,9 @@ func (s *fakeStore) ListApps(context.Context) ([]domain.Application, error) {
 	return out, nil
 }
 func (s *fakeStore) GetApp(_ context.Context, n string) (domain.Application, error) {
+	if err := s.broken("GetApp"); err != nil {
+		return domain.Application{}, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	a, ok := s.apps[n]
@@ -91,6 +114,9 @@ func (s *fakeStore) GetApp(_ context.Context, n string) (domain.Application, err
 	return a, nil
 }
 func (s *fakeStore) CreateApp(_ context.Context, a domain.Application) error {
+	if err := s.broken("CreateApp"); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.apps[a.Name]; ok {
@@ -100,12 +126,18 @@ func (s *fakeStore) CreateApp(_ context.Context, a domain.Application) error {
 	return nil
 }
 func (s *fakeStore) UpdateApp(_ context.Context, a domain.Application) error {
+	if err := s.broken("UpdateApp"); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.apps[a.Name] = a
 	return nil
 }
 func (s *fakeStore) DeleteApp(_ context.Context, n string) error {
+	if err := s.broken("DeleteApp"); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.apps, n)
@@ -146,6 +178,9 @@ func (s *fakeStore) FinishOp(_ context.Context, id int64, p domain.OpPhase, m st
 	return nil
 }
 func (s *fakeStore) GetOp(_ context.Context, id int64) (domain.SyncOperation, error) {
+	if err := s.broken("GetOp"); err != nil {
+		return domain.SyncOperation{}, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if id < 1 || int(id) > len(s.ops) {
@@ -168,6 +203,9 @@ func (s *fakeStore) ListOps(_ context.Context, app string) ([]domain.SyncOperati
 	return out, nil
 }
 func (s *fakeStore) LastSucceededOp(ctx context.Context, app string) (domain.SyncOperation, error) {
+	if err := s.broken("LastSucceededOp"); err != nil {
+		return domain.SyncOperation{}, err
+	}
 	ops, _ := s.ListOps(ctx, app)
 	for _, op := range ops {
 		if op.Phase == domain.OpSucceeded {
@@ -219,6 +257,7 @@ type fakeSource struct {
 	blobErr       error             // Blob fails with it
 	badHash       bool              // Render names files by a hash that isn't hex
 	warnings      []string          // Render's
+	diffErr       error             // Diff fails with it
 }
 
 func (g *fakeSource) Invalidate(string) {}
@@ -274,7 +313,7 @@ func (g *fakeSource) Blob(_ context.Context, hash string) ([]byte, error) {
 	return g.blobs[hash], nil
 }
 func (g *fakeSource) Diff(context.Context, string, string, string, string) (string, error) {
-	return "", nil
+	return "", g.diffErr
 }
 func (g *fakeSource) CheckAccess(_ context.Context, url string) (domain.RepoAccess, error) {
 	return domain.RepoAccess{Access: "public", Message: url}, nil
@@ -920,6 +959,9 @@ func (s *fakeStore) SetOpPhase(_ context.Context, id int64, p domain.OpPhase, m 
 	return nil
 }
 func (s *fakeStore) SupersedeWaitingOps(_ context.Context, app string, by int64) error {
+	if err := s.broken("SupersedeWaitingOps"); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for i := range s.ops {

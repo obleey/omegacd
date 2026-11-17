@@ -208,13 +208,13 @@ func gzipFile(ui fs.FS, name string, cache *sync.Map) ([]byte, error) {
 		return b.([]byte), nil
 	}
 	plain, err := fs.ReadFile(ui, name)
-	if err != nil {
+	if err != nil { // coverage: unreachable, uiHandler asks only for a file it just found in the embedded UI
 		return nil, err
 	}
 	var buf bytes.Buffer
 	zw, _ := gzip.NewWriterLevel(&buf, gzip.BestCompression)
 	zw.Write(plain)
-	if err := zw.Close(); err != nil {
+	if err := zw.Close(); err != nil { // coverage: unreachable, compressing into a bytes.Buffer
 		return nil, err
 	}
 	cache.Store(name, buf.Bytes())

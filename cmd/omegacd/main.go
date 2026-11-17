@@ -151,7 +151,7 @@ func run(log *slog.Logger) error {
 			"reconcile; set a secret, and the same one in your Git host's webhooks")
 	}
 	ui, err := fs.Sub(web.Build, "build")
-	if err != nil {
+	if err != nil { // coverage: unreachable, Sub fails only on an invalid path, and "build" is one
 		return err
 	}
 	srv := &http.Server{
@@ -284,11 +284,11 @@ func runAgent(log *slog.Logger) error {
 		return agent.New(db, cache, work, secrets, nil, log.With("component", "agent")).RestoreFiles(ctx)
 	}
 	if rollback && len(args) < 3 {
-		return listCached(ctx, agent.New(db, cache, work, secrets, nil, log.With("component", "agent")), db, args[1:])
+		return listCached(ctx, os.Stdout, agent.New(db, cache, work, secrets, nil, log.With("component", "agent")), db, args[1:])
 	}
 	if rollback {
 		eng, err := engine.New(engine.Config{Log: log.With("component", "engine")})
-		if err != nil {
+		if err != nil { // coverage: unreachable, engine.New only builds clients, which can't fail
 			return err
 		}
 		defer eng.Close()
@@ -298,10 +298,7 @@ func runAgent(log *slog.Logger) error {
 		fmt.Printf("%s rolled back to %s on this Host; the Control Plane shows it rolled back, its Auto-Sync off\n", args[1], args[2])
 		return nil
 	}
-	if runtime.GOOS == "darwin" {
-		log.Warn("macOS is for development only (Q61): Docker Desktop and OrbStack share folders ignoring owners and " +
-			"modes, so any container can read decrypted secrets, and there is no systemd; run Agents on Linux")
-	}
+	warnPlatform(log, runtime.GOOS)
 	for _, root := range append([]string{cfg.WorkDir}, cfg.WorkDirAllow...) {
 		if agent.WorkDirOnDisk(root) {
 			log.Warn("a work dir is not in RAM: decrypted secrets written there stay on disk, also across reboots; "+
@@ -310,7 +307,7 @@ func runAgent(log *slog.Logger) error {
 	}
 	apps, err := db.ListApps(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("the Agent's database %s: %w", filepath.Join(cfg.StateDir, "agent.db"), err)
 	}
 	detected, err := agent.DetectEngine(ctx)
 	if err != nil {
@@ -320,7 +317,7 @@ func runAgent(log *slog.Logger) error {
 			"os", detected.OS, "arch", detected.Arch)
 	}
 	eng, err := engine.New(engine.Config{Log: log.With("component", "engine")})
-	if err != nil {
+	if err != nil { // coverage: unreachable, engine.New only builds clients, which can't fail
 		return err
 	}
 	defer eng.Close()
@@ -352,9 +349,17 @@ func pollInterval(v string) (time.Duration, error) {
 	return d, nil
 }
 
-// listCached prints the cached Revisions of the Applications named (all when none), newest first, the deployed one
-// marked: what omegacd agent rollback can go back to.
-func listCached(ctx context.Context, ag *agent.Agent, db *agent.DB, names []string) error {
+// warnPlatform says at the Agent's start that goos is for development only, on macOS (Q61, Q149).
+func warnPlatform(log *slog.Logger, goos string) {
+	if goos == "darwin" {
+		log.Warn("macOS is for development only (Q61): Docker Desktop and OrbStack share folders ignoring owners and " +
+			"modes, so any container can read decrypted secrets, and there is no systemd; run Agents on Linux")
+	}
+}
+
+// listCached prints to w the cached Revisions of the Applications named (all when none), newest first, the deployed
+// one marked: what omegacd agent rollback can go back to.
+func listCached(ctx context.Context, w io.Writer, ag *agent.Agent, db *agent.DB, names []string) error {
 	if len(names) == 0 {
 		apps, err := db.ListApps(ctx)
 		if err != nil {
@@ -364,7 +369,7 @@ func listCached(ctx context.Context, ag *agent.Agent, db *agent.DB, names []stri
 			names = append(names, a.Name)
 		}
 		if len(names) == 0 {
-			fmt.Println("no Applications deployed on this Host")
+			fmt.Fprintln(w, "no Applications deployed on this Host")
 		}
 	}
 	for _, name := range names {
@@ -372,13 +377,13 @@ func listCached(ctx context.Context, ag *agent.Agent, db *agent.DB, names []stri
 		if err != nil {
 			return err
 		}
-		fmt.Println(name)
+		fmt.Fprintln(w, name)
 		for _, r := range revs {
 			mark := ""
 			if r.Revision == deployed {
 				mark = "  (deployed)"
 			}
-			fmt.Printf("  %s  %s%s\n", r.Revision, r.AddedAt.Local().Format("2006-01-02 15:04"), mark)
+			fmt.Fprintf(w, "  %s  %s%s\n", r.Revision, r.AddedAt.Local().Format("2006-01-02 15:04"), mark)
 		}
 	}
 	return nil
