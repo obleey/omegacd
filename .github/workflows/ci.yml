@@ -72,6 +72,17 @@ jobs:
         run: make proto && git diff --exit-code
       - run: go vet ./...
       - run: go vet -tags integration ./...
+      # the secrets tests decrypt with the sops CLI too; without it they skip, and their code goes uncovered (Q150)
+      - name: age and sops (pinned, sops at the version in go.mod)
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q age
+          arch=$(dpkg --print-architecture)
+          curl -fsSLo sops https://github.com/getsops/sops/releases/download/v3.13.3/sops-v3.13.3.linux.$arch
+          case $arch in
+            amd64) echo "e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b  sops" | sha256sum -c ;;
+            arm64) echo "53b0abacd38ef1b12a66d6c100956691b9cefce018d91f81e73ddf7438b94d77  sops" | sha256sum -c ;;
+          esac
+          sudo install sops /usr/local/bin/sops && rm sops
       - run: mkdir cover && echo "COVERPKG=./cmd/...,./internal/..." >> "$GITHUB_ENV"
       # with coverage (Q96): the Coverage job merges every kind of test's
       - run: go test -race -coverpkg="$COVERPKG" -coverprofile=cover/unit.out ./...

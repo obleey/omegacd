@@ -260,6 +260,14 @@ func TestConfigFailures(t *testing.T) {
 			t.Errorf("a config file it can't write: %+v", r)
 		}
 	}
+	// without XDG_CONFIG_HOME, the config is ~/.config's (GitHub's runners set XDG_CONFIG_HOME: tested here, not by luck)
+	home := t.TempDir()
+	if r := run(t, srv, map[string]string{"XDG_CONFIG_HOME": "", "HOME": home}, "", "login"); r.code != 0 {
+		t.Errorf("login with a home: %+v", r)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".config", "omegacd", "config.json")); err != nil {
+		t.Errorf("the config isn't in ~/.config: %v", err)
+	}
 	t.Setenv("HOME", "")
 	for _, cmd := range [][]string{{"login"}, {"logout"}} {
 		if r := run(t, srv, map[string]string{"XDG_CONFIG_HOME": "", "HOME": ""}, "", cmd...); r.code != 1 {
