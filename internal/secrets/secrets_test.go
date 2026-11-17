@@ -1,6 +1,7 @@
 package secrets
 
 import (
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -299,6 +300,7 @@ func skipUnlessRequired(t *testing.T, format string, args ...any) {
 // path that can't be written; and Encrypt refuses a file in its format that doesn't parse.
 func TestDecryptDirFailures(t *testing.T) {
 	id := newID(t)
+	pw := rand.Text() // a test password, new each run: none is ever committed
 	enc := func(t *testing.T, name, plain string) string {
 		t.Helper()
 		b, err := Encrypt([]byte(plain), name, []string{id.Recipient().String()})
@@ -329,7 +331,7 @@ func TestDecryptDirFailures(t *testing.T) {
 		}
 		return s[:j] + string(c) + s[j+1:]
 	}
-	env := enc(t, "db.sops.env", "DB_PASSWORD=s3cret-db-password-value\n")
+	env := enc(t, "db.sops.env", "DB_PASSWORD="+pw+"\n")
 
 	if _, err := (Decryptor{}).DecryptDir(t.TempDir(), []string{"not a key"}); err == nil {
 		t.Error("a key that doesn't parse")
@@ -346,11 +348,11 @@ func TestDecryptDirFailures(t *testing.T) {
 		"the MAC tampered": {map[string]string{"db.sops.env": flip(env, "sops_mac=", "tag:")}, "integrity check failed"},
 		"output a folder":  {map[string]string{"db.sops.env": env, "db.env": ""}, "db.env"},
 	} {
-		if err := decrypt(tc.files); err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), "s3cret") {
+		if err := decrypt(tc.files); err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), pw) {
 			t.Errorf("%s: %v, want %q", name, err, tc.want)
 		}
 	}
-	if err := decrypt(map[string]string{"app.sops.ini": enc(t, "app.sops.ini", "[db]\npassword = s3cret-ini-value\n")}); err != nil {
+	if err := decrypt(map[string]string{"app.sops.ini": enc(t, "app.sops.ini", "[db]\npassword = "+pw+"\n")}); err != nil {
 		t.Errorf("ini: %v", err)
 	}
 	if _, err := Encrypt([]byte("a: [\n"), "x.sops.yaml", []string{id.Recipient().String()}); err == nil {
