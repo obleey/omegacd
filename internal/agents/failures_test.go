@@ -27,8 +27,8 @@ type faultyStore struct {
 
 type faults struct {
 	confirm, record, lock, apply, left error
-	approve                      string
-	allow                        []string
+	approve                            string
+	allow                              []string
 }
 
 func (f *faultyStore) set(w faults) { f.mu.Lock(); f.what = w; f.mu.Unlock() }
@@ -278,7 +278,7 @@ func TestHostChangedTold(t *testing.T) {
 		}
 	}
 	ctx := t.Context()
-	key := approvedAgent(t, h, st, url, "web") // Hello, connected, approved, left
+	key := approvedAgent(t, h, st, url, "web")       // Hello, connected, approved, left
 	more("enrollment, through the Agent leaving", 3) // leaving is told after the connection ends: wait for it
 	c, _ := agent(t, url, key, "", nil)
 	got := reading(c)
