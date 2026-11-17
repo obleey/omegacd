@@ -166,6 +166,12 @@ func TestEngineFailures(t *testing.T) {
 			t.Fatalf("%v", err)
 		}
 	})
+	t.Run("listing the volumes for the prune", func(t *testing.T) { // its own: faulty proxies the DOCKER_HOST it finds
+		_, c := faulty(t, nil, fail("GET", "/volumes"))
+		if err := pruneUndeclared(ctx, logging.Discard, c, p, true); err == nil || !strings.Contains(err.Error(), "list volumes") {
+			t.Fatalf("%v", err)
+		}
+	})
 
 	t.Run("a container gone while the status is read is skipped (Q146)", func(t *testing.T) {
 		ls, err := e.Status(ctx, app) // web was recreated by the Sync above
