@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { HostView } from './api.ts';
-import { engineLabel, hostState, lastSeen, parseAllowlist, renameBlocked } from './hosts.ts';
+import { engineLabel, hostState, hostTone, lastSeen, parseAllowlist, renameBlocked } from './hosts.ts';
 
 const host = (h: Partial<HostView>): HostView =>
 	({ name: 'web', createdAt: '', approved: false, status: { name: 'web', connected: false }, apps: [], ...h }) as HostView;
@@ -13,6 +13,18 @@ test('a Host stands invited, to approve, approved, locked or refused', () => {
 	assert.equal(hostState(host({ fingerprint: 'SHA256:x', approved: true })), 'Approved');
 	assert.equal(hostState(host({ fingerprint: 'SHA256:x', approved: true, locked: [{ address: 'a', since: '' }] })), 'Locked');
 	assert.equal(hostState(host({ fingerprint: 'SHA256:x', approved: true, agent: { ...agent, refused: 'too old' } })), 'Refused');
+});
+
+test("a card's color: green connected, red offline or locked, yellow to act on, grey only invited", () => {
+	const on = { name: 'web', connected: true };
+	const enrolled = { fingerprint: 'SHA256:x', approved: true };
+	assert.equal(hostTone(host({ ...enrolled, status: on, agent })), 'green');
+	assert.equal(hostTone(host({ ...enrolled, status: on, agent: { ...agent, outdated: true } })), 'yellow');
+	assert.equal(hostTone(host({ ...enrolled })), 'red');
+	assert.equal(hostTone(host({ ...enrolled, status: on, locked: [{ address: 'a', since: '' }] })), 'red');
+	assert.equal(hostTone(host({ ...enrolled, agent: { ...agent, refused: 'too old' } })), 'red');
+	assert.equal(hostTone(host({ fingerprint: 'SHA256:x', status: on })), 'yellow');
+	assert.equal(hostTone(host({})), 'overlay');
 });
 
 test('online, or last seen when it left, or never', () => {

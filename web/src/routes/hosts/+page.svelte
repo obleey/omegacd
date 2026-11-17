@@ -8,7 +8,7 @@
 	import Dialog from '#lib/Dialog.svelte';
 	import Empty from '#lib/Empty.svelte';
 	import { shortKey, sopsYaml } from '#lib/hostkeys.ts';
-	import { engineLabel, hostState, lastSeen, parseAllowlist, renameBlocked } from '#lib/hosts.ts';
+	import { engineLabel, hostState, hostTone, lastSeen, parseAllowlist, renameBlocked } from '#lib/hosts.ts';
 	import Icon from '#lib/Icon.svelte';
 	import { live, loadHosts } from '#lib/live.svelte.ts';
 	import { toast, toastError } from '#lib/toast.svelte.ts';
@@ -131,11 +131,12 @@
 		{#each hosts as h (h.name)}
 			{@const state = hostState(h)}
 			{@const seen = lastSeen(h)}
-			<article class="card host" aria-labelledby="host-{h.name}">
+			<article class="card host {hostTone(h)}" aria-labelledby="host-{h.name}">
 				<header>
 					<div class="title">
 						<h2 id="host-{h.name}"><Icon name="server" size={17} />{h.name}</h2>
 						{#if h.agent?.hostname && h.agent.hostname !== h.name}<span class="muted small">{h.agent.hostname}</span>{/if}
+						{#if seen && seen !== 'online'}<span class="muted small">last seen {ago(seen)}</span>{/if}
 					</div>
 					<div class="row badges">
 						<Badge status={h.status.connected ? 'Connected' : 'Disconnected'} label="Connection" size="sm" />
@@ -157,8 +158,6 @@
 				{/if}
 
 				<dl>
-					<dt>Seen</dt>
-					<dd>{seen === 'online' ? 'online' : seen ? `last seen ${ago(seen)}` : 'never connected'}</dd>
 					<dt>Agent</dt>
 					<dd>
 						{h.agent?.version ?? '—'}
@@ -247,8 +246,18 @@
 	.head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.2rem; }
 	.sub { margin: 0.15rem 0 0; max-width: 70ch; }
 	.grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(min(100%, 24rem), 1fr)); }
-	.host { display: grid; gap: 0.8rem; align-content: start; min-width: 0; }
+	/* the status bar on the left, as an Application's tile has */
+	.host { display: grid; gap: 0.8rem; align-content: start; min-width: 0; position: relative; overflow: hidden; padding-left: 1.4rem;
+		transition: transform 0.2s var(--ease), box-shadow 0.2s, border-color 0.2s; }
+	.host::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--c); transition: background-color 0.4s; }
+	.host:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); border-color: color-mix(in srgb, var(--c) 40%, var(--border)); }
+	.host:focus-within { border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); }
+	.green { --c: var(--green); }
+	.yellow { --c: var(--yellow); }
+	.red { --c: var(--red); }
+	.overlay { --c: var(--overlay1); }
 	header { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.6rem; flex-wrap: wrap; }
+	.title { display: grid; gap: 0.1rem; }
 	h2 { margin: 0; font-size: 1.05rem; display: flex; align-items: center; gap: 0.4rem; }
 	.badges { gap: 0.35rem; }
 	dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.35rem 0.9rem; margin: 0; font-size: 0.88rem; }

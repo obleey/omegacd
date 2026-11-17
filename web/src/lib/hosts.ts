@@ -1,5 +1,6 @@
 // Host cards (M5-02, Q37): what a Host's card says about it and its Agent.
 import type { AgentInfo, HostView } from './api.ts';
+import type { Tone } from './status.ts';
 
 /** Where the Host stands in enrollment: invited, enrolled awaiting approval, approved; locked or refused over it. */
 export function hostState(h: HostView): 'Invited' | 'To approve' | 'Approved' | 'Locked' | 'Refused' {
@@ -7,6 +8,16 @@ export function hostState(h: HostView): 'Invited' | 'To approve' | 'Approved' | 
 	if (h.locked?.length) return 'Locked';
 	if (h.agent?.refused) return 'Refused';
 	return h.approved ? 'Approved' : 'To approve';
+}
+
+/** One color summarising a Host, worst signal first (its card's status bar), as an Application's tile has. */
+export function hostTone(h: HostView): Tone {
+	const state = hostState(h);
+	if (state === 'Locked' || state === 'Refused') return 'red';
+	if (state === 'Invited') return 'overlay';
+	if (state === 'To approve') return 'yellow';
+	if (!h.status.connected) return 'red';
+	return h.agent?.outdated ? 'yellow' : 'green';
 }
 
 /** Online, or when its Agent was last connected: undefined for one never connected. */
