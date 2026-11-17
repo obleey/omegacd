@@ -1,18 +1,16 @@
 #!/usr/bin/env bash
 # The gate before a push, in one command (make gate): the whole suite with coverage on (make cover-profiles) on every
-# supported Linux Host at once (test/linux.sh), then the coverage of all of them merged and checked against main
-# (test/coverage: changed lines covered, the total not below test/coverage-floor). One short summary at the end, also in
+# supported Linux Host at once (test/linux.sh), then the coverage of all of them merged and checked (test/coverage -all:
+# every reachable block covered, Q150). One short summary at the end, also in
 # cover/gate-summary.txt; the exit code says whether it all passed.
 set -u
 repo=$(cd "$(dirname "$0")/.." && pwd)
 infra=${OMEGACD_TESTINFRA:-$(dirname "$repo")/omegacd-testinfra}
-base=${COVER_BASE:-origin/main}
 logs=${TMPDIR:-/tmp}
 out=$repo/cover/gate-summary.txt
 start=$(date +%s)
 cd "$repo"
 mkdir -p cover
-git fetch -q origin 2>/dev/null # the base the changed lines are diffed against
 
 # GATE_CMD replaces the suite, to try this script itself in seconds
 test/linux.sh --only "${GATE_CMD:-make cover-profiles ENGINES='rootful rootless podman host-podman'}" "$@" > "$repo/cover/gate.log" 2>&1
@@ -35,13 +33,13 @@ rm -rf cover/gate && mkdir -p cover/gate
     fi
   done
   if [ $suite -eq 0 ]; then
-    go run ./test/coverage -base "$base" -floor test/coverage-floor cover/gate/*/*.out > cover/gate-coverage.txt 2>&1
+    go run ./test/coverage -all cover/gate/*/*.out > cover/gate-coverage.txt 2>&1
     cov=$?
     total=$(grep -o '[0-9.]*%  total' cover/gate-coverage.txt | cut -d' ' -f1)
     if [ $cov -eq 0 ]; then
-      echo "coverage $total (floor $(cat test/coverage-floor)%) · changed lines: all covered"
+      echo "coverage $total of reachable code · every reachable block covered"
     else
-      echo "coverage $total (floor $(cat test/coverage-floor)%) · FAILED:"
+      echo "coverage $total of reachable code · FAILED:"
       sed -n '/^FAIL/,$p' cover/gate-coverage.txt | sed 's/^/  /'
     fi
   else

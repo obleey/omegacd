@@ -17,7 +17,8 @@ import (
 )
 
 // Faulty starts a proxy to the engine at DOCKER_HOST (the default socket when unset) and returns its address, for
-// DOCKER_HOST. answer gets every request and returns the status to fail it with, or 0 to pass it on. It stops with t.
+// DOCKER_HOST. answer gets every request and returns the status to fail it with, or 0 to pass it on; 200 fails it
+// inside its stream, as a pull that broke off does. It stops with t.
 func Faulty(t testing.TB, answer func(*http.Request) int) string {
 	t.Helper()
 	network, addr, _ := strings.Cut(cmp.Or(os.Getenv("DOCKER_HOST"), "unix:///var/run/docker.sock"), "://")
@@ -32,7 +33,12 @@ func Faulty(t testing.TB, answer func(*http.Request) int) string {
 		if status := answer(r); status != 0 {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(status)
-			fmt.Fprintf(w, `{"message":"enginetest: %s %s failed on purpose"}`, r.Method, r.URL.Path)
+			msg := fmt.Sprintf("enginetest: %s %s failed on purpose", r.Method, r.URL.Path)
+			if status == http.StatusOK { // a stream's own error line
+				fmt.Fprintf(w, `{"errorDetail":{"message":%q},"error":%q}`, msg, msg)
+				return
+			}
+			fmt.Fprintf(w, `{"message":%q}`, msg)
 			return
 		}
 		proxy.ServeHTTP(w, r)

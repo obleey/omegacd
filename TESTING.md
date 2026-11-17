@@ -22,15 +22,14 @@ with `go build -cover` so every OmegaCD process they start records what it ran. 
 make gate           # before a push: the whole suite with coverage on every Linux Host, merged and checked, one summary
                     # (Ctrl-C stops it, on the servers too)
 make cover          # the same on this machine alone (needs what make test-all needs), then the check
-go run ./test/coverage -base origin/main -floor test/coverage-floor cover/*.out   # the check alone
+go run ./test/coverage -all cover/*.out   # the check alone
 ```
 
-It prints each package's share and the total. It fails when a block no test reaches has a line changed against
-`main`, or when the total drops below `test/coverage-floor`. A block no test *can* reach (an error that can't happen,
-such as encoding a fixed struct into memory) is marked in the code with a comment `coverage: unreachable, <reason>` on
-its first line, and reviewed like any code. CI runs the same check in its Coverage job, merging the profiles of every
-job (amd64 and arm64). The floor starts just under the first measured total (84.0%, 2026-11-09: 987 uncovered blocks, 16
-marked unreachable); it only goes up, and after M4-10 it is 100%.
+It prints each package's share and the total, both of reachable code, and fails on any block no test reaches (Q150).
+A block no test *can* reach (an error that can't happen, such as encoding a fixed struct into memory) is marked in the
+code with a comment `coverage: unreachable, <reason>` on a line of it, left out of the totals, and reviewed like any
+code. CI runs the same check in its Coverage job, merging the profiles of every job (amd64 and arm64). Every reachable
+block has been covered since M4-10 (2026-11-17; on 2026-11-09 there were 987 uncovered blocks).
 
 ## Real-world run (v0.2, M7-04)
 

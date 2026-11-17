@@ -164,8 +164,6 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          fetch-depth: 0 # the changed lines are diffed against main
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
@@ -173,6 +171,6 @@ jobs:
         with:
           pattern: coverage-*
           path: cover
-      # Q96: unit + integration + every engine + e2e, on amd64 and arm64; a block no test reaches fails where a line of
-      # it changed against main (unless marked "coverage: unreachable, <reason>"), and the total may not drop
-      - run: go run ./test/coverage -base origin/main -floor test/coverage-floor $(find cover -name '*.out')
+      # Q96, Q150: unit + integration + every engine + e2e, on amd64 and arm64; every reachable block covered, a block no
+      # test reaches failing unless marked "coverage: unreachable, <reason>"
+      - run: go run ./test/coverage -all $(find cover -name '*.out')

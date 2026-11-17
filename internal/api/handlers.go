@@ -494,8 +494,7 @@ func find[T any](items []T, err error, id int64, idOf func(T) int64) (T, error) 
 			return it, nil
 		}
 	}
-	// coverage: unreachable, only a delete racing the save that just returned id
-	return zero, domain.ErrNotFound
+	return zero, domain.ErrNotFound // coverage: unreachable, only a delete racing the save that just returned id
 }
 
 func (s *server) listTokens(w http.ResponseWriter, r *http.Request) {

@@ -20,9 +20,10 @@ import (
 
 // fakeHost serves files of stacks by absolute path; folders are implied by the files under them.
 type fakeHost struct {
-	stacks []Stack
-	files  map[string]string // absolute path -> content
-	big    map[string]bool   // absolute paths reported larger than MaxConfig
+	stacks  []Stack
+	files   map[string]string // absolute path -> content
+	big     map[string]bool   // absolute paths reported larger than MaxConfig
+	skipped []string          // what Read says it left out
 }
 
 func (h *fakeHost) Stacks(context.Context) ([]Stack, error) { return h.stacks, nil }
@@ -49,7 +50,7 @@ func (h *fakeHost) Info(_ context.Context, dir string, paths []string) (map[stri
 	return out, nil
 }
 
-func (h *fakeHost) Read(_ context.Context, dir string, paths []string) (map[string][]byte, error) {
+func (h *fakeHost) Read(_ context.Context, dir string, paths []string) (map[string][]byte, []string, error) {
 	out := map[string][]byte{}
 	for _, p := range paths {
 		abs := path.Join(dir, p)
@@ -59,7 +60,7 @@ func (h *fakeHost) Read(_ context.Context, dir string, paths []string) (map[stri
 			}
 		}
 	}
-	return out, nil
+	return out, h.skipped, nil
 }
 
 const stackCompose = `# shop: the storefront

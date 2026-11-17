@@ -48,15 +48,14 @@ test-all:
 	$(if $(COVER_DIR),go tool covdata textfmt -i=$(COVER_DIR)/e2e -o $(COVER_DIR)/e2e.out)
 
 # Coverage (Q96): COVER_DIR=dir makes test-all write a profile per kind of test there (unit, integration, each engine,
-# and the e2e scripts' binary built with -cover); generated protobuf code is left out. make cover runs it and checks:
-# blocks no test reaches fail where a line of them changed since COVER_BASE (unless marked "coverage: unreachable,
-# <reason>" in the code), and the total may not drop below test/coverage-floor.
+# and the e2e scripts' binary built with -cover); generated protobuf code is left out. make cover runs it and checks
+# (Q150): every reachable block covered, a block no test reaches failing unless marked "coverage: unreachable, <reason>"
+# in the code.
 COVERPKG = ./cmd/...,./internal/... # patterns, so the commands stay short; test/coverage leaves the generated code out
 # cov NAME[,PATTERNS]: the Agent alone depends on nothing in cmd/ (Go warns about a pattern matching nothing)
 cov = $(if $(COVER_DIR),-coverpkg=$(or $(2),$(COVERPKG)) -coverprofile=$(COVER_DIR)/$(1).out)
-COVER_BASE ?= origin/main
 cover: cover-profiles
-	go run ./test/coverage -base $(COVER_BASE) -floor test/coverage-floor cover/*.out
+	go run ./test/coverage -all cover/*.out
 cover-profiles:
 	rm -rf cover && mkdir -p cover
 	$(MAKE) test-all COVER_DIR=$(CURDIR)/cover

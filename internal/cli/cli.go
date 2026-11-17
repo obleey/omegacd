@@ -16,6 +16,7 @@ import (
 	"github.com/obleey/omegacd/internal/source"
 	"github.com/obleey/omegacd/internal/version"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -227,8 +228,13 @@ func (c *CLI) configPath() (string, error) {
 // client resolves server and token: flag, then environment, then the config file.
 func (c *CLI) client(o opts) (*client, error) {
 	var cfg config
-	if p, err := c.configPath(); err == nil {
-		if b, err := os.ReadFile(p); err == nil {
+	if p, err := c.configPath(); err == nil { // without a home folder, flags and environment alone
+		b, err := os.ReadFile(p)
+		switch {
+		case errors.Is(err, fs.ErrNotExist): // not logged in
+		case err != nil:
+			return nil, fmt.Errorf("%s: %w", p, err)
+		default:
 			if err := json.Unmarshal(b, &cfg); err != nil {
 				return nil, fmt.Errorf("%s: %v", p, err)
 			}
@@ -263,8 +269,11 @@ func (c *CLI) login(ctx context.Context, args []string) error {
 		return err
 	}
 	cl, err := c.client(o)
-	if err != nil {
+	if errors.Is(err, errUnauthorized) {
 		return errors.New("--server and --token are required")
+	}
+	if err != nil {
+		return err
 	}
 	var me struct {
 		Username string `json:"username"`
@@ -283,7 +292,7 @@ func (c *CLI) login(ctx context.Context, args []string) error {
 	if err := os.WriteFile(p, append(b, '\n'), 0o600); err != nil {
 		return err
 	}
-	if err := os.Chmod(p, 0o600); err != nil { // WriteFile keeps the mode of an existing file
+	if err := os.Chmod(p, 0o600); err != nil { // coverage: unreachable, the file was just written by this user; WriteFile keeps the mode of an existing file
 		return err
 	}
 	fmt.Fprintf(c.Stdout, "Logged in to %s as %s; saved to %s\n", cl.server, me.Username, p)
@@ -321,7 +330,7 @@ func (c *CLI) keygen(ctx context.Context, args []string) error {
 		return err
 	}
 	id, err := age.GenerateX25519Identity()
-	if err != nil {
+	if err != nil { // coverage: unreachable, generating reads the system's randomness, which doesn't fail
 		return err
 	}
 	key := fmt.Sprintf("# created: %s\n# public key: %s\n%s\n", time.Now().Format(time.RFC3339), id.Recipient(), id)
@@ -334,7 +343,7 @@ func (c *CLI) keygen(ctx context.Context, args []string) error {
 		}
 		if _, err = f.WriteString(key); err == nil {
 			err = f.Close()
-		} else {
+		} else { // coverage: unreachable, writing a few bytes to a file just created
 			f.Close()
 		}
 	}
@@ -376,7 +385,7 @@ func (cl *client) request(ctx context.Context, method, path string, body any) (*
 	var r io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
-		if err != nil {
+		if err != nil { // coverage: unreachable, the CLI's bodies are its own plain structs and maps
 			return nil, err
 		}
 		r = bytes.NewReader(b)

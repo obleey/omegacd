@@ -417,7 +417,7 @@ func (importHost) Info(_ context.Context, _ string, paths []string) (map[string]
 	}
 	return out, nil
 }
-func (importHost) Read(_ context.Context, _ string, paths []string) (map[string][]byte, error) {
+func (importHost) Read(_ context.Context, _ string, paths []string) (map[string][]byte, []string, error) {
 	all := map[string][]byte{
 		"compose.yaml": []byte("services:\n  web:\n    image: nginx\n    env_file: app.env\n"),
 		"app.env":      []byte("DB_PASSWORD=s3cret\n"),
@@ -428,7 +428,7 @@ func (importHost) Read(_ context.Context, _ string, paths []string) (map[string]
 			out[p] = b
 		}
 	}
-	return out, nil
+	return out, nil, nil
 }
 
 func gitRepo(t *testing.T) string {
