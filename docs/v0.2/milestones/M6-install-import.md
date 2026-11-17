@@ -16,6 +16,8 @@ On Debian it installs with recommended packages, as apt does by default: a minim
 turns them off) lacks the docker command (`docker-cli`), Podman's networking (`passt`) and its DNS (`aardvark-dns`),
 found by the test servers; the docs say so.
 
+Its agent-mode one-liner is a tab of the UI's Add Host dialog, with the invite filled in (M5-01, Q151).
+
 **Done when:** both modes are tested on a clean machine, rootful and rootless.
 
 ### M6-02 · Compose files
@@ -31,6 +33,8 @@ From M4-06 (Q115): the Control Plane creates its Master Key when missing, but `d
 a single read-only file, which must exist first. Mount a key folder instead (writable), so a compose install needs no
 `age-keygen` step either.
 
+`deploy/agent.yaml` is a tab of the UI's Add Host dialog, with the invite filled in (M5-01, Q151).
+
 **Done when:** `docker compose up -d` brings each up, as a non-root user; the Agent refuses a mount without path parity.
 
 ### M6-03 · systemd units
@@ -45,6 +49,9 @@ Docker restarts any container (Q59).
 For a Podman Host the Agent's user gets `events_logger = "file"` (Self-Heal reads events from it) and
 `log_driver = "k8s-file"` (Podman can't follow journald logs with events in a file) in its `containers.conf.d`, with
 `log_size_max` set (k8s-file logs grow without limit otherwise; journald rotated them).
+
+The systemd install (rootless and docker group) is a tab of the UI's Add Host dialog, with the invite filled in
+(M5-01, Q151).
 
 **Done when:** both survive a reboot with apps restored offline, including services with a restart policy on rootful
 Docker.

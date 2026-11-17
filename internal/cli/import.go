@@ -23,7 +23,7 @@ func (c *CLI) importStacks(ctx context.Context, args []string) error {
 	fs := c.flags("import", &o)
 	hostName := fs.String("host", "", "the Host's name in OmegaCD, whose Agent runs these stacks (required)")
 	var recipients listFlag
-	fs.Var(&recipients, "recipient", "age public key to encrypt secrets for (the Host Key from Settings → Hosts); repeatable; default: looked up on your OmegaCD")
+	fs.Var(&recipients, "recipient", "age public key to encrypt secrets for (the Host Key from the Hosts page); repeatable; default: looked up on your OmegaCD")
 	appsDir := fs.String("apps-dir", "apps", "folder for the stacks, relative to the repository root")
 	defs := fs.String("definitions", "platform/apps.yaml", "App of Apps file to add the definitions to, relative to the repository root")
 	repoURL := fs.String("repo-url", "", "repository URL for the definitions (default: the origin remote)")
@@ -34,7 +34,7 @@ func (c *CLI) importStacks(ctx context.Context, args []string) error {
 		return err
 	}
 	if *hostName == "" { // every Application names its Host (Q104)
-		return errors.New("import needs --host NAME: the name this machine has (or will have) in OmegaCD under Settings → Hosts")
+		return errors.New("import needs --host NAME: the name this machine has (or will have) in OmegaCD, on its Hosts page")
 	}
 
 	root, err := git(ctx, "rev-parse", "--show-toplevel")
@@ -79,7 +79,7 @@ func (c *CLI) importStacks(ctx context.Context, args []string) error {
 func (c *CLI) hostRecipient(ctx context.Context, o opts, host string) ([]string, error) {
 	cl, err := c.client(o)
 	if err != nil {
-		return nil, fmt.Errorf("secrets found: pass --recipient age1… (the Host Key of %s from Settings → Hosts), or omegacd login so it can be looked up", host)
+		return nil, fmt.Errorf("secrets found: pass --recipient age1… (the Host Key of %s from the Hosts page), or omegacd login so it can be looked up", host)
 	}
 	var hosts []domain.HostView
 	if err := cl.do(ctx, "GET", "/api/settings/hosts", nil, &hosts); err != nil {
@@ -93,7 +93,7 @@ func (c *CLI) hostRecipient(ctx context.Context, o opts, host string) ([]string,
 			return []string{h.AgeRecipient}, nil
 		}
 	}
-	return nil, fmt.Errorf("Host %s is not in OmegaCD: add it under Settings → Hosts first, or pass --recipient", host)
+	return nil, fmt.Errorf("Host %s is not in OmegaCD: add it on the Hosts page first, or pass --recipient", host)
 }
 
 func git(ctx context.Context, args ...string) (string, error) {

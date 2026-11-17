@@ -353,6 +353,25 @@ func (c *Controller) ForgetApp(ctx context.Context, name string) error {
 	return nil
 }
 
+// HostChanged shows a Host's new state live (Q153); a Host that is gone, as deleted.
+func (c *Controller) HostChanged(ctx context.Context, name string) {
+	h, err := c.cfg.Store.GetHost(ctx, name)
+	if errors.Is(err, domain.ErrNotFound) {
+		c.emit(domain.Event{Type: "host-deleted", Data: name})
+		return
+	}
+	if err != nil {
+		c.cfg.Log.ErrorContext(ctx, "a host's change not shown", "host", name, "err", err)
+		return
+	}
+	byHost, err := c.appsByHost(ctx)
+	if err != nil {
+		c.cfg.Log.ErrorContext(ctx, "a host's change not shown", "host", name, "err", err)
+		return
+	}
+	c.emit(domain.Event{Type: "host", Data: c.hostView(ctx, h, byHost[name])})
+}
+
 // AgentStatusChanged shows an Application's new report from its Agent (M4-02).
 func (c *Controller) AgentStatusChanged(ctx context.Context, app string) {
 	a, err := c.cfg.Store.GetApp(ctx, app)

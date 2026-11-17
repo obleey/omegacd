@@ -77,6 +77,9 @@ type Hub struct {
 	Progress func(ctx context.Context, app string, p domain.ProgressEvent)
 	// Status is told an Application's report from its Agent was stored (M4-02); may be nil
 	Status func(ctx context.Context, app string)
+	// HostChanged is told a Host changed: its Agent enrolled, said Hello, connected or left, was approved, locked,
+	// unlocked, rotated its key, or the Host's allowlist changed (Q153); may be nil
+	HostChanged func(ctx context.Context, host string)
 
 	mu    sync.Mutex
 	conns map[string]*session // by Host
@@ -114,6 +117,13 @@ type rotateReply struct {
 func New(store domain.Store, log *slog.Logger) *Hub {
 	return &Hub{store: store, log: cmp.Or(log, logging.Discard), now: time.Now, version: version.String(), conns: map[string]*session{},
 		closing: make(chan struct{})}
+}
+
+// changed tells HostChanged, if set, that host changed.
+func (h *Hub) changed(ctx context.Context, host string) {
+	if h.HostChanged != nil {
+		h.HostChanged(ctx, host)
+	}
 }
 
 // Close ends every Agent connection and returns once their sessions are over, each having recorded its Agent leaving:
@@ -195,10 +205,12 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if err := h.store.AgentLeft(context.WithoutCancel(ctx), host.Name, h.now()); err != nil {
 				h.log.ErrorContext(ctx, "record the agent leaving", "err", err)
 			}
+			h.changed(context.WithoutCancel(ctx), host.Name)
 		}
 	}()
 	fingerprint := domain.Fingerprint(key)
 	h.log.InfoContext(ctx, "agent connected", "fingerprint", fingerprint, "approved", host.Approved, "remote", addr)
+	h.changed(ctx, host.Name)
 	status(ctx, c, 0, host.Name, fingerprint, host.Approved, enrolled) // sends queue: a closed connection is the reads' to log
 	go func() {
 		select {
@@ -324,6 +336,7 @@ func (h *Hub) SetAllowlist(ctx context.Context, host string, cidrs []string) ([]
 		return nil, err
 	}
 	h.log.InfoContext(ctx, "host allowlist", "host", host, "allow", list)
+	h.changed(ctx, host)
 	if s := h.session(host); s != nil {
 		if err := allowed(domain.Host{Name: host, AllowIPs: list}, s.at.Address); err != nil {
 			h.log.WarnContext(ctx, "agent outside the new allowlist: disconnected", "host", host, "remote", s.at.Address)
@@ -348,6 +361,7 @@ func (h *Hub) checkVersion(ctx context.Context, host string, hello *agentv1.Hell
 	if rerr := h.store.RecordAgent(ctx, host, info); rerr != nil {
 		h.log.ErrorContext(ctx, "record the agent", "err", rerr)
 	}
+	h.changed(ctx, host) // its version, engine, or why it was refused
 	return err
 }
 
@@ -381,6 +395,7 @@ func (h *Hub) admit(ctx context.Context, host domain.Host, addr string) error {
 	if err := h.store.LockHost(ctx, host.Name, conns); err != nil {
 		return err
 	}
+	h.changed(ctx, host.Name)
 	h.log.ErrorContext(ctx, "two live connections with one Host's key: the Host is locked until an admin unlocks or "+
 		"revokes it", "first", old.at.Address, "second", addr)
 	err := locked(conns)
@@ -456,6 +471,7 @@ func (h *Hub) Approve(ctx context.Context, host, fingerprint string) error {
 	if s := h.session(host); s != nil {
 		s.once.Do(func() { close(s.approved) })
 	}
+	h.changed(ctx, host)
 	return nil
 }
 
@@ -466,6 +482,7 @@ func (h *Hub) Unlock(ctx context.Context, host string) error {
 		return err
 	}
 	h.log.InfoContext(ctx, "host unlocked", "host", host)
+	h.changed(ctx, host)
 	return nil
 }
 
@@ -526,6 +543,7 @@ func (h *Hub) rotated(ctx context.Context, host string, s *session, id uint64, r
 		s.mu.Unlock()
 		h.log.InfoContext(ctx, "agent key rotated", "fingerprint", fingerprint)
 		status(ctx, s.conn, id, host, fingerprint, true, false)
+		h.changed(ctx, host)
 	}
 	if reply != nil {
 		reply <- rotateReply{fingerprint, err}

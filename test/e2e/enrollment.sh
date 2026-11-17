@@ -35,6 +35,9 @@ agent() {
 # waitfor FILE TEXT [SECONDS]: until FILE says TEXT (default 10 s)
 waitfor() { for _ in $(seq $((${3:-10} * 10))); do grep -qF -- "$2" "$1" 2>/dev/null && return 0; sleep 0.1; done; return 1; }
 
+# the UI's live stream (Q153): every step of the Host's enrollment arrives as it happens
+curl -sN -H "Authorization: Bearer $OMEGACD_TOKEN" $API/events > "$T/events" 2>/dev/null &
+PIDS+=($!)
 out=$("$BIN" host add web 2>&1)
 INVITE=$(echo "$out" | grep -o 'omegacd-invite-[0-9a-f]*' | head -1)
 check "host add prints the command that enrolls the Host, with its invite" \
@@ -60,6 +63,14 @@ check "and the Agent still waits" '! grep -q "approved" "$T/web.log"'
 check "the Agent's own fingerprint approves it" '"$BIN" host approve web "$FP" | grep -q "Host web approved"'
 check "the connected Agent hears it at once" 'waitfor "$T/web.log" "connected to the Control Plane, approved"'
 check "and is listed approved" '"$BIN" host list | grep -qF "approved $FP"'
+check "the UI's event stream showed it live: invited, enrolled with its key, approved (Q153)" 'python3 -c "
+import json,sys
+hosts=[json.loads(l[6:])[\"data\"] for l in open(sys.argv[1]) if l.startswith(\"data: {\") and \"\\\"type\\\":\\\"host\\\"\" in l]
+web=[h for h in hosts if h[\"name\"]==\"web\"]
+assert any(not h.get(\"fingerprint\") for h in web), \"invited\"
+assert any(h.get(\"fingerprint\")==sys.argv[2] and not h[\"approved\"] for h in web), \"enrolled\"
+assert any(h[\"approved\"] for h in web), \"approved\"
+" "$T/events" "$FP"'
 # M3-04: the Agent's Hello is recorded: its version (checked against the Control Plane's; one minor behind and
 # refusals are in the hub's tests, which can make up versions) and its engine
 json=$("$BIN" host list -o json)

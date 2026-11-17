@@ -1,16 +1,12 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api, ago, enc, errMsg, get, type APIToken, type HostKey, type HostView, type RegistryCredential, type RepoCredential } from '#lib/api.ts';
-	import Badge from '#lib/Badge.svelte';
-	import Dialog from '#lib/Dialog.svelte';
-	import { shortKey, sopsYaml } from '#lib/hostkeys.ts';
+	import { api, ago, errMsg, get, type APIToken, type RegistryCredential, type RepoCredential } from '#lib/api.ts';
 	import Icon from '#lib/Icon.svelte';
-	import { toast, toastError } from '#lib/toast.svelte.ts';
+	import { toastError } from '#lib/toast.svelte.ts';
 
 	let repos = $state<RepoCredential[]>([]);
 	let regs = $state<RegistryCredential[]>([]);
 	let tokens = $state<APIToken[]>([]);
-	let hosts = $state<HostView[]>([]);
 	let error = $state('');
 
 	// Forms: id 0 = create. Secret fields are write-only; empty keeps the stored value on edit.
@@ -29,7 +25,6 @@
 				get<RegistryCredential[]>('/settings/registry-credentials'),
 				get<APIToken[]>('/settings/tokens')
 			]).then((r) => r.map((x) => x ?? []) as [RepoCredential[], RegistryCredential[], APIToken[]]);
-			hosts = (await get<HostView[]>('/settings/hosts')) ?? [];
 		} catch (e) {
 			error = errMsg(e);
 		}
@@ -59,9 +54,6 @@
 		e.preventDefault();
 		if (await run(() => save('registry-credentials', regForm))) regForm = blankReg();
 	}
-	function delHost(name: string) {
-		if (confirm(`Delete Host “${name}”?`)) run(() => api('DELETE', `/settings/hosts/${enc(name)}`));
-	}
 	function del(kind: string, id: number, what: string) {
 		if (confirm(`Delete ${what}?`)) run(() => api('DELETE', `/settings/${kind}/${id}`));
 	}
@@ -78,106 +70,14 @@
 		await navigator.clipboard.writeText(newToken);
 		copied = true;
 	}
-	async function copyText(text: string, what: string) {
-		try {
-			await navigator.clipboard.writeText(text);
-			toast('green', `${what} copied`);
-		} catch (e) {
-			toastError(e, `Copying ${what} failed`);
-		}
-	}
 
-	// Host Keys dialog: a Host's Host Key is born on its Agent; only its public half reaches the Control Plane (Q108).
-	let keysOpen = $state(false);
-	let keysHost = $state('');
-	let keys = $state<HostKey[] | null>(null);
-	let current = $derived(keys?.find((k) => k.current));
-	let allSops = $derived(sopsYaml(hosts.map((h) => ({ name: h.name, recipient: h.ageRecipient ?? '' }))));
-	const keysPath = () => `/settings/hosts/${enc(keysHost)}/keys`;
-
-	async function loadKeys() {
-		try {
-			keys = (await get<HostKey[]>(keysPath())) ?? [];
-		} catch (e) {
-			toastError(e, `Loading the keys of ${keysHost} failed`);
-		}
-	}
-	function openKeys(name: string) {
-		keysHost = name;
-		keys = null;
-		keysOpen = true;
-		loadKeys();
-	}
 </script>
 
 <svelte:head><title>Settings · OmegaCD</title></svelte:head>
 
 <h1>Settings</h1>
-<p class="muted small sub">Hosts, credentials and API tokens used by every Application.</p>
+<p class="muted small sub">Credentials and API tokens used by every Application. Hosts have their own page: <a href="/hosts">Hosts</a>.</p>
 {#if error}<p class="error" role="alert">{error}</p>{/if}
-
-<section class="card">
-	<h2><span class="hicon"><Icon name="server" size={17} /></span>Hosts</h2>
-	<p class="muted small">Machines Applications deploy to, each through its Agent. Add one with <code>omegacd host add NAME</code>: it prints
-		the command that enrolls its Agent. Each Host has its own Host Key, born on its Agent, which decrypts the Encrypted Secrets of
-		the Host's Applications: encrypt them for its public key in <code>.sops.yaml</code>.</p>
-	<div class="row tools"><button onclick={() => copyText(allSops, '.sops.yaml')}>Copy .sops.yaml for all Hosts</button></div>
-	<div class="scroll-x"><table>
-		<thead><tr><th>Name</th><th>Agent</th><th>Connection</th><th>Host Key</th><th>Applications</th><th><span class="sr-only">Actions</span></th></tr></thead>
-		<tbody>
-			{#each hosts as h (h.name)}
-				<tr>
-					<td>{h.name}</td>
-					<td class="small">
-						{#if !h.fingerprint}invited{:else if h.locked?.length}locked: two connections{:else if h.approved}approved{:else}to approve{/if}
-						{#if h.agent}<div class="muted small">Agent {h.agent.version}</div>{/if}
-					</td>
-					<td>
-						<Badge status={h.status.connected ? 'Connected' : 'Disconnected'} label="Connection" />
-						<div class="muted small">{h.status.connected ? `Engine ${h.status.serverVersion ?? ''}` : h.status.error}</div>
-					</td>
-					<td>
-						{#if h.ageRecipient}
-							<span class="keycell">
-								<code title={h.ageRecipient}>{shortKey(h.ageRecipient)}</code>
-								<button class="ghost sm" onclick={() => copyText(h.ageRecipient ?? '', `Public key of ${h.name}`)} aria-label="Copy the public key of {h.name}">Copy</button>
-							</span>
-						{:else}
-							<span class="muted small">when its Agent enrolls</span>
-						{/if}
-					</td>
-					<td>{h.apps.join(', ') || '—'}</td>
-					<td class="right">
-						<button onclick={() => openKeys(h.name)} aria-label="Keys of {h.name}">Keys</button>
-						<span title={h.apps.length ? 'Used by Applications; delete or move them first' : undefined}>
-							<button class="danger" onclick={() => delHost(h.name)} disabled={h.apps.length > 0}>Delete</button>
-						</span>
-					</td>
-				</tr>
-			{/each}
-		</tbody>
-	</table></div>
-</section>
-
-<Dialog bind:open={keysOpen} title="Host Key of {keysHost}" wide>
-	{#if keys === null}
-		<p class="muted small" role="status">Loading…</p>
-	{:else if current}
-		<h3 class="dh">Public key</h3>
-		<div class="row keyrow">
-			<code class="tok">{current.recipient}</code>
-			<button onclick={() => copyText(current!.recipient, 'Public key')}>Copy</button>
-		</div>
-		<h3 class="dh">.sops.yaml rule</h3>
-		<pre class="tok">{sopsYaml([{ name: keysHost, recipient: current.recipient }])}</pre>
-		<div class="row"><button onclick={() => copyText(sopsYaml([{ name: keysHost, recipient: current!.recipient }]), '.sops.yaml rule')}>Copy rule</button></div>
-	{:else}
-		<p class="muted small">No Host Key yet: the Host's Agent makes one when it enrolls. Its private half never leaves the Host.</p>
-	{/if}
-	{#snippet actions()}
-		<button onclick={() => (keysOpen = false)}>Close</button>
-	{/snippet}
-</Dialog>
 
 <section class="card">
 	<h2><span class="hicon"><Icon name="folder" size={17} /></span>Repository credentials <span class="muted small">— for reading Git repositories</span></h2>
@@ -323,10 +223,4 @@
 	.newtoken { border: 1px solid color-mix(in srgb, var(--green) 45%, transparent); background: color-mix(in srgb, var(--green) 10%, transparent); border-radius: var(--radius); padding: 0.6rem 0.8rem; margin-bottom: 1rem; }
 	.newtoken p { margin: 0 0 0.4rem; }
 	.tok { background: var(--crust); padding: 0.3rem 0.5rem; border-radius: 4px; word-break: break-all; flex: 1; }
-	pre.tok { margin: 0 0 0.5rem; white-space: pre-wrap; }
-	.tools { margin-bottom: 0.6rem; }
-	.keycell { display: inline-flex; align-items: center; gap: 0.3rem; white-space: nowrap; }
-	button.sm { padding: 0.1rem 0.45rem; font-size: 0.78rem; }
-	.dh { margin: 1rem 0 0.4rem; font-size: 0.95rem; }
-	.keyrow { flex-wrap: nowrap; }
 </style>

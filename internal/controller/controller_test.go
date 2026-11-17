@@ -74,6 +74,9 @@ func (s *fakeStore) ListHosts(context.Context) ([]domain.Host, error) {
 	return slices.Collect(maps.Values(s.hosts)), nil
 }
 func (s *fakeStore) GetHost(_ context.Context, n string) (domain.Host, error) {
+	if err := s.broken("GetHost"); err != nil {
+		return domain.Host{}, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	h, ok := s.hosts[n]
@@ -83,6 +86,9 @@ func (s *fakeStore) GetHost(_ context.Context, n string) (domain.Host, error) {
 	return h, nil
 }
 func (s *fakeStore) DeleteHost(_ context.Context, n string) error {
+	if err := s.broken("DeleteHost"); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.hosts, n)

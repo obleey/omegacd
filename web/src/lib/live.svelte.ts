@@ -1,11 +1,14 @@
 // Shared live state fed by one EventSource on /api/events.
-import { enc, get, short, type AppView, type ProgressEvent, type SyncOperation } from './api.ts';
+import { enc, get, short, type AppView, type HostView, type ProgressEvent, type SyncOperation } from './api.ts';
 import { dismiss, toast, toasts } from './toast.svelte.ts';
 
 export const live = $state({
 	me: null as { username: string; mustChangePassword: boolean } | null,
 	apps: {} as Record<string, AppView>,
 	loaded: false,
+	/** every Host, kept current by "host" events (Q153) */
+	hosts: {} as Record<string, HostView>,
+	hostsLoaded: false,
 	connected: false,
 	/** newest op seen per Application, from "op" events */
 	ops: {} as Record<string, SyncOperation>,
@@ -33,6 +36,12 @@ export async function loadApps() {
 	live.loaded = true;
 }
 
+export async function loadHosts() {
+	const list = await get<HostView[]>('/settings/hosts');
+	live.hosts = Object.fromEntries((list ?? []).map((h) => [h.name, h]));
+	live.hostsLoaded = true;
+}
+
 export function putApp(a: AppView) {
 	live.apps[a.name] = a;
 }
@@ -43,6 +52,7 @@ let openedBefore = false;
 let watchingVisibility = false;
 const resync = () => {
 	if (live.loaded) loadApps().catch(() => {});
+	if (live.hostsLoaded) loadHosts().catch(() => {});
 };
 
 // Data is a domain.Event ({type, app, data}); tolerate a bare payload too.
@@ -84,6 +94,13 @@ export function connectEvents() {
 	es.addEventListener('app-deleted', (e) => {
 		const { app, data } = unwrap(e.data);
 		delete live.apps[typeof data === 'string' ? data : app];
+	});
+	es.addEventListener('host', (e) => {
+		const h = unwrap(e.data).data as HostView;
+		live.hosts[h.name] = h;
+	});
+	es.addEventListener('host-deleted', (e) => {
+		delete live.hosts[unwrap(e.data).data as string];
 	});
 	es.addEventListener('op', (e) => {
 		const op = unwrap(e.data).data as SyncOperation;

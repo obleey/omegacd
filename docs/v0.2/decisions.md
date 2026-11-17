@@ -495,3 +495,29 @@ is declared. Their details (syntax, UI, messages) are decided when each is built
 - **Q150** The coverage total is over reachable code: marked statements leave it. CI's Coverage job, `make cover` and
   `make gate` run the check with `-all` alone (every reachable block covered is 100%), so `-base`, `-floor` and
   `test/coverage-floor` are deleted (this replaces Q133's floor of 100).
+
+## UI (design check before M5, 2026-11-17)
+
+- **Q151** Add Host (M5-01) shows the commands that work before M6: the `omegacd agent` command line `host add`
+  prints, and a `docker run` of the published image with the same settings. M6-01 (`install.sh`), M6-02
+  (`deploy/agent.yaml`) and M6-03 (systemd) each add their tab to the dialog.
+- **Q152** Hosts get a top-level page (cards, Add Host) next to Applications; Settings keeps credentials and API tokens.
+- **Q153** The event stream carries a `host` event with the Host's view whenever it changes (enrollment, approval,
+  connect and leave, the Agent's Hello, lock, unlock, rotation, allowlist, delete); the UI keeps Hosts in its live
+  store like Applications.
+- **Q154** A queued (Waiting) Sync Operation is cancelled with `POST /api/apps/{name}/syncs/{id}/cancel`: it finishes
+  Superseded, "cancelled by admin" (Q81's phase); no new phase.
+- **Q155** The Control Plane stores no logs: offline, the Logs tab says the Host is offline since when and that logs come
+  from its Agent; the last known Live State, Health and Diff are shown as M4-02 and M4-11 keep them.
+- **Q156** `source/v1` gains a `Status` RPC (version, the repo cache's size and Repository count, the blob cache's size),
+  answered by the in-process Source Server too; an older Source Server's "unimplemented" shows as "version unknown".
+- **Q157** The Agent's Hello gains `work_dir` and `work_dir_allow`: the Application form shows the Host's work dir as the
+  placeholder and refuses a root outside the allowed ones with the Agent's own message; the Agent still enforces it.
+- **Q158** M5's UI logic lives in pure `.ts` modules tested with `node --test`; the flows' API calls get the Go e2e;
+  each PR shows screenshots of the screens it touched (light, dark, phone width). A browser test framework (Playwright)
+  is reconsidered in M8 with UI coverage (Q135).
+- **Q159** Add Host's `docker run` runs the Agent from the Control Plane's own image version (`:latest` for a development
+  build) with the engine's socket, `/run/omegacd` mounted at the same path (Q21), its state in a named volume, and
+  `OMEGACD_AGENT_ALLOW_ROOT=true`: root in a container holding the socket is root on the Host already.
+- **Q160** Add Host's commands use an address field prefilled with the browser's address; opened over plain http on
+  another address than localhost, the dialog warns that Agents connect over https only (Q95).

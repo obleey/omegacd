@@ -400,13 +400,17 @@ OMEGACD_AGENT_CONTROL_PLANE=https://omegacd.example.com OMEGACD_AGENT_INVITE=ome
 omegacd host approve web-1 SHA256:…          # after comparing the fingerprint the Agent printed with host list's
 ```
 
+In the UI it is **Hosts → Add Host**: name the Host, copy the command that runs its Agent (with `omegacd` installed, or
+in a container: `docker run` of OmegaCD's image), and watch it connect; compare the fingerprint it shows with the one
+the Agent printed, and **Approve**. Agents connect over https only: open OmegaCD at the address they reach it at.
+
 Applications with `host: web-1` then deploy through it; a Sync to it while it's offline waits for it, and its Applications show their last known state. `omegacd agent --help` lists its settings (its work dir, state dir, engine). The machine OmegaCD runs on is a Host like any other: give it an Agent too, and OmegaCD can deploy its own Compose project as an Application — an Agent only refuses the project it runs in itself.
 
 ## Secrets
 
 Commit secrets encrypted with [SOPS](https://github.com/getsops/sops) to the **Host Key** of the Host the Application deploys to. Each Host's Agent makes its own age key when it enrolls and keeps it in its state dir; only its public half reaches OmegaCD, so OmegaCD can decrypt nothing, and a key leaked from one server exposes only that server's secrets.
 
-**Settings → Hosts** shows each Host's public key, and the **Keys** dialog has the ready `.sops.yaml` rule for it (**Copy .sops.yaml for all Hosts** gives one rule per Host); `omegacd host key show HOST` prints it. Back up each Agent's state dir: it holds the Host Key.
+The **Hosts** page shows each Host's public key, and the **Keys** dialog has the ready `.sops.yaml` rule for it (**Copy .sops.yaml for all Hosts** gives one rule per Host); `omegacd host key show HOST` prints it. Back up each Agent's state dir: it holds the Host Key.
 
 ```yaml
 # .sops.yaml — the paths are up to you

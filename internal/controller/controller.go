@@ -1341,6 +1341,7 @@ func (c *Controller) InviteHost(ctx context.Context, name string) (string, time.
 	invite, err := c.cfg.Store.CreateInvite(ctx, name, expires)
 	if err == nil {
 		c.cfg.Log.Info("host invited", "host", name, "expires", expires)
+		c.HostChanged(ctx, name)
 	}
 	return invite, expires, err
 }
@@ -1356,7 +1357,11 @@ func (c *Controller) DeleteHost(ctx context.Context, name string) error {
 	if apps := byHost[name]; len(apps) > 0 {
 		return fmt.Errorf("%w: host %q is used by Applications %s", domain.ErrInvalid, name, strings.Join(apps, ", "))
 	}
-	return c.cfg.Store.DeleteHost(ctx, name)
+	if err := c.cfg.Store.DeleteHost(ctx, name); err != nil {
+		return err
+	}
+	c.HostChanged(ctx, name)
+	return nil
 }
 
 func (c *Controller) CheckRepo(ctx context.Context, repoURL string) (domain.RepoAccess, error) {

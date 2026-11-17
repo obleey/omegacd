@@ -1,15 +1,19 @@
 # M5 · UI
 
-The UI for Agents and the Source Server. See [architecture](../architecture.md#ui-q34-q37-q38-q39-q40-q43-q53).
-Catppuccin, light/dark, phones, the existing animations; keep the house components.
+The UI for Agents and the Source Server. See [architecture](../architecture.md#ui-q34-q37-q38-q39-q40-q43-q53) and the
+design check before M5 (Q151–Q158). Catppuccin, light/dark, phones, the existing animations; keep the house components.
+UI logic in pure `.ts` modules tested with `node --test`; each PR shows screenshots of what it touched, light, dark and
+at phone width (Q158).
 
 ### M5-01 · Add Host flow
-**Status:** todo
+**Status:** done (2026-11-17, PR #142)
 **Depends on:** M3-02
 
-Add Host → **name** (required; Git references Hosts by name) → install commands with the invite: compose snippet
-(`deploy/agent.yaml`), `install.sh` one-liner, systemd (rootless, docker group) → live wait → key fingerprint →
-**Approve** (Q37, Q43).
+Add Host → **name** (required; Git references Hosts by name) → install commands with the invite → live wait → key
+fingerprint → **Approve** (Q37, Q43). The commands are those that work before M6 (Q151): the `omegacd agent` command
+line `host add` prints, and a `docker run` of the published image with the same settings; M6-01 (`install.sh`), M6-02
+(`deploy/agent.yaml`) and M6-03 (systemd) each add their tab. On the Hosts page (Q152), waiting live through the
+`host` event (Q153).
 
 **Done when:** an admin can enroll a Host end to end from the UI, copying one command.
 
@@ -40,8 +44,9 @@ Host node, lists and Host cards, with tooltips (Q34, Q39).
 **Status:** todo
 **Depends on:** M4-02
 
-Last known Live State, Health, Diff and logs with "Host offline since …"; queued Syncs shown as waiting for the Host,
-cancellable (Q38).
+Last known Live State, Health and Diff with "Host offline since …"; the Logs tab says logs come from the Agent (no logs
+are stored, Q155); queued Syncs shown as waiting for the Host, cancellable (Q38; `POST /api/apps/{name}/syncs/{id}/cancel`
+finishes one Superseded, "cancelled by admin", Q154).
 
 **Done when:** an offline Host's apps read clearly in the dashboard, tree and app page.
 
@@ -49,8 +54,8 @@ cancellable (Q38).
 **Status:** todo
 **Depends on:** M1-06
 
-Settings → Source Server: in-process or standalone, reachable, version, cache size. Repository credentials pass
-through to it; the access check in the app form asks it (Q40).
+Settings → Source Server: in-process or standalone, reachable, version, cache size, from a new `Status` RPC
+(Q156). Repository credentials pass through to it; the access check in the app form asks it (Q40).
 
 **Done when:** credentials can be added, rotated and deleted without the Control Plane ever storing a secret.
 
@@ -69,7 +74,8 @@ again with this ticket.
 **Depends on:** M2-09, M4-01
 
 An optional **Work dir** field in the Application form and detail (Q57): empty shows the Host's work dir as the
-placeholder; a path the Host's Agent doesn't allow shows the Agent's message and the setting to change.
+placeholder; a path the Host's Agent doesn't allow shows the Agent's message and the setting to change. The Agent's
+Hello carries its work dir and allowed roots (Q157).
 
 **Done when:** UI tests cover empty, allowed and refused, and an e2e creates an Application with its own work dir.
 

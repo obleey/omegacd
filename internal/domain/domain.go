@@ -413,7 +413,9 @@ type DiffView struct {
 
 // Event is pushed to SSE subscribers.
 type Event struct {
-	Type string `json:"type"` // "app" (Data=AppView), "app-deleted" (Data=name), "op" (Data=SyncOperation), "progress" (Data=ProgressEvent)
+	// "app" (Data=AppView), "app-deleted" (Data=name), "op" (Data=SyncOperation), "progress" (Data=ProgressEvent),
+	// "host" (Data=HostView), "host-deleted" (Data=name) (Q153)
+	Type string `json:"type"`
 	App  string `json:"app"`
 	Data any    `json:"data"`
 }
