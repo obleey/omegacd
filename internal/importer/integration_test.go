@@ -151,7 +151,8 @@ func fail(method, pattern string, status int) func(*http.Request) int {
 
 // Every call DockerHost makes to the engine failing fails what asked it, saying which step (Q142): listing the stacks,
 // pulling the helper image (refused, or broken off), its container made, started, waited for, its script failing (a
-// folder that is a file), and its output copied out. A folder's own entries in the copy are left out.
+// folder that is a file), and its output copied out. A folder's own entries in the copy are skipped, and what isn't a
+// regular file (a symlink) is left out, saying so.
 func TestDockerHostFails(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		skipUnlessRequired(t, "docker not on PATH")
@@ -160,12 +161,14 @@ func TestDockerHostFails(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "conf"), 0o755)
 	os.WriteFile(filepath.Join(dir, "conf", "a.conf"), []byte("a"), 0o644)
+	os.Symlink("a.conf", filepath.Join(dir, "conf", "link.conf"))
 	h, err := Dial()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := h.Read(ctx, dir, []string{"conf"}); err != nil || len(got) != 1 || string(got["conf/a.conf"]) != "a" {
-		t.Fatalf("a folder: %v, %v", got, err)
+	if got, skipped, err := h.Read(ctx, dir, []string{"conf"}); err != nil || len(got) != 1 || string(got["conf/a.conf"]) != "a" ||
+		strings.Join(skipped, ",") != "conf/link.conf" {
+		t.Fatalf("a folder: %v, skipped %v, %v", got, skipped, err)
 	}
 	if _, err := h.Info(ctx, filepath.Join(dir, "conf", "a.conf"), []string{"x"}); err == nil || !strings.Contains(err.Error(), "helper container exited") {
 		t.Errorf("a folder that is a file: %v", err)
@@ -199,13 +202,13 @@ func TestDockerHostFails(t *testing.T) {
 			if tc.name == "the stacks" {
 				_, err = h.Stacks(ctx)
 			} else if _, err = h.Info(ctx, dir, []string{"conf"}); err == nil {
-				_, err = h.Read(ctx, dir, []string{"conf"})
+				_, _, err = h.Read(ctx, dir, []string{"conf"})
 			}
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("%v", err)
 			}
 			if tc.name == "its container" {
-				if _, err := h.Read(ctx, dir, []string{"conf"}); err == nil {
+				if _, _, err := h.Read(ctx, dir, []string{"conf"}); err == nil {
 					t.Error("read through a helper it can't make")
 				}
 			}

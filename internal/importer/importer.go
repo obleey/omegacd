@@ -52,8 +52,9 @@ type Host interface {
 	Stacks(ctx context.Context) ([]Stack, error)
 	// Info stats paths relative to dir.
 	Info(ctx context.Context, dir string, paths []string) (map[string]Info, error)
-	// Read returns the regular files at or under paths relative to dir, keyed by their path relative to dir.
-	Read(ctx context.Context, dir string, paths []string) (map[string][]byte, error)
+	// Read returns the regular files at or under paths relative to dir, keyed by their path relative to dir, and what
+	// it left out there (anything else but a folder: a symlink, a device, a file too big to copy).
+	Read(ctx context.Context, dir string, paths []string) (files map[string][]byte, skipped []string, err error)
 }
 
 type Options struct {
@@ -149,6 +150,13 @@ type report struct {
 	recipientsShort string
 }
 
+// leftOut says what Read left out: the takeover won't have it unless it is copied by hand.
+func (r *report) leftOut(skipped []string) {
+	for _, f := range skipped {
+		r.warnings = append(r.warnings, fmt.Sprintf("%s left out: not a regular file (a symlink?) or too big to copy; put it in the repository by hand if the stack needs it", f))
+	}
+}
+
 func (r report) print(w io.Writer, o Options) {
 	verb := "→"
 	if o.DryRun {
@@ -200,10 +208,11 @@ func importStack(ctx context.Context, h Host, o Options, s Stack) (report, error
 	}
 
 	// 1. the compose files and .env, parsed as written
-	files, err := h.Read(ctx, s.Dir, append(slices.Clone(s.Files), ".env"))
+	files, skipped, err := h.Read(ctx, s.Dir, append(slices.Clone(s.Files), ".env"))
 	if err != nil {
 		return r, err
 	}
+	r.leftOut(skipped)
 	for _, f := range s.Files {
 		if _, ok := files[f]; !ok {
 			return r, fmt.Errorf("compose file %s not found in %s", f, s.Dir)
@@ -281,10 +290,11 @@ func importStack(ctx context.Context, h Host, o Options, s Stack) (report, error
 			absolute[rel] = path.Join(s.Dir, rel)
 		}
 	}
-	read, err := h.Read(ctx, s.Dir, toRead)
+	read, skipped, err := h.Read(ctx, s.Dir, toRead)
 	if err != nil {
 		return r, err
 	}
+	r.leftOut(skipped)
 	secretConfig := map[string]bool{} // bind-mounted files that hold a key or credential: encrypted, never in Git as is
 	for _, rel := range toRead {
 		m := refs[rel]
@@ -357,7 +367,13 @@ func importStack(ctx context.Context, h Host, o Options, s Stack) (report, error
 	}
 	for _, rel := range slices.Sorted(maps.Keys(out)) {
 		m := refs[rel]
-		needs := secretConfig[rel] || rel == ".env" && hasSecrets(string(out[rel])) || m != nil && (m.secret || m.env && hasSecrets(string(out[rel])))
+		needs := secretConfig[rel] || m != nil && m.secret
+		if !needs && (rel == ".env" || m != nil && m.env) {
+			var err error
+			if needs, err = hasSecrets(string(out[rel])); err != nil {
+				r.warnings = append(r.warnings, fmt.Sprintf("%s can't be read as an env file (%v): encrypted, as it may hold secrets", rel, err))
+			}
+		}
 		if needs {
 			if err := encrypt(rel); err != nil {
 				return r, err
@@ -561,21 +577,27 @@ func relative(p string) bool {
 	return p != "" && !path.IsAbs(p) && !strings.HasPrefix(p, "~")
 }
 
+// envKeys is the .env's keys and values, for the secrets moved there from the compose files.
 func envKeys(dotenvText string) map[string]string {
 	m, err := dotenv.UnmarshalWithLookup(dotenvText, nil)
-	if err != nil {
+	if err != nil { // coverage: unreachable, the stack's .env was loaded with its compose files already
 		return map[string]string{}
 	}
 	return m
 }
 
-func hasSecrets(dotenvText string) bool {
-	for k, v := range envKeys(dotenvText) {
+// hasSecrets reports whether an env file holds a secret in plain text; one that can't be read counts as holding one.
+func hasSecrets(dotenvText string) (bool, error) {
+	m, err := dotenv.UnmarshalWithLookup(dotenvText, nil)
+	if err != nil {
+		return true, err
+	}
+	for k, v := range m {
 		if secretkey.Plain(k, v) {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // dotenvLine writes KEY=value, single-quoted (no escapes) when needed, double-quoted if it holds a quote.

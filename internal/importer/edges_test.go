@@ -37,10 +37,10 @@ func (h *brokenHost) Info(ctx context.Context, dir string, paths []string) (map[
 	return h.fakeHost.Info(ctx, dir, paths)
 }
 
-func (h *brokenHost) Read(ctx context.Context, dir string, paths []string) (map[string][]byte, error) {
+func (h *brokenHost) Read(ctx context.Context, dir string, paths []string) (map[string][]byte, []string, error) {
 	h.reads++
 	if h.fail["Read"] && (!h.failSecond || h.reads > 1) {
-		return nil, errHost
+		return nil, nil, errHost
 	}
 	return h.fakeHost.Read(ctx, dir, paths)
 }
@@ -208,5 +208,30 @@ func TestNoTempFolder(t *testing.T) {
 	report, err := run(t, one("web", map[string]string{"compose.yaml": "services:\n  web:\n    image: x\n"}), Options{HostName: "vps"})
 	if err == nil || !strings.Contains(report, "read compose files") {
 		t.Fatalf("%v\n%s", err, report)
+	}
+}
+
+// An env file that can't be read as one is encrypted all the same, as it may hold secrets; what the host's Read left out
+// is reported, to be copied by hand.
+func TestUnreadableAndLeftOut(t *testing.T) {
+	h := one("web", map[string]string{
+		"compose.yaml": "services:\n  web:\n    image: x\n    env_file: broken.env\n    volumes: [\"./conf:/conf:ro\"]\n",
+		"broken.env":   "A='open\n",
+		"conf/a.conf":  "a",
+	})
+	h.skipped = []string{"conf/link.conf"}
+	repo := t.TempDir()
+	report, err := run(t, h, Options{Repo: repo, HostName: "vps", Recipients: recipient(t)})
+	if err != nil {
+		t.Fatalf("%v\n%s", err, report)
+	}
+	for _, want := range []string{"broken.env can't be read as an env file", "broken.env → broken.sops.env",
+		"conf/link.conf left out: not a regular file (a symlink?)"} {
+		if !strings.Contains(report, want) {
+			t.Errorf("report lacks %q:\n%s", want, report)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(repo, "apps", "web", "broken.env")); err == nil {
+		t.Error("an env file it can't read went to Git as it is")
 	}
 }

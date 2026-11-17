@@ -237,8 +237,11 @@ func TestConfigFailures(t *testing.T) {
 	}
 	dirCfg := t.TempDir()
 	os.MkdirAll(filepath.Join(dirCfg, "omegacd", "config.json", "x"), 0o700) // the config file's place taken by a folder
-	if r := run(t, srv, map[string]string{"XDG_CONFIG_HOME": dirCfg}, "", "login"); r.code != 1 {
+	if r := run(t, srv, map[string]string{"XDG_CONFIG_HOME": dirCfg}, "", "login"); r.code != 1 || !strings.Contains(r.stderr, "config.json: read ") {
 		t.Errorf("a config file that is a folder: %+v", r)
+	}
+	if r := run(t, srv, map[string]string{"XDG_CONFIG_HOME": dirCfg}, "", "app", "list"); r.code != 1 || !strings.Contains(r.stderr, "config.json: read ") {
+		t.Errorf("not taken for not logged in: %+v", r)
 	}
 	if r := run(t, srv, map[string]string{"XDG_CONFIG_HOME": dirCfg}, "", "logout"); r.code != 1 {
 		t.Errorf("logged out of a config it can't remove: %+v", r)

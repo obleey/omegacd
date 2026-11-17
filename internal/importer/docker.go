@@ -107,35 +107,41 @@ func parseInfo(b []byte) map[string]Info {
 }
 
 // Read copies the files at or under paths from the host: tar in a helper container, then out of it.
-func (h *DockerHost) Read(ctx context.Context, dir string, paths []string) (map[string][]byte, error) {
+func (h *DockerHost) Read(ctx context.Context, dir string, paths []string) (map[string][]byte, []string, error) {
 	out := map[string][]byte{}
 	if len(paths) == 0 {
-		return out, nil
+		return out, nil, nil
 	}
 	// shortcut: names with newlines are not supported (one name per line in the list)
 	const script = `cd /src && for p in "$@"; do [ -e "$p" ] && printf '%s\n' "./$p"; done > /tmp/list
 [ -s /tmp/list ] && tar -cf /tmp/out -T /tmp/list || : > /tmp/out`
 	b, err := h.helper(ctx, dir, script, paths)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	var skipped []string
 	tr := tar.NewReader(bytes.NewReader(b))
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
-			return out, nil
+			return out, skipped, nil
 		}
 		if err != nil { // coverage: unreachable, the helper's tar, copied out whole by the engine
-			return nil, fmt.Errorf("read files from %s: %w", dir, err)
+			return nil, nil, fmt.Errorf("read files from %s: %w", dir, err)
+		}
+		name := path.Clean(strings.TrimPrefix(hdr.Name, "./"))
+		if hdr.Typeflag == tar.TypeDir {
+			continue // its files follow
 		}
 		if hdr.Typeflag != tar.TypeReg || hdr.Size > 50<<20 {
+			skipped = append(skipped, name)
 			continue
 		}
 		c, err := io.ReadAll(tr)
 		if err != nil { // coverage: unreachable, a file of a tar held in memory
-			return nil, err
+			return nil, nil, err
 		}
-		out[path.Clean(strings.TrimPrefix(hdr.Name, "./"))] = c
+		out[name] = c
 	}
 }
 

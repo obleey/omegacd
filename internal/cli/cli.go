@@ -16,6 +16,7 @@ import (
 	"github.com/obleey/omegacd/internal/source"
 	"github.com/obleey/omegacd/internal/version"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -227,8 +228,13 @@ func (c *CLI) configPath() (string, error) {
 // client resolves server and token: flag, then environment, then the config file.
 func (c *CLI) client(o opts) (*client, error) {
 	var cfg config
-	if p, err := c.configPath(); err == nil {
-		if b, err := os.ReadFile(p); err == nil {
+	if p, err := c.configPath(); err == nil { // without a home folder, flags and environment alone
+		b, err := os.ReadFile(p)
+		switch {
+		case errors.Is(err, fs.ErrNotExist): // not logged in
+		case err != nil:
+			return nil, fmt.Errorf("%s: %w", p, err)
+		default:
 			if err := json.Unmarshal(b, &cfg); err != nil {
 				return nil, fmt.Errorf("%s: %v", p, err)
 			}
@@ -263,8 +269,11 @@ func (c *CLI) login(ctx context.Context, args []string) error {
 		return err
 	}
 	cl, err := c.client(o)
-	if err != nil {
+	if errors.Is(err, errUnauthorized) {
 		return errors.New("--server and --token are required")
+	}
+	if err != nil {
+		return err
 	}
 	var me struct {
 		Username string `json:"username"`
