@@ -408,6 +408,9 @@ OmegaCD), engine and rootless, OS/arch, its Applications, its key's fingerprint 
 rule to copy; and **Rotate key**, **Allowlist…** (showing the address its Agent last connected from), **Rename…**
 (only while no Application uses it), **Revoke**, and for a locked Host both connections with **Unlock**.
 
+**Settings → Display** picks how dates and times are shown, in this browser: the browser's own format, European
+(`17.11.2026 18:42`) or US (`11/17/2026 6:42 PM`).
+
 Applications with `host: web-1` then deploy through it; a Sync to it while it's offline waits for it, and its Applications show their last known state. `omegacd agent --help` lists its settings (its work dir, state dir, engine). The machine OmegaCD runs on is a Host like any other: give it an Agent too, and OmegaCD can deploy its own Compose project as an Application — an Agent only refuses the project it runs in itself.
 
 ## Secrets

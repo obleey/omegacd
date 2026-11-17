@@ -5,6 +5,7 @@
 	import Empty from '../Empty.svelte';
 	import Icon from '../Icon.svelte';
 	import Badge from '../Badge.svelte';
+	import { when } from '../display.svelte.ts';
 
 	// onrollback is omitted for Child Applications: their Revision is pinned in Git, not rolled back here.
 	let { ops, onrollback, web }: { ops: SyncOperation[] | null; onrollback?: (op: SyncOperation) => void; web?: GitWeb | null } = $props();
@@ -40,7 +41,7 @@
 						<td>{o.trigger}</td>
 						<td><Badge status={o.phase} label="Phase" /></td>
 						<td class="msg small">{o.message || '—'}</td>
-						<td class="small nowrap" title={new Date(o.startedAt).toLocaleString()}>
+						<td class="small nowrap" title={when(o.startedAt)}>
 							{ago(o.startedAt)}
 							{#if duration(o)}<span class="muted">· {duration(o)}</span>{/if}
 						</td>

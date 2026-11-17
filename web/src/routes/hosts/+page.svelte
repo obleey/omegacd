@@ -6,6 +6,7 @@
 	import AddHost from '#lib/AddHost.svelte';
 	import Badge from '#lib/Badge.svelte';
 	import Dialog from '#lib/Dialog.svelte';
+	import { when } from '#lib/display.svelte.ts';
 	import Empty from '#lib/Empty.svelte';
 	import { shortKey, sopsYaml } from '#lib/hostkeys.ts';
 	import { engineLabel, hostState, hostTone, lastSeen, parseAllowlist, renameBlocked } from '#lib/hosts.ts';
@@ -21,7 +22,6 @@
 	let hosts = $derived(Object.values(live.hosts).sort((a, b) => a.name.localeCompare(b.name)));
 	let allSops = $derived(sopsYaml(hosts.map((h) => ({ name: h.name, recipient: h.ageRecipient ?? '' }))));
 	const path = (h: string, action = '') => `/settings/hosts/${enc(h)}${action && '/' + action}`;
-	const when = (ts: string) => new Date(ts).toLocaleString();
 
 	async function copyText(text: string, what: string) {
 		try {

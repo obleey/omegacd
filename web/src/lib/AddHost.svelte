@@ -4,6 +4,7 @@
 	import { api, enc, errMsg, get } from './api.ts';
 	import { agentCommand, dockerRun, httpWarning } from './addhost.ts';
 	import Dialog from './Dialog.svelte';
+	import { when } from './display.svelte.ts';
 	import Icon from './Icon.svelte';
 	import { live } from './live.svelte.ts';
 	import { toast, toastError } from './toast.svelte.ts';
@@ -73,7 +74,6 @@
 		}
 	}
 
-	const until = (ts: string) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 </script>
 
 <Dialog bind:open title={invite ? `Add Host ${name}` : 'Add Host'} wide>
@@ -104,7 +104,7 @@
 				<div class="row">
 					<button type="button" class="primary" onclick={copy}><Icon name="file-text" size={15} />Copy</button>
 					<span class="muted small">
-						{#if tab === 'cli'}With <code>omegacd</code> installed on {name}; as a user in the <code>docker</code> group, or with rootless Docker or Podman.{:else}The invite is single-use and valid until {until(expiresAt)}.{/if}
+						{#if tab === 'cli'}With <code>omegacd</code> installed on {name}; as a user in the <code>docker</code> group, or with rootless Docker or Podman.{:else}The invite is single-use and valid until {when(expiresAt, 'time')}.{/if}
 					</span>
 				</div>
 			</li>

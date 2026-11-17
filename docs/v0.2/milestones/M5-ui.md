@@ -30,6 +30,7 @@ encrypt secrets for a Host without asking anyone (the CLI has it in `omegacd hos
 Cards replace M5-01's table (Q161); rename through the API and `omegacd host rename` (Q162); `outdated` decided by
 the Control Plane (Q163); confirmations (Q164); the allowlist editor shows the Agent's last address (Q165); the e2e
 (Q166).
+A Date and time format setting, per browser: Browser default, European 24-hour, US 12-hour (Q168–Q170).
 
 **Done when:** every field is live over SSE, each action works with a confirmation where it's destructive, and a
 secret encrypted with the copied key (or the copied `.sops.yaml` rule) deploys to that Host.
@@ -94,3 +95,16 @@ that doesn't exist), reported through the same field so the UI needs nothing new
 
 **Done when:** a file encrypted for another Host shows that reason with the fix in the UI and the CLI, the message
 never contains a secret, and a test with the dummy second source (M2-05) shows its reason the same way.
+
+### M5-09 · Rollback of a Child Application
+**Status:** todo
+**Depends on:** M5-02
+
+A Child Application is rolled back as any Application, as in Argo CD (Q171): an older Revision from its history, its
+Auto-Sync off. While it is rolled back, a Sync of its App of Apps neither syncs it nor turns its Auto-Sync back on;
+a manual Sync of the child ends it. Its page says it is rolled back and why its App of Apps skips it; the README's
+"Rollback is owned by Git" goes. With Q167 (M6-05): a child with `adopt: true` never synced is held back the same way,
+so both are tested together (Q172).
+
+**Done when:** a child is rolled back from the UI and the CLI, a Sync of its App of Apps leaves it rolled back, a
+manual Sync of the child ends it, and an e2e drives it through an Agent.

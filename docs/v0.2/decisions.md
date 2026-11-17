@@ -539,3 +539,22 @@ is declared. Their details (syntax, UI, messages) are decided when each is built
 - **Q166** M5-02's e2e: `secrets.sh` encrypts with the `.sops.yaml` rule from `GET /api/settings/hosts/{name}/keys`
   (what the UI copies) and the secret deploys to that Host; `enrollment.sh` drives rename, rotate, unlock and the
   allowlist through the API.
+
+## Trying M5-02 locally (2026-11-17)
+
+- **Q167** A Sync of an App of Apps doesn't sync a Child Application that has `adopt: true` and was never synced: it
+  is created and waits for its first manual Sync, after its Diff is checked (what `omegacd import` asks for). Until
+  then every Sync of the App of Apps holds it back; afterwards it is synced like any other child. `autoSync: true` in
+  its definition takes it over without review. Found when a Sync of the App of Apps took an imported stack over at
+  once. In M6-05.
+- **Q168** A **Date and time format** setting: Browser default (as before), European (`17.11.2026 18:42`, 24-hour) or
+  US (`11/17/2026 6:42 PM`, 12-hour); every date and time the UI shows goes through it.
+- **Q169** It is kept per browser (local storage), in a Display section of Settings: a viewer's preference, nothing on
+  the server.
+- **Q170** Q168 and Q169 are part of M5-02.
+- **Q171** A Child Application is rolled back as any Application, as in Argo CD: an older Revision from its history,
+  its Auto-Sync off. While it is rolled back, a Sync of its App of Apps neither syncs it nor turns its Auto-Sync back
+  on (other settings from Git still apply); a manual Sync of the child ends the rollback. Its page says it is rolled
+  back and why its App of Apps skips it. Replaces "Rollback is owned by Git" (v0.1's App of Apps), README included.
+- **Q172** Q171 is its own ticket, M5-09, after M5-02; tested with Q167, as both change which children a Sync of an
+  App of Apps syncs.
