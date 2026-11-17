@@ -167,7 +167,7 @@ TESTING.md documents it.
 line uncovered and unlisted, or lowers the total (tested with a throwaway change).
 
 ### M4-10 · Existing code to 100% coverage, and no silent path
-**Status:** split into M4-10a–e (Q129); closed by M4-10e
+**Status:** done (2026-11-17, M4-10a–e: PRs #134, #135, #138, #139, #140)
 **Depends on:** M4-09, M4-05 (Q97: v0.1-only code is deleted, not tested)
 
 Q96: every package's reachable lines covered, unit + integration + e2e combined; what no test can reach is marked in the code with
@@ -227,11 +227,11 @@ the hub's operator-facing Warn and Error lines tested (Q132); Q142–Q146.
 server's operator-facing Warn and Error lines tested (Q132); Q147–Q149.
 
 ### M4-10e · cli, importer to 100%; CI requires 100%
-**Status:** todo
+**Status:** done (2026-11-17, PR #140)
 **Depends on:** M4-10b, M4-10c, M4-10d
 
 **Done when:** `internal/cli` and `importer` are at 100% (or marked, Q130); CI's Coverage job and `make gate` fail on any
-uncovered block not marked (`-all`), floor 100 (Q133); closes M4-10.
+uncovered block not marked (`-all`) (Q133, Q150); closes M4-10.
 
 `importer`'s `DockerHost` failures (list, pull, helper container create/start/wait/copy) go through M4-10c's
 fault-injecting engine proxy, `internal/enginetest` (Q142).

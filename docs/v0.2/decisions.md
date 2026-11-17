@@ -489,3 +489,9 @@ is declared. Their details (syntax, UI, messages) are decided when each is built
   "at most 72 bytes"), and `OMEGACD_ADMIN_PASSWORD` that long stops the server naming the setting and the limit.
 - **Q149** The Agent's macOS warning is a function of the OS and the logger (`warnPlatform`), unit-tested with darwin
   and linux: the gate's Linux targets never run it.
+
+## cli, importer, CI at 100% (before M4-10e, 2026-11-17)
+
+- **Q150** The coverage total is over reachable code: marked statements leave it. CI's Coverage job, `make cover` and
+  `make gate` run the check with `-all` alone (every reachable block covered is 100%), so `-base`, `-floor` and
+  `test/coverage-floor` are deleted (this replaces Q133's floor of 100).

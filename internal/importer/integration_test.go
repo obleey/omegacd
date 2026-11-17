@@ -5,6 +5,7 @@ package importer
 import (
 	"bytes"
 	"context"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 
 	"filippo.io/age"
 
+	"github.com/obleey/omegacd/internal/enginetest"
 	"github.com/obleey/omegacd/internal/secrets"
 )
 
@@ -135,4 +137,78 @@ func skipUnlessRequired(t *testing.T, format string, args ...any) {
 		t.Fatalf("make test-all requires this test to run: "+format, args...)
 	}
 	t.Skipf(format, args...)
+}
+
+// fail fails every call to method on pattern.
+func fail(method, pattern string, status int) func(*http.Request) int {
+	return func(r *http.Request) int {
+		if enginetest.Is(r, method, pattern) {
+			return status
+		}
+		return 0
+	}
+}
+
+// Every call DockerHost makes to the engine failing fails what asked it, saying which step (Q142): listing the stacks,
+// pulling the helper image (refused, or broken off), its container made, started, waited for, its script failing (a
+// folder that is a file), and its output copied out. A folder's own entries in the copy are left out.
+func TestDockerHostFails(t *testing.T) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		skipUnlessRequired(t, "docker not on PATH")
+	}
+	ctx := t.Context()
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "conf"), 0o755)
+	os.WriteFile(filepath.Join(dir, "conf", "a.conf"), []byte("a"), 0o644)
+	h, err := Dial()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := h.Read(ctx, dir, []string{"conf"}); err != nil || len(got) != 1 || string(got["conf/a.conf"]) != "a" {
+		t.Fatalf("a folder: %v, %v", got, err)
+	}
+	if _, err := h.Info(ctx, filepath.Join(dir, "conf", "a.conf"), []string{"x"}); err == nil || !strings.Contains(err.Error(), "helper container exited") {
+		t.Errorf("a folder that is a file: %v", err)
+	}
+	h.Close()
+	noImage := func(r *http.Request) int {
+		if enginetest.Is(r, "GET", "/images/*/json") {
+			return http.StatusNotFound
+		}
+		return 0
+	}
+	for _, tc := range []struct {
+		name, want string
+		answer     func(*http.Request) int
+	}{
+		{"the stacks", "list containers", fail("GET", "/containers/json", 500)},
+		{"the pull refused", "pull " + helperImage, func(r *http.Request) int { return max(noImage(r), fail("POST", "/images/create", 500)(r)) }},
+		{"the pull broken off", "pull " + helperImage, func(r *http.Request) int { return max(noImage(r), fail("POST", "/images/create", 200)(r)) }},
+		{"its container", "create helper container", fail("POST", "/containers/create", 500)},
+		{"started", "start helper container", fail("POST", "/containers/*/start", 500)},
+		{"waited for", "helper container", fail("POST", "/containers/*/wait", 500)},
+		{"its output", "copy from helper container", fail("GET", "/containers/*/archive", 500)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("DOCKER_HOST", enginetest.Faulty(t, tc.answer))
+			h, err := Dial()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer h.Close()
+			if tc.name == "the stacks" {
+				_, err = h.Stacks(ctx)
+			} else if _, err = h.Info(ctx, dir, []string{"conf"}); err == nil {
+				_, err = h.Read(ctx, dir, []string{"conf"})
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("%v", err)
+			}
+			if tc.name == "its container" {
+				if _, err := h.Read(ctx, dir, []string{"conf"}); err == nil {
+					t.Error("read through a helper it can't make")
+				}
+			}
+		})
+	}
 }

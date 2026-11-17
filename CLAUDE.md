@@ -6,7 +6,7 @@ https://github.com/obleey/omegacd.
 ## Where things stand
 
 - **`main` is v0.2 in development**: a breaking redesign to pull-based Agents and a separate Source Server. Read
-  [docs/v0.2/README.md](docs/v0.2/README.md) first: architecture, every design decision (Q1–Q149), and the work as
+  [docs/v0.2/README.md](docs/v0.2/README.md) first: architecture, every design decision (Q1–Q150), and the work as
   tickets in [docs/v0.2/milestones/](docs/v0.2/milestones/). Work milestones in order (M1 → M8).
 - **v0.1 is deprecated** (Q97): `release-0.1` (push over SSH/TLS, last tag `v0.1.0-rc.10`) is frozen, no fixes; there
   is no v0.1.0 release. v0.2.0 is OmegaCD's first stable release. Write no tests or features for v0.1-only code: M4-05
@@ -58,8 +58,8 @@ https://github.com/obleey/omegacd.
   `docker compose -f test/e2e/forgejo.yaml up -d`, so the webhook test runs instead of skipping). The PR says what ran.
   **Coverage (Q96): 100% of all reachable code, existing code included**, unit + integration + e2e combined
   (generated code excluded). A line no test can reach (an error that can't happen) is marked in the code: a comment
-  `coverage: unreachable, <reason>` on its block's first line; every other uncovered line fails CI (`make cover`). Until
-  M4-10 brings existing code there, every PR covers 100% of its reachable changed lines and lowers nothing.
+  `coverage: unreachable, <reason>` on a line of its block; every other uncovered block fails CI, `make cover` and
+  `make gate` (`test/coverage -all`, Q150): every PR keeps all reachable code covered.
   **Logging (Q62):** nothing fails silently. Every error path logs, or returns to a caller that logs it; every decision
   logs at debug; never a secret. Checked on each PR's changed lines like coverage; a path's test checks its log line
   where the log is what tells an operator what happened.
