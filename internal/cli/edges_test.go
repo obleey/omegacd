@@ -246,6 +246,20 @@ func TestConfigFailures(t *testing.T) {
 	if r := run(t, srv, map[string]string{"XDG_CONFIG_HOME": dirCfg}, "", "logout"); r.code != 1 {
 		t.Errorf("logged out of a config it can't remove: %+v", r)
 	}
+	if os.Getuid() != 0 { // root writes anywhere; the suite runs as a normal user
+		ro := t.TempDir() // no config yet, and a folder it can't write: neither its folder nor its file is made
+		os.Chmod(ro, 0o500)
+		t.Cleanup(func() { os.Chmod(ro, 0o700) })
+		if r := run(t, srv, map[string]string{"XDG_CONFIG_HOME": ro}, "", "login"); r.code != 1 || !strings.Contains(r.stderr, "permission denied") {
+			t.Errorf("a config folder it can't make: %+v", r)
+		}
+		roFile := t.TempDir()
+		os.MkdirAll(filepath.Join(roFile, "omegacd"), 0o500)
+		t.Cleanup(func() { os.Chmod(filepath.Join(roFile, "omegacd"), 0o700) })
+		if r := run(t, srv, map[string]string{"XDG_CONFIG_HOME": roFile}, "", "login"); r.code != 1 || !strings.Contains(r.stderr, "permission denied") {
+			t.Errorf("a config file it can't write: %+v", r)
+		}
+	}
 	t.Setenv("HOME", "")
 	for _, cmd := range [][]string{{"login"}, {"logout"}} {
 		if r := run(t, srv, map[string]string{"XDG_CONFIG_HOME": "", "HOME": ""}, "", cmd...); r.code != 1 {
