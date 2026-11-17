@@ -99,6 +99,19 @@ func TestEngineFailures(t *testing.T) {
 			t.Fatalf("%v", err)
 		}
 	})
+	t.Run("a service whose image can't be inspected isn't kept: Compose decides", func(t *testing.T) {
+		logs := &logging.Buffer{}
+		f, _ := faulty(t, slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})), func(r *http.Request) int {
+			if p := r.URL.Path; r.Method == "GET" && strings.Contains(p, "/images/") && strings.HasSuffix(p, "/json") {
+				return http.StatusInternalServerError
+			}
+			return 0
+		})
+		f.Sync(ctx, app, dir, domain.SyncOptions{}) // Compose inspects the image too, and fails: only the decision before it counts
+		if !strings.Contains(logs.String(), `msg="not kept: its image isn't here to compare" service=web`) {
+			t.Fatalf("logs:\n%s", logs.String())
+		}
+	})
 	t.Run("listing the containers fails the Sync before anything changes", func(t *testing.T) {
 		f, _ := faulty(t, nil, fail("GET", "/containers/json"))
 		if err := f.Sync(ctx, app, dir, domain.SyncOptions{}); err == nil || !strings.Contains(err.Error(), "list containers") {
