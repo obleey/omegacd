@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/obleey/omegacd/internal/agent"
 )
 
 func TestPollInterval(t *testing.T) {
@@ -54,5 +56,60 @@ func TestUseDockerHost(t *testing.T) {
 	dir := t.TempDir()
 	if isSocket(dir) || isSocket(filepath.Join(dir, "none")) {
 		t.Fatal("a folder or nothing taken for a socket")
+	}
+}
+
+// Q149: only macOS gets the warning that it's for development.
+func TestWarnPlatform(t *testing.T) {
+	var logs bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&logs, nil))
+	warnPlatform(log, "linux")
+	if logs.Len() != 0 {
+		t.Fatalf("Linux warned: %s", logs.String())
+	}
+	warnPlatform(log, "darwin")
+	if !strings.Contains(logs.String(), `level=WARN msg="macOS is for development only (Q61)`) {
+		t.Fatalf("macOS not warned: %s", logs.String())
+	}
+}
+
+// omegacd agent rollback lists every Application's cached Revisions, the deployed one marked, or one Application's;
+// none says so, and a database it can't read fails it.
+func TestListCached(t *testing.T) {
+	ctx := t.Context()
+	state := t.TempDir()
+	db, err := agent.OpenDB(filepath.Join(state, "agent.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache, err := agent.OpenCache(db, filepath.Join(state, "cache"), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ag := agent.New(db, cache, nil, nil, nil, nil)
+	var out bytes.Buffer
+	if err := listCached(ctx, &out, ag, db, nil); err != nil || out.String() != "no Applications deployed on this Host\n" {
+		t.Fatalf("none: %q, %v", out.String(), err)
+	}
+	for _, rev := range []string{"r1", "r2"} {
+		if err := cache.Add(ctx, agent.Revision{App: "web", Revision: rev}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.SaveApp(ctx, agent.App{Name: "web", Revision: "r1"})
+	out.Reset()
+	if err := listCached(ctx, &out, ag, db, nil); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) != 3 || lines[0] != "web" || !strings.HasPrefix(lines[1], "  r2  ") || !strings.HasSuffix(lines[2], "  (deployed)") {
+		t.Fatalf("listed %q", out.String())
+	}
+	if err := listCached(ctx, &out, ag, db, []string{"ghost"}); err == nil {
+		t.Error("listed an Application not on this Host")
+	}
+	db.Close()
+	if err := listCached(ctx, &out, ag, db, nil); err == nil {
+		t.Error("listed from a closed database")
 	}
 }

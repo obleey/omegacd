@@ -606,7 +606,7 @@ All server settings are environment variables:
 | `OMEGACD_HISTORY_MAX_AGE` | *(forever)* | Sync Operations older than this (Go duration, e.g. `720h`) are deleted, the deployed one kept |
 | `OMEGACD_SSH_KNOWN_HOSTS` | `/etc/omegacd/known_hosts` | Host keys of Git servers, for Git over SSH |
 | `OMEGACD_POLL_INTERVAL` | `3m` | How often Git is polled (Go duration); `0` turns polling off (webhooks only, see [Webhooks](#webhooks)) |
-| `OMEGACD_ADMIN_PASSWORD` | *(generated)* | Initial `admin` password, used only on first start. If unset, a random one is logged and must be changed on first login |
+| `OMEGACD_ADMIN_PASSWORD` | *(generated)* | Initial `admin` password, used only on first start; at most 72 bytes, as any admin password. If unset, a random one is logged and must be changed on first login |
 | `OMEGACD_WEBHOOK_SECRET` | *(none)* | Shared secret for webhooks |
 | `OMEGACD_TRUSTED_PROXIES` | *(none)* | Comma-separated IPs/CIDRs of reverse proxies whose `X-Forwarded-For` is trusted |
 | `OMEGACD_SOURCE_SERVER` | *(in-process)* | `https://host:port` of a standalone Source Server (see below) |

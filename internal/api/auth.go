@@ -26,6 +26,7 @@ const (
 	sessionTTL    = 24 * time.Hour
 	maxBackoff    = 5 * time.Minute
 	maxLogins     = 10000 // tracked client IPs
+	maxPassword   = 72    // bcrypt reads no more (Q148)
 )
 
 // EnsureAdmin initialises the admin account on first start.
@@ -38,8 +39,11 @@ func EnsureAdmin(ctx context.Context, store domain.Store, initialPassword string
 	if generated {
 		initialPassword = rand.Text()[:20]
 	}
+	if len(initialPassword) > maxPassword { // Q148
+		return fmt.Errorf("OMEGACD_ADMIN_PASSWORD is %d bytes: at most %d", len(initialPassword), maxPassword)
+	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(initialPassword), bcrypt.DefaultCost)
-	if err != nil {
+	if err != nil { // coverage: unreachable, bcrypt refuses only a password over its 72 bytes, checked above
 		return err
 	}
 	if err := store.SetAdminPassword(ctx, string(hash), generated); err != nil {
@@ -256,6 +260,10 @@ func (s *server) changePassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("%w: new password must be at least 8 characters and differ from the current one", domain.ErrInvalid))
 		return
 	}
+	if len(req.NewPassword) > maxPassword { // Q148
+		writeError(w, fmt.Errorf("%w: new password must be at most %d bytes", domain.ErrInvalid, maxPassword))
+		return
+	}
 	hash, _, err := s.Store.AdminPasswordHash(r.Context())
 	if err != nil {
 		writeError(w, err)
@@ -266,7 +274,7 @@ func (s *server) changePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	newHash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
-	if err != nil {
+	if err != nil { // coverage: unreachable, bcrypt refuses only a password over its 72 bytes, checked above
 		writeError(w, err)
 		return
 	}

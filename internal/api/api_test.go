@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -39,6 +41,8 @@ import (
 type fakeStore struct {
 	domain.Store // unimplemented methods panic
 	mu           sync.Mutex
+	fail         map[string]error // the methods named fail with their error (breaks)
+	regs         []domain.RegistryCredential
 	backupErr    error // the backup fails with it
 	hash         string
 	mustChange   bool
@@ -56,9 +60,25 @@ func (s *fakeSource) ListCredentials(context.Context) ([]domain.RepoCredential, 
 	return s.creds, s.err
 }
 
+// breaks makes method fail with err from now on.
+func (s *fakeStore) breaks(method string, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.fail == nil {
+		s.fail = map[string]error{}
+	}
+	s.fail[method] = err
+}
+
+// broken is method's error; the caller holds s.mu.
+func (s *fakeStore) broken(method string) error { return s.fail[method] }
+
 func (s *fakeStore) CreateSession(_ context.Context, h string, exp time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.broken("CreateSession"); err != nil {
+		return err
+	}
 	s.sessions[h] = exp
 	return nil
 }
@@ -66,6 +86,9 @@ func (s *fakeStore) CreateSession(_ context.Context, h string, exp time.Time) er
 func (s *fakeStore) GetSession(_ context.Context, h string) (time.Time, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.broken("GetSession"); err != nil {
+		return time.Time{}, err
+	}
 	exp, ok := s.sessions[h]
 	if !ok || time.Now().After(exp) {
 		return time.Time{}, domain.ErrNotFound
@@ -76,6 +99,9 @@ func (s *fakeStore) GetSession(_ context.Context, h string) (time.Time, error) {
 func (s *fakeStore) ExtendSession(_ context.Context, h string, exp time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.broken("ExtendSession"); err != nil {
+		return err
+	}
 	if _, ok := s.sessions[h]; !ok {
 		return domain.ErrNotFound
 	}
@@ -86,6 +112,9 @@ func (s *fakeStore) ExtendSession(_ context.Context, h string, exp time.Time) er
 func (s *fakeStore) DeleteSession(_ context.Context, h string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.broken("DeleteSession"); err != nil {
+		return err
+	}
 	delete(s.sessions, h)
 	return nil
 }
@@ -93,6 +122,9 @@ func (s *fakeStore) DeleteSession(_ context.Context, h string) error {
 func (s *fakeStore) DeleteSessionsExcept(_ context.Context, keep string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.broken("DeleteSessionsExcept"); err != nil {
+		return err
+	}
 	for h := range s.sessions {
 		if h != keep {
 			delete(s.sessions, h)
@@ -104,6 +136,9 @@ func (s *fakeStore) DeleteSessionsExcept(_ context.Context, keep string) error {
 func (s *fakeStore) AdminPasswordHash(context.Context) (string, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.broken("AdminPasswordHash"); err != nil {
+		return "", false, err
+	}
 	if s.hash == "" {
 		return "", false, domain.ErrNotFound
 	}
@@ -113,6 +148,9 @@ func (s *fakeStore) AdminPasswordHash(context.Context) (string, bool, error) {
 func (s *fakeStore) SetAdminPassword(_ context.Context, hash string, mustChange bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.broken("SetAdminPassword"); err != nil {
+		return err
+	}
 	s.hash, s.mustChange = hash, mustChange
 	return nil
 }
@@ -139,8 +177,11 @@ type fakeController struct {
 	changed    chan string
 	hosts      map[string]domain.Host
 	lastSync   domain.SyncRequest
-	syncErr    error   // Sync fails with it
-	lastDelete [2]bool // cascade, volumes
+	syncErr    error    // Sync fails with it
+	listErr    error    // ListApps fails with it
+	logLines   []string // what Logs writes
+	logErr     error    // and fails with after
+	lastDelete [2]bool  // cascade, volumes
 }
 
 func (c *fakeController) ListHosts(context.Context) ([]domain.HostView, error) {
@@ -172,6 +213,9 @@ func (c *fakeController) HostKeys(_ context.Context, host string) ([]domain.Host
 func (c *fakeController) ListApps(context.Context) ([]domain.AppView, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.listErr != nil {
+		return nil, c.listErr
+	}
 	var out []domain.AppView
 	for _, a := range c.apps {
 		out = append(out, a)
@@ -264,15 +308,82 @@ type env struct {
 	log   *strings.Builder // ponytail: unlocked, read only after the request it logged returned
 }
 
-func newEnv(t *testing.T, mustChange bool) *env {
+func (s *fakeStore) ListRegistryCredentials(context.Context) ([]domain.RegistryCredential, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.regs), s.broken("ListRegistryCredentials")
+}
+
+func (s *fakeStore) SaveRegistryCredential(_ context.Context, c domain.RegistryCredential) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if c.ID == 0 {
+		c.ID = int64(len(s.regs) + 1)
+		s.regs = append(s.regs, c)
+		return c.ID, nil
+	}
+	i := slices.IndexFunc(s.regs, func(x domain.RegistryCredential) bool { return x.ID == c.ID })
+	if i < 0 {
+		return 0, domain.ErrNotFound
+	}
+	s.regs[i] = c
+	return c.ID, nil
+}
+
+func (s *fakeStore) DeleteRegistryCredential(_ context.Context, id int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := len(s.regs)
+	s.regs = slices.DeleteFunc(s.regs, func(x domain.RegistryCredential) bool { return x.ID == id })
+	if len(s.regs) == n {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
+func (s *fakeStore) ListTokens(context.Context) ([]domain.APIToken, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []domain.APIToken
+	for _, t := range s.tokens {
+		out = append(out, t)
+	}
+	return out, nil
+}
+
+func (s *fakeStore) DeleteToken(_ context.Context, id int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for plain, t := range s.tokens {
+		if t.ID == id {
+			delete(s.tokens, plain)
+			return nil
+		}
+	}
+	return domain.ErrNotFound
+}
+
+// The admin's password and a new one, made for each run: no test holds a password (gitleaks, GitGuardian).
+var adminPassword, newPassword = rand.Text(), rand.Text()
+
+func loginBody() string { return `{"username":"admin","password":"` + adminPassword + `"}` }
+
+func changeBody(current, next string) string {
+	return `{"currentPassword":"` + current + `","newPassword":"` + next + `"}`
+}
+
+func newEnv(t *testing.T, mustChange bool) *env { return newEnvWith(t, mustChange, func(*Config) {}) }
+
+// newEnvWith is newEnv with its Config changed by opt first.
+func newEnvWith(t *testing.T, mustChange bool, opt func(*Config)) *env {
 	store := &fakeStore{tokens: map[string]domain.APIToken{}, sessions: map[string]time.Time{}}
-	hash, _ := bcrypt.GenerateFromPassword([]byte("secret123"), bcrypt.MinCost)
+	hash, _ := bcrypt.GenerateFromPassword([]byte(adminPassword), bcrypt.MinCost)
 	store.hash, store.mustChange = string(hash), mustChange
 	ctrl := &fakeController{apps: map[string]domain.AppView{}, events: make(chan domain.Event, 1), changed: make(chan string, 4), hosts: map[string]domain.Host{}}
 	src := &fakeSource{}
 	var log strings.Builder
 	logger, _ := logging.New(&log, "debug", "text")
-	h := New(Config{
+	cfg := Config{
 		Log:        logger,
 		Controller: ctrl, Store: store, Source: src, WebhookSecret: "s3", Agents: agents.New(store, logger),
 		Backup: func(ctx context.Context, w io.Writer) error {
@@ -298,8 +409,9 @@ func newEnv(t *testing.T, mustChange bool) *env {
 			"favicon.svg":           {Data: []byte("<svg/>")},
 			"logo.png":              {Data: []byte("\x89PNG")},
 		},
-	})
-	srv := httptest.NewServer(h)
+	}
+	opt(&cfg)
+	srv := httptest.NewServer(New(cfg))
 	t.Cleanup(srv.Close)
 	jar, _ := cookiejar.New(nil)
 	return &env{t: t, srv: srv, store: store, src: src, ctrl: ctrl, c: &http.Client{Jar: jar}, log: &log}
@@ -334,7 +446,7 @@ func (e *env) expect(method, path, body string, want int, hdr ...string) string 
 }
 
 func (e *env) login() {
-	e.expect("POST", "/api/auth/login", `{"username":"admin","password":"secret123"}`, 200)
+	e.expect("POST", "/api/auth/login", loginBody(), 200)
 }
 
 func TestLoginLogoutMe(t *testing.T) {
@@ -348,20 +460,20 @@ func TestLoginLogoutMe(t *testing.T) {
 	e.expect("GET", "/api/auth/me", "", 401)
 
 	e.expect("POST", "/api/auth/login", `{"username":"admin","password":"nope"}`, 401)
-	e.expect("POST", "/api/auth/login", `{"username":"admin","password":"secret123"}`, 429)
+	e.expect("POST", "/api/auth/login", loginBody(), 429)
 }
 
 func TestMustChangePassword(t *testing.T) {
 	e := newEnv(t, true)
-	if b := e.expect("POST", "/api/auth/login", `{"username":"admin","password":"secret123"}`, 200); !strings.Contains(b, `"mustChangePassword":true`) {
+	if b := e.expect("POST", "/api/auth/login", loginBody(), 200); !strings.Contains(b, `"mustChangePassword":true`) {
 		t.Fatal(b)
 	}
 	if b := e.expect("GET", "/api/apps", "", 403); !strings.Contains(b, "password change required") {
 		t.Fatal(b)
 	}
 	e.expect("GET", "/api/auth/me", "", 200)
-	e.expect("POST", "/api/auth/password", `{"currentPassword":"wrong","newPassword":"newsecret1"}`, 400)
-	e.expect("POST", "/api/auth/password", `{"currentPassword":"secret123","newPassword":"newsecret1"}`, 204)
+	e.expect("POST", "/api/auth/password", changeBody("wrong", newPassword), 400)
+	e.expect("POST", "/api/auth/password", changeBody(adminPassword, newPassword), 204)
 	e.expect("GET", "/api/apps", "", 200)
 }
 
@@ -372,7 +484,7 @@ func TestPasswordChangeRevokesOtherSessions(t *testing.T) {
 	jar, _ := cookiejar.New(nil)
 	other.c = &http.Client{Jar: jar}
 	other.login()
-	e.expect("POST", "/api/auth/password", `{"currentPassword":"secret123","newPassword":"newsecret1"}`, 204)
+	e.expect("POST", "/api/auth/password", changeBody(adminPassword, newPassword), 204)
 	e.expect("GET", "/api/auth/me", "", 200)
 	other.expect("GET", "/api/auth/me", "", 401)
 }
@@ -594,11 +706,15 @@ func TestAcceptsGzip(t *testing.T) {
 
 func TestEnsureAdmin(t *testing.T) {
 	s := &fakeStore{}
-	if err := EnsureAdmin(context.Background(), s, "", slog.New(slog.DiscardHandler)); err != nil {
+	var logs strings.Builder
+	if err := EnsureAdmin(context.Background(), s, "", slog.New(slog.NewTextHandler(&logs, nil))); err != nil {
 		t.Fatal(err)
 	}
 	if s.hash == "" || !s.mustChange {
 		t.Fatal("expected generated password with mustChange")
+	}
+	if !strings.Contains(logs.String(), `level=WARN msg="initial admin password: log in and change it" username=admin initial=`) {
+		t.Fatalf("logs: %s", logs.String())
 	}
 	old := s.hash
 	EnsureAdmin(context.Background(), s, "other", slog.New(slog.DiscardHandler))

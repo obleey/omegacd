@@ -129,7 +129,7 @@ func (s *server) export(w http.ResponseWriter, r *http.Request) {
 	}
 	a := v.Application
 	out, err := appdef.Marshal(a)
-	if err != nil {
+	if err != nil { // coverage: unreachable, a definition is strings, lists and booleans: it always encodes as YAML
 		writeError(w, err)
 		return
 	}
@@ -176,11 +176,11 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 		case <-ping.C:
 			io.WriteString(w, ": ping\n\n")
 		case ev, ok := <-ch:
-			if !ok {
+			if !ok { // coverage: unreachable, only this handler's own unsubscribe closes it, when it returns
 				return
 			}
 			data, err := json.Marshal(ev)
-			if err != nil {
+			if err != nil { // coverage: unreachable, events hold views, operations and progress: plain structs
 				continue
 			}
 			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Type, data)
@@ -494,6 +494,7 @@ func find[T any](items []T, err error, id int64, idOf func(T) int64) (T, error) 
 			return it, nil
 		}
 	}
+	// coverage: unreachable, only a delete racing the save that just returned id
 	return zero, domain.ErrNotFound
 }
 

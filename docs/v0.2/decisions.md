@@ -479,3 +479,13 @@ is declared. Their details (syntax, UI, messages) are decided when each is built
 - **Q145** (not needed: a Sync's engine errors already reach its report and the Agent's "deploy failed" Error.)
 - **Q146** `Engine.Status` skips a container gone between listing and inspecting it (Compose recreating a service),
   logged at debug, instead of failing: Self-Heal, status reports and Logs read it exactly then.
+
+## Controller, api, cmd/omegacd (before M4-10d, 2026-11-17)
+
+- **Q147** The server's, Source Server's and Agent's startup errors are tested end to end (`test/e2e/startup.sh`): the
+  real binary started once per bad setting, exiting 1 with an Error line that says what to fix; `run`, `runSourceServer`
+  and `runAgent` stay as they are.
+- **Q148** A password over bcrypt's 72 bytes is the user's mistake, not the server's: changing to one is refused (400,
+  "at most 72 bytes"), and `OMEGACD_ADMIN_PASSWORD` that long stops the server naming the setting and the limit.
+- **Q149** The Agent's macOS warning is a function of the OS and the logger (`warnPlatform`), unit-tested with darwin
+  and linux: the gate's Linux targets never run it.

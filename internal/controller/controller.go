@@ -27,7 +27,6 @@ const (
 	maxRetries   = 5
 	retryBase    = 5 * time.Second
 	retryMax     = 3 * time.Minute
-	retryTick    = 5 * time.Second
 	syncTimeout  = 30 * time.Minute
 	subscriberCh = 64
 )
@@ -81,6 +80,9 @@ type Controller struct {
 	subs    map[chan domain.Event]struct{}
 }
 
+// retryTick is how often Run looks for retries that are due.
+var retryTick = 5 * time.Second // tests wait less
+
 func New(cfg Config) *Controller {
 	cfg.Log = cmp.Or(cfg.Log, logging.Discard)
 	if cfg.NormalizeURL == nil {
@@ -128,7 +130,12 @@ func (c *Controller) reconcileAll(ctx context.Context) {
 
 func (c *Controller) reconcileByName(ctx context.Context, name string) {
 	a, err := c.cfg.Store.GetApp(ctx, name)
-	if err == nil {
+	switch {
+	case errors.Is(err, domain.ErrNotFound): // deleted since its retry was planned
+		c.cfg.Log.DebugContext(ctx, "retry: the application is gone", "app", name)
+	case err != nil:
+		c.cfg.Log.ErrorContext(ctx, "retry: read the application", "app", name, "err", err)
+	default:
 		c.reconcile(ctx, a)
 	}
 }
@@ -171,10 +178,11 @@ func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fe
 
 	last, err := c.cfg.Store.LastSucceededOp(ctx, a.Name)
 	deployed := err == nil
+	var lastErr error // what is deployed is unknown: never taken for "never synced", which Auto-Sync would deploy
 	if deployed {
 		v.DeployedSHA = last.Revision
 	} else if !errors.Is(err, domain.ErrNotFound) {
-		v.SyncMessage = err.Error()
+		lastErr = err
 	}
 	if ops, err := c.cfg.Store.ListOps(ctx, a.Name); err == nil && len(ops) > 0 {
 		v.LastOperation = &ops[0]
@@ -196,6 +204,8 @@ func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fe
 		v.TargetSHA = sha
 	}
 	switch {
+	case lastErr != nil:
+		v.SyncMessage = "the deployed revision can't be read: " + lastErr.Error()
 	case err != nil:
 		v.SyncMessage = err.Error()
 		if errors.Is(err, domain.ErrUnavailable) && deployed { // Q124
@@ -900,30 +910,31 @@ func (c *Controller) Resources(ctx context.Context, name string) (domain.LiveSta
 	if err != nil {
 		return domain.LiveState{}, err
 	}
+	return c.resources(ctx, a), nil
+}
+
+func (c *Controller) resources(ctx context.Context, a domain.Application) domain.LiveState {
 	if a.Kind == domain.KindApps {
 		// its children are Applications of their own, listed with ListApps
-		return domain.LiveState{Services: []string{}, Containers: []domain.Container{}, Resources: []domain.Resource{}, Health: c.cachedView(ctx, a).Health}, nil
+		return domain.LiveState{Services: []string{}, Containers: []domain.Container{}, Resources: []domain.Resource{}, Health: c.cachedView(ctx, a).Health}
 	}
-	return c.agentLive(ctx, a), nil
+	return c.agentLive(ctx, a)
 }
 
 const maxResourceContent = 256 << 10
 
 // ResourceDetail only serves Resources listed by Resources, which is what keeps it from reading arbitrary paths.
 func (c *Controller) ResourceDetail(ctx context.Context, name, kind, resName string) (domain.ResourceDetail, error) {
-	live, err := c.Resources(ctx, name)
+	a, err := c.cfg.Store.GetApp(ctx, name)
 	if err != nil {
 		return domain.ResourceDetail{}, err
 	}
+	live := c.resources(ctx, a)
 	i := slices.IndexFunc(live.Resources, func(r domain.Resource) bool { return r.Kind == kind && r.Name == resName })
 	if i < 0 {
 		return domain.ResourceDetail{}, fmt.Errorf("%s %q: %w", kind, resName, domain.ErrNotFound)
 	}
 	d := domain.ResourceDetail{Resource: live.Resources[i], Info: map[string]string{}}
-	a, err := c.cfg.Store.GetApp(ctx, name)
-	if err != nil {
-		return domain.ResourceDetail{}, err
-	}
 	return c.agentDetail(ctx, a, d)
 }
 
@@ -1075,7 +1086,8 @@ func (c *Controller) worstHealth(children []domain.Application) domain.HealthSta
 // refreshParent recomputes an App of Apps' Health from its children's cached views and publishes it.
 func (c *Controller) refreshParent(ctx context.Context, name string) {
 	children, err := c.children(ctx, name)
-	if err != nil {
+	if err != nil { // its Health stays as last computed; the next reconcile of it tries again
+		c.cfg.Log.DebugContext(ctx, "app of apps' health not refreshed", "app", name, "err", err)
 		return
 	}
 	c.mu.Lock()
@@ -1207,7 +1219,10 @@ func (c *Controller) pendingChildren(ctx context.Context, a domain.Application, 
 	c.mu.Unlock()
 	var msg string
 	if r, err := c.render(ctx, a, sha); err == nil && r.Invalid == nil {
-		diffs, _ := c.childDiff(ctx, a.Name, r.Apps)
+		diffs, err := c.childDiff(ctx, a.Name, r.Apps)
+		if err != nil { // the Sync says why
+			c.cfg.Log.DebugContext(ctx, "pending children not described", "app", a.Name, "err", err)
+		}
 		msg = describeChildren(diffs)
 	}
 	c.mu.Lock()

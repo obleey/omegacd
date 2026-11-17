@@ -180,6 +180,7 @@ func composeText(a domain.Application, dir string) (string, error) {
 func (c *Controller) AgentReported(ctx context.Context, app string) {
 	a, err := c.cfg.Store.GetApp(ctx, app)
 	if err != nil {
+		c.cfg.Log.DebugContext(ctx, "a report for an application not here (deleted meanwhile)", "app", app, "err", err)
 		return
 	}
 	if ops, err := c.cfg.Store.ListOps(ctx, app); err == nil && len(ops) > 0 {
