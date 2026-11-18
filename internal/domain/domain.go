@@ -114,16 +114,22 @@ const (
 
 // SyncOperation is one attempt to Sync an Application to a Revision.
 type SyncOperation struct {
-	ID         int64     `json:"id"`
-	App        string    `json:"app"`
-	Revision   string    `json:"revision"` // resolved commit SHA
-	TreeHash   string    `json:"treeHash"` // git tree hash of the app path at Revision
-	Phase      OpPhase   `json:"phase"`
-	Message    string    `json:"message"`
-	Trigger    string    `json:"trigger"` // "manual", "auto", "self-heal", "rollback"
+	ID       int64   `json:"id"`
+	App      string  `json:"app"`
+	Revision string  `json:"revision"` // resolved commit SHA
+	TreeHash string  `json:"treeHash"` // git tree hash of the app path at Revision
+	Phase    OpPhase `json:"phase"`
+	Message  string  `json:"message"`
+	// Trigger is "manual", "auto", "self-heal", "rollback", or what started it on the Host: "restore", "self-heal",
+	// TriggerHostRollback
+	Trigger    string    `json:"trigger"`
 	StartedAt  time.Time `json:"startedAt"`
 	FinishedAt time.Time `json:"finishedAt,omitzero"`
 }
+
+// TriggerHostRollback is a rollback run on the Host with omegacd agent rollback (Q25), as the Control Plane records it:
+// the UI shows it apart from a Rollback through the Control Plane (Q174).
+const TriggerHostRollback = "host-rollback"
 
 // RepoCredential applies to every Repository whose URL starts with URLPrefix.
 type RepoCredential struct {
@@ -360,6 +366,9 @@ type Container struct {
 	Status   string       `json:"status"` // human docker status line
 	ExitCode int          `json:"exitCode"`
 	Health   HealthStatus `json:"health"`
+	// when it last started and stopped, for its uptime counted live (Q179); zero when not known (an older Agent)
+	StartedAt  time.Time `json:"startedAt,omitzero"`
+	FinishedAt time.Time `json:"finishedAt,omitzero"`
 }
 
 // Resource is a network or volume on the Host, or a file the Application's services read:

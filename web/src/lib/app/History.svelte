@@ -6,6 +6,7 @@
 	import Icon from '../Icon.svelte';
 	import Badge from '../Badge.svelte';
 	import { when } from '../display.svelte.ts';
+	import { triggerLabel } from '../badges.ts';
 
 	// onrollback is omitted for Child Applications: their Revision is pinned in Git, not rolled back here.
 	let { ops, onrollback, web }: { ops: SyncOperation[] | null; onrollback?: (op: SyncOperation) => void; web?: GitWeb | null } = $props();
@@ -38,7 +39,7 @@
 				{#each ops as o (o.id)}
 					<tr>
 						<td class="mono"><GitLink href={web?.commit(o.revision)} title="Open commit {o.revision}">{short(o.revision)}</GitLink></td>
-						<td>{o.trigger}</td>
+						<td>{triggerLabel(o.trigger)}</td>
 						<td><Badge status={o.phase} label="Phase" /></td>
 						<td class="msg small">{o.message || '—'}</td>
 						<td class="small nowrap" title={when(o.startedAt)}>

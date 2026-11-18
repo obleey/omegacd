@@ -9,9 +9,12 @@
 	import { when } from '#lib/display.svelte.ts';
 	import Empty from '#lib/Empty.svelte';
 	import { shortKey, sopsYaml } from '#lib/hostkeys.ts';
-	import { engineLabel, hostState, hostTone, lastSeen, parseAllowlist, renameBlocked } from '#lib/hosts.ts';
+	import { hostState, hostTone, lastSeen, parseAllowlist, renameBlocked } from '#lib/hosts.ts';
+	import { hostBadges } from '#lib/badges.ts';
+	import HostBadges from '#lib/HostBadges.svelte';
 	import Icon from '#lib/Icon.svelte';
 	import { live, loadHosts } from '#lib/live.svelte.ts';
+	import { appTone } from '#lib/status.ts';
 	import { toast, toastError } from '#lib/toast.svelte.ts';
 
 	let error = $state('');
@@ -141,6 +144,7 @@
 					<div class="row badges">
 						<Badge status={h.status.connected ? 'Connected' : 'Disconnected'} label="Connection" size="sm" />
 						<Badge status={state} label="Enrollment" size="sm" />
+						<HostBadges badges={hostBadges(h).filter((b) => b.status !== 'Host offline')} />
 					</div>
 				</header>
 
@@ -159,16 +163,20 @@
 
 				<dl>
 					<dt>Agent</dt>
-					<dd>
-						{h.agent?.version ?? '—'}
-						{#if h.agent?.outdated}<Badge status="Outdated" text="outdated" size="sm" label="Agent" />{/if}
-					</dd>
-					<dt>Engine</dt>
-					<dd>{engineLabel(h.agent)}</dd>
+					<dd>{h.agent?.version ?? '—'}</dd>
 					<dt>OS/arch</dt>
 					<dd>{h.agent?.os ? `${h.agent.os}/${h.agent.arch}` : '—'}</dd>
 					<dt>Applications</dt>
-					<dd>{h.apps.length ? `${h.apps.length}: ${h.apps.join(', ')}` : 'none'}</dd>
+					<dd>
+						{#if h.apps.length}
+							<span class="apps">
+								{#each h.apps as name (name)}
+									{@const a = live.apps[name]}
+									<a class="appchip {a ? appTone(a) : 'overlay'}" href="/apps/{enc(name)}" title={a ? `${a.syncStatus} · ${a.health}` : undefined}><Icon name="app" size={13} />{name}</a>
+								{/each}
+							</span>
+						{:else}none{/if}
+					</dd>
 					<dt>Key</dt>
 					<dd>{#if h.fingerprint}<code class="wrap">{h.fingerprint}</code>{:else}<span class="muted">when its Agent enrolls</span>{/if}</dd>
 					<dt>Allowed from</dt>
@@ -253,6 +261,7 @@
 	.host:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); border-color: color-mix(in srgb, var(--c) 40%, var(--border)); }
 	.host:focus-within { border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); }
 	.green { --c: var(--green); }
+	.blue { --c: var(--blue); }
 	.yellow { --c: var(--yellow); }
 	.red { --c: var(--red); }
 	.overlay { --c: var(--overlay1); }
@@ -265,6 +274,12 @@
 	dd { margin: 0; min-width: 0; }
 	.wrap { overflow-wrap: anywhere; }
 	.copies { margin-top: 0.3rem; gap: 0.35rem; }
+	/* an Application on this Host, its dot in its tile's color */
+	.apps { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+	.appchip { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.05rem 0.5rem 0.05rem 0.45rem; border: 1px solid var(--border);
+		border-radius: 999px; color: var(--text); font-size: 0.8rem; text-decoration: none; transition: border-color 0.2s; }
+	.appchip::before { content: ''; width: 0.45rem; height: 0.45rem; border-radius: 50%; background: var(--c); order: -1; }
+	.appchip:hover { border-color: color-mix(in srgb, var(--c) 50%, var(--border)); }
 	button.sm { padding: 0.15rem 0.5rem; font-size: 0.78rem; }
 	footer { border-top: 1px solid var(--border); padding-top: 0.8rem; gap: 0.4rem; }
 	.alert { margin: 0; color: var(--red); background: color-mix(in srgb, var(--red) 10%, transparent); border: 1px solid color-mix(in srgb, var(--red) 35%, transparent);

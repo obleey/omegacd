@@ -284,6 +284,10 @@ services:
 		t.Fatal(err)
 	}
 	ls, _ := e.Status(ctx, app)
+	started := ls.Containers[0].StartedAt // Q179: the start time, for its uptime counted live
+	if time.Since(started) > time.Minute || time.Since(started) < 0 || !ls.Containers[0].FinishedAt.IsZero() {
+		t.Fatalf("running: started %v, finished %v", started, ls.Containers[0].FinishedAt)
+	}
 	timeout := 0
 	if _, err := e.local().cli.Client().ContainerStop(ctx, ls.Containers[0].ID, client.ContainerStopOptions{Timeout: &timeout}); err != nil {
 		t.Fatal(err)
@@ -299,6 +303,9 @@ services:
 	}
 	if diffs, _ := e.Diff(ctx, app, dir, ""); len(diffs) != 1 || diffs[0].Change != "stopped" {
 		t.Fatalf("Diff = %+v (container state %q); want web stopped", diffs, state)
+	}
+	if c := ls.Containers[0]; !c.StartedAt.Equal(started) || c.FinishedAt.Before(started) {
+		t.Fatalf("stopped: started %v (was %v), finished %v", c.StartedAt, started, c.FinishedAt)
 	}
 	if ls, _ = e.Status(ctx, app); ls.Health != domain.Degraded {
 		t.Fatalf("Health = %s; want Degraded", ls.Health)

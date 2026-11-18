@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { lineDiff } from './linediff.ts';
+import { changedFiles, lineDiff } from './linediff.ts';
 
 const render = (a: string, b: string) =>
 	lineDiff(a, b)
@@ -40,4 +40,12 @@ test('applying the diff to a yields b', () => {
 			.join('\n') + '\n';
 	assert.equal(side('+'), a);
 	assert.equal(side('-'), b);
+});
+
+test('the files a git diff changes', () => {
+	const d = 'diff --git a/apps/shop/site/index.html b/apps/shop/site/index.html\nindex 1..2 100644\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n' +
+		'diff --git a/apps/shop/old.conf b/apps/shop/new.conf\nsimilarity index 90%\n';
+	assert.deepEqual(changedFiles(d), ['apps/shop/site/index.html', 'apps/shop/new.conf']);
+	assert.deepEqual(changedFiles(''), []);
+	assert.deepEqual(changedFiles(undefined), []);
 });

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { gitWeb } from '#lib/gitweb.ts';
+	import { gitWeb, repoName } from '#lib/gitweb.ts';
 	import GitLink from '#lib/GitLink.svelte';
 	import { onMount } from 'svelte';
 	import { flip } from 'svelte/animate';
@@ -12,6 +12,9 @@
 	import Empty from '#lib/Empty.svelte';
 	import { refreshApp, syncApp } from '#lib/actions.ts';
 	import PolicyChips from '#lib/PolicyChips.svelte';
+	import { appBadges, triggerLabel } from '#lib/badges.ts';
+	import HostBadges from '#lib/HostBadges.svelte';
+	import { engineLabel } from '#lib/hosts.ts';
 	import { isSyncing, meta, ms, shownSync } from '#lib/status.ts';
 
 	let filter = $state('');
@@ -100,15 +103,14 @@
 	}
 	let rows = $derived(top.flatMap((a) => rowsOf(a, 0)));
 
-	// Tiles: each App of Apps is a group holding all its matching descendants.
-	type Group = { a: AppView; kids: AppView[]; pending: PendingChild[]; total: number; open: boolean };
-	let groups = $derived(
-		top.flatMap((a): Group[] => {
-			const desc = rowsOf(a, 0).slice(1).filter((r) => !r.p).map((r) => r.a);
-			if (!matches(a) && !desc.length) return [];
-			const pending = pendingOf(a.name);
-			const total = (kidsOf[a.name]?.length ?? 0) + pending.length;
-			return [{ a, kids: desc, pending, total, open: filtering || !collapsed[a.name] }];
+
+	// the tiles: each App of Apps, then its matching descendants and the children Git declares but aren't created yet
+	type Cell = { a: AppView; kids?: number; p?: PendingChild };
+	let cells = $derived(
+		top.flatMap((a): Cell[] => {
+			const kids = (kidsOf[a.name] ?? []).filter(matches); // all of them: the list view's collapsing isn't the tiles'
+			if (!matches(a) && !kids.length) return [];
+			return [{ a, kids: kidsOf[a.name]?.length ?? 0 }, ...kids.map((k) => ({ a: k })), ...pendingOf(a.name).map((p) => ({ a, p }))];
 		})
 	);
 
@@ -192,50 +194,17 @@
 	</div>
 {:else if view === 'tiles'}
 	<div class="tiles">
-		{#each groups as g, i (g.a.name)}
-			<div
-				class="cell"
-				class:group={g.a.kind === 'apps' && g.total > 0}
-				in:fly|global={{ y: 16, duration: ms(420), delay: ms(Math.min(i, 10) * 45) }}
-				animate:flip={{ duration: ms(350) }}
-			>
-				{#if g.a.kind === 'apps' && g.total > 0}
-					<div class="ghead">
-						<button
-							class="ghost sm"
-							aria-expanded={g.open}
-							disabled={filtering}
-							onclick={() => (collapsed[g.a.name] = g.open)}
-						>
-							<span class="chev" class:open={g.open}><Icon name="chevron" size={14} /></span>
-							{g.open ? 'Hide' : 'Show'} {g.total} Child Application{g.total === 1 ? '' : 's'}
-						</button>
-						<span class="muted small">of App of Apps <strong>{g.a.name}</strong></span>
-					</div>
-					<div class="tiles inner">
-						<AppTile a={g.a} kids={g.total - g.pending.length} />
-						{#if g.open}
-							{#each g.kids as k, j (k.name)}
-								<div
-									class="kid"
-									in:fly={{ x: -14, duration: ms(320), delay: ms(j * 50) }}
-									out:fly={{ x: -14, duration: ms(180) }}
-									animate:flip={{ duration: ms(300) }}
-								>
-									<AppTile a={k} kids={kidsOf[k.name]?.length} />
-								</div>
-							{/each}
-							{#each g.pending as p (p.name)}
-								<article class="card pending">
-									<header><Icon name="app" size={18} /><h3>{p.name}</h3><span class="tag">pending</span></header>
-									<div class="status"><Badge status="OutOfSync" label="Sync Status" /><Badge status="Missing" label="Health Status" /></div>
-									<p class="muted small"><span class="mono">{p.host}</span> · Sync {g.a.name} to create</p>
-								</article>
-							{/each}
-						{/if}
-					</div>
+		<!-- one flat grid, as Argo CD: an App of Apps is a tile, each child follows it and names it (Q180) -->
+		{#each cells as c, i (c.p ? `p:${c.p.name}` : c.a.name)}
+			<div class="cell" in:fly|global={{ y: 16, duration: ms(420), delay: ms(Math.min(i, 10) * 45) }} animate:flip={{ duration: ms(350) }}>
+				{#if c.p}
+					<article class="card pending">
+						<header><Icon name="app" size={18} /><h3>{c.p.name}</h3><span class="tag">pending</span></header>
+						<div class="status"><Badge status="OutOfSync" label="Sync Status" /><Badge status="Missing" label="Health Status" /></div>
+						<p class="muted small"><span class="mono">{c.p.host}</span> · Sync {c.a.name} to create</p>
+					</article>
 				{:else}
-					<AppTile a={g.a} kids={g.total} />
+					<AppTile a={c.a} kids={c.kids} />
 				{/if}
 			</div>
 		{/each}
@@ -288,10 +257,14 @@
 									{#if a.notInGit}<span class="tag warn">not in Git</span>{/if}
 								</div>
 								<div class="muted small mono trunc" title="{a.repoURL} {a.path}">
-									<GitLink href={gitWeb(a.repoURL)?.repo}>{a.repoURL.replace(/^https?:\/\//, '')}</GitLink>{a.path && a.path !== '.' ? ` · ${a.path}` : ''}
+									<GitLink href={gitWeb(a.repoURL)?.repo}>{repoName(a.repoURL)}</GitLink>{a.path && a.path !== '.' ? ` · ${a.path}` : ''}
 								</div>
 							</td>
-							<td class="mono small">{a.kind === 'apps' ? a.hosts?.join(', ') || '—' : a.host}</td>
+							<td class="mono small">
+								{a.kind === 'apps' ? a.hosts?.join(', ') || '—' : a.host}
+								{#if a.kind !== 'apps' && live.hosts[a.host ?? '']?.agent?.engine}<div class="muted">{engineLabel(live.hosts[a.host ?? ''].agent)}</div>{/if}
+								<div class="hbx"><HostBadges badges={appBadges(a, live.hosts[a.host ?? ''])} /></div>
+							</td>
 							<td class="mono small">
 								{a.targetRevision}
 								<div class="muted"><GitLink href={a.targetSHA && gitWeb(a.repoURL)?.commit(a.targetSHA)}>{short(a.targetSHA)}</GitLink></div>
@@ -304,7 +277,7 @@
 							<td class="small">
 								{#if op}
 									<Badge status={op.phase} size="sm" label="Last Sync Operation" />
-									<div class="muted">{op.trigger} · {ago(op.finishedAt || op.startedAt)}</div>
+									<div class="muted">{triggerLabel(op.trigger)} · {ago(op.finishedAt || op.startedAt)}</div>
 								{:else}
 									<span class="muted">Never</span>
 								{/if}
@@ -326,6 +299,8 @@
 {/if}
 
 <style>
+	.hbx { margin-top: 0.4rem; }
+	.hbx:empty { display: none; }
 	.head { display: flex; gap: 0.7rem; align-items: center; flex-wrap: wrap; margin-bottom: 1.1rem; }
 	.sub { margin: 0.15rem 0 0; }
 	.search { position: relative; width: 280px; max-width: 100%; }
@@ -346,11 +321,6 @@
 	.chip.blue { --c: var(--blue); }
 	.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(310px, 100%), 1fr)); gap: 1rem; align-items: stretch; }
 	.cell { min-width: 0; }
-	.cell.group { grid-column: 1 / -1; padding: 0.6rem 0.9rem 1rem; border: 1px dashed color-mix(in srgb, var(--lavender) 35%, var(--border)); border-radius: calc(var(--radius-lg) + 4px); background: color-mix(in srgb, var(--lavender) 4%, transparent); }
-	.ghead { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.6rem; }
-	.ghead button { margin-left: -0.5rem; }
-	.inner { gap: 0.9rem; }
-	.kid { min-width: 0; position: relative; }
 	.chev { display: inline-flex; transition: transform 0.25s var(--ease); }
 	.chev.open { transform: rotate(90deg); }
 	.skel-tile { display: grid; gap: 0.8rem; min-height: 210px; }

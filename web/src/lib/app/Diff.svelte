@@ -2,7 +2,7 @@
 	import type { GitWeb } from '../gitweb.ts';
 	import GitLink from '../GitLink.svelte';
 	import { short, type DiffView } from '../api.ts';
-	import { lineDiff } from '../linediff.ts';
+	import { changedFiles, lineDiff } from '../linediff.ts';
 	import { lineToks, tokenize, type Tok } from '../highlight.ts';
 
 	// apps: an App of Apps, whose diff entries are Child Applications rather than services
@@ -35,6 +35,8 @@
 	let view = $state<'summary' | 'compose' | 'live' | 'desired'>('summary');
 	let composeDiff = $derived(view === 'compose' && diff ? lineDiff(diff.live, diff.desired) : []);
 	let composeChanged = $derived(!!diff && diff.live !== diff.desired);
+	// the compose files the same, what changed is in other files: a Sync still changes the app (a mounted page, a config)
+	let otherFiles = $derived(composeChanged ? 0 : changedFiles(diff?.gitDiff).length);
 	const opCls = { ' ': '', '+': 'add', '-': 'del' };
 
 	let liveToks = $state.raw<Tok[][] | null>(null);
@@ -91,7 +93,14 @@
 			(<span class="mono">{short(diff.toSHA)}</span>).
 		</p>
 		{#if !composeChanged}
-			<p class="muted small">No differences: the compose files are the same in both Revisions.</p>
+			{#if otherFiles}
+				<p class="muted small">
+					The compose files are the same in both Revisions; {otherFiles} other file{otherFiles === 1 ? '' : 's'} changed:
+					<button class="link" onclick={() => (view = 'summary')}>see Summary</button>.
+				</p>
+			{:else}
+				<p class="muted small">No differences: the compose files are the same in both Revisions.</p>
+			{/if}
 		{:else}
 			<pre class="diff" aria-label="Compose diff">{#each composeRows as l, i (i)}<span class={opCls[l.op]}><span class="op">{l.op}</span> {@render code(l.toks)}</span>{'\n'}{/each}</pre>
 		{/if}
@@ -178,4 +187,5 @@
 	.del { color: var(--red); background: color-mix(in srgb, var(--red) 10%, transparent); }
 	.hunk { color: var(--blue); }
 	.meta { color: var(--subtext0); font-weight: 600; }
+	.link { background: none; border: 0; box-shadow: none; padding: 0; color: var(--accent); font: inherit; }
 </style>

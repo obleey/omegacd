@@ -3,7 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { api, errMsg, get } from '#lib/api.ts';
-	import { live, connectEvents, disconnectEvents, loadApps } from '#lib/live.svelte.ts';
+	import { live, connectEvents, disconnectEvents, loadApps, loadHosts } from '#lib/live.svelte.ts';
 	import { conn } from '#lib/conn.svelte.ts';
 	import { fly } from 'svelte/transition';
 	import { ms } from '#lib/status.ts';
@@ -49,6 +49,7 @@
 		connectEvents();
 		// Every page (tiles, App of Apps children, the top progress bar) reads the shared store.
 		if (!live.loaded) loadApps().catch(() => {});
+		if (!live.hostsLoaded) loadHosts().catch(() => {}); // their badges on every Application (M5-03)
 	});
 
 	async function logout() {

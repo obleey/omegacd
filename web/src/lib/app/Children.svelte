@@ -6,6 +6,10 @@
 	import Empty from '../Empty.svelte';
 	import Graph, { type GNode } from './Graph.svelte';
 	import { shownSync } from '../status.ts';
+	import { appBadges, triggerLabel } from '../badges.ts';
+	import HostBadges from '../HostBadges.svelte';
+	import { engineLabel } from '../hosts.ts';
+	import { live } from '../live.svelte.ts';
 
 	let { app, apps }: { app: AppView; apps: AppView[] } = $props();
 
@@ -88,13 +92,13 @@
 								{#if a.kind === 'apps'}<span class="tag">App of Apps</span>{/if}
 								{#if a.notInGit}<span class="tag warn">not in Git</span>{/if}
 							</td>
-							<td class="mono small">{a.host}</td>
+							<td class="mono small">{a.host}{#if live.hosts[a.host ?? '']?.agent?.engine}<div class="muted">{engineLabel(live.hosts[a.host ?? ''].agent)}</div>{/if}<div class="hbx"><HostBadges badges={appBadges(a, live.hosts[a.host ?? ''])} /></div></td>
 							<td><Badge status={shownSync(a)} label="Sync Status" /></td>
 							<td><Badge status={a.health} label="Health Status" /></td>
 							<td class="small">
 								{#if op}
 									<Badge status={op.phase} size="sm" label="Last Sync Operation" />
-									<span class="muted">{op.trigger} · {ago(op.finishedAt || op.startedAt)}</span>
+									<span class="muted">{triggerLabel(op.trigger)} · {ago(op.finishedAt || op.startedAt)}</span>
 								{:else}
 									<span class="muted">Never</span>
 								{/if}
@@ -117,6 +121,8 @@
 {/if}
 
 <style>
+	.hbx { margin-top: 0.4rem; }
+	.hbx:empty { display: none; }
 	.bar { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; margin-bottom: 0.6rem; }
 	.name { font-weight: 600; }
 	.pending { opacity: 0.65; }

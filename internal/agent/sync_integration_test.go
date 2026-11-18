@@ -141,7 +141,7 @@ func TestAgentSyncsThroughHub(t *testing.T) {
 	rollbacks := func() (n int) {
 		ops, _ := st.ListOps(ctx, name)
 		for _, op := range ops {
-			if op.Trigger == "rollback" {
+			if op.Trigger == domain.TriggerHostRollback { // as the Control Plane records it (Q174)
 				n++
 			}
 		}

@@ -100,7 +100,8 @@
 	--shadow-lg: 0 18px 40px -12px rgb(var(--shadow-c) / calc(var(--shadow-a) * 1.6)), 0 4px 10px -4px rgb(var(--shadow-c) / var(--shadow-a));
 	--ease: cubic-bezier(0.2, 0.8, 0.2, 1);
 	--mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
-	font-family: 'Inter Variable', Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;
+	--sans: 'Inter Variable', Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;
+	font-family: var(--sans);
 	font-feature-settings: 'cv11', 'ss01';
 	font-size: 14px;
 	line-height: 1.5;

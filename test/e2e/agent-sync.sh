@@ -119,8 +119,8 @@ for _ in $(seq 120); do [ "$(hist "print([o for o in ops if o['id']==$WAIT][0]['
 check "the Sync that waited runs when its Agent is back, as the same Sync Operation (Q81)" \
   '[ "$(hist "print([o for o in ops if o[\"id\"]==$WAIT][0][\"phase\"])")" = Succeeded ] && sleep 2 && docker logs $(ctr) 2>&1 | grep -q "conf v2"'
 REV1=$(hist "print([o for o in ops if o['id']==$OP][0]['revision'])")
-rollbacks() { hist 'print(sum(1 for o in ops if o["trigger"]=="rollback"))'; }
-BEFORE=$(rollbacks) # the rollback through the Control Plane above
+rollbacks() { hist 'print(sum(1 for o in ops if o["trigger"]=="host-rollback"))'; } # Q174: told apart from one through the Control Plane
+BEFORE=$(rollbacks)
 kill $AGENT; wait $AGENT 2>/dev/null
 out=$(env -i PATH="$PATH" ${GOCOVERDIR:+GOCOVERDIR=$GOCOVERDIR} HOME="$T/edge" XDG_RUNTIME_DIR="$T/edge/run" ${DOCKER_HOST:+DOCKER_HOST=$DOCKER_HOST} "$BIN" agent rollback $APP "$REV1" 2>&1); rc=$?
 check "offline, a rollback on the Host itself (Q25)" '[ $rc -eq 0 ] && sleep 2 && docker logs $(ctr) 2>&1 | tail -3 | grep -q "conf v1"'

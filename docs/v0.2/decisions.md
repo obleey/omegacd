@@ -558,3 +558,40 @@ is declared. Their details (syntax, UI, messages) are decided when each is built
   back and why its App of Apps skips it. Replaces "Rollback is owned by Git" (v0.1's App of Apps), README included.
 - **Q172** Q171 is its own ticket, M5-09, after M5-02; tested with Q167, as both change which children a Sync of an
   App of Apps syncs.
+
+## Badges (before M5-03, 2026-11-17)
+
+- **Q173** The UI works out the badges itself: each Application's Host joined with the Hosts store (loaded at start,
+  kept by `host` events), and its last Sync Operation; no API change.
+- **Q174** A rollback run on the Host (`omegacd agent rollback`, Q25) is recorded as the trigger `host-rollback` when
+  its Agent reports it, told apart from a Rollback through the Control Plane (`rollback`); the protocol is unchanged.
+  The badge "Rolled back on the Host" shows while the Application is rolled back by one.
+- **Q175** The resource tree stays Application → services → containers: no Host node (tried, and dropped on review);
+  the Application header right above it carries the Host's badges.
+- **Q176** Engine (Docker or Podman, its version in the tooltip) shows on tiles, the Application header, list rows,
+  the App of Apps' children and Host cards; Host offline, rolled back on the Host, queued Sync and
+  Agent outdated only when they apply, each with a tooltip saying what to do. On Host cards the engine moves from its
+  row into a badge.
+- **Q177** M5-03 is the badges and their tooltips only; the offline views and cancelling a queued Sync are M5-04.
+- **Q178** A Host card lists its Applications as links to them, each with a dot in its tile's color (green Synced and
+  Healthy, yellow OutOfSync, red failing), under the label Applications: not status badges, which in OmegaCD always mean a status.
+- **Q179** A container's uptime reads live: the Agent reports each container's start time (`State.StartedAt`, and
+  `FinishedAt` for a stopped one) in the Live State (JSON, so no protocol change); the UI shows "Up 2 h 14 min" or
+  "Exited (1) 5 min ago" counted from them, Docker's status line in the tooltip. An Agent that sends none shows the
+  status line as before. Found in M5-03's review ("Up 3 seconds", frozen at the last report) and built in M5-03; M5-04
+  adds "as of 14:05" while the Host is offline.
+- **Q180** The Applications tiles view is one flat grid, as in Argo CD: an App of Apps is a tile like any other (with
+  its child count), each of its children follows it as a normal tile naming it ("↳ platform", a link). No box around a
+  family (a lone tile framed by a whole row when it had one child) and no section header (tried, and dropped on review).
+  The list view keeps its tree with collapsing. An App of Apps' tile counts its children in its badge row, so its details
+  are as many rows as any tile's, and its Host's badges are only those that need attention
+  (Q181), so the grid's rows line up.
+- **Q181** Where an Application names its Host (tile, list row, the App of Apps' children, the Application header) the
+  Host's engine is text beside its name ("obleey-macbook · Docker 29.8.2"), not a badge: badges there only say what
+  needs attention (Host offline, Agent outdated, rolled back on the Host, Sync queued), so they stand out. Host cards
+  keep the engine badge. Changes Q176; the empty badge line Q180 kept goes with it.
+- **Q182** A tile and a list row show a Repository by its name and path ("deploy · apps/blog"), the full URL in the
+  tooltip and on the Application's page: a long URL cut off showed the part that says nothing.
+- **Q183** The web UI moves from npm to pnpm, as its own ticket (M5-10): `pnpm-lock.yaml` in place of
+  `package-lock.json`, pnpm from nix, and the Makefile, the Dockerfile, CI, the release workflow, CLAUDE.md and
+  TESTING.md together; one package manager, never two lockfiles.

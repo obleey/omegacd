@@ -54,3 +54,6 @@ export function gitWeb(url: string): GitWeb | null {
 					: `${repo}/compare/${from}...${to}`
 	};
 }
+
+/** A Repository by its name, the last part of its URL ("acme/deploy.git" is "deploy"), as a tile shows it (Q182). */
+export const repoName = (url: string) => url.replace(/\.git$/, '').replace(/\/+$/, '').split(/[/:]/).pop() || url;

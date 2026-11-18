@@ -486,7 +486,7 @@ func TestApplyAgentReport(t *testing.T) {
 	must(t, err)
 	ops, _ := s.ListOps(ctx, "web")
 	a, _ := s.GetApp(ctx, "web")
-	if len(ops) != 3 || ops[0].Trigger != "rollback" || ops[0].TreeHash != "t0" || !ops[0].StartedAt.Equal(at) || !a.RolledBack || a.AutoSync {
+	if len(ops) != 3 || ops[0].Trigger != domain.TriggerHostRollback || ops[0].TreeHash != "t0" || !ops[0].StartedAt.Equal(at) || !a.RolledBack || a.AutoSync {
 		t.Fatalf("a rollback on the Host: ops %+v, app rolled back %v auto-sync %v", ops, a.RolledBack, a.AutoSync)
 	}
 	if op, _ := s.GetOp(ctx, waiting); op.Phase != domain.OpSuperseded {
