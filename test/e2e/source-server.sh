@@ -43,7 +43,12 @@ start_control_plane() {
   H=(-H "Authorization: Bearer $OMEGACD_TOKEN" -H 'X-Requested-With: omegacd' -H 'Content-Type: application/json')
 }
 stop() { kill "$@" 2>/dev/null; wait "$@" 2>/dev/null; }
+FJ=${OMEGACD_E2E_FORGEJO:-forgejo-forgejo-1}   # a running Forgejo container, served at FURL, for a private repository
+FURL=${OMEGACD_E2E_FORGEJO_URL:-http://git.localhost}
+FU=omegacd-e2e-src
+fj() { docker exec -u git "$FJ" forgejo "$@"; }
 cleanup() {
+  docker inspect "$FJ" >/dev/null 2>&1 && fj admin user delete --username $FU --purge >/dev/null 2>&1
   "$BIN" app delete e2e-src --volumes --yes >/dev/null 2>&1
   stop $SRV $SRC ${AGENT:-}; rm -rf "$T"
 }
@@ -60,6 +65,13 @@ check "app syncs through the Source Server" '[ $rc -eq 0 ]'
 check "the file from Git is mounted" 'docker logs $(docker ps -q --filter label=dev.omegacd.application=e2e-src) 2>&1 | grep -q "from the source server"'
 check "the Source Server cloned the repository, the Control Plane did not" '[ -d "$T/src-data/repos" ] && [ ! -d "$T/data/repos" ]'
 check "diff works through it" '"$BIN" app diff e2e-src >/dev/null 2>&1'
+op=$(grep -o 'msg="sync started" .* op=[0-9]*' "$T/server.log" | head -1 | grep -o '[0-9]*$')
+check "a Sync's op reads through the Control Plane's, the Source Server's and the Agent's logs (Q188, Q204)" \
+  '[ -n "$op" ] && grep -E "op=$op( |\$)" "$T/source.log" | grep -q "app=e2e-src" && grep "op=$op " "$AGENT_LOG" | grep -q "msg=deploy"'
+st=$(curl -sf "${H[@]}" $API/settings/source)
+check "Settings shows it standalone, reachable, its version and cache (Q156, Q202)" 'echo "$st" | python3 -c "
+import json,sys; s=json.load(sys.stdin)
+assert s[\"mode\"]==\"standalone\" and s[\"url\"]==\"https://127.0.0.1:19090\" and s[\"reachable\"] and s[\"version\"] and s[\"repositories\"]>=1 and s[\"repoCacheBytes\"]>0, s"'
 "$BIN" app create e2e-src-bad --repo "$REPO" --path nowhere --host box >/dev/null 2>&1
 "$BIN" app sync e2e-src-bad --wait --timeout 1m >/dev/null 2>&1
 check "the Source Server logs a render it can't make at Warn, with the reason (Q136)" \
@@ -77,6 +89,36 @@ listed() { curl -sf "${H[@]}" $API/settings/repo-credentials | grep -q '"urlPref
 check "it is listed, without its secret" 'listed && ! curl -sf "${H[@]}" $API/settings/repo-credentials | grep -q "$GITPW"'
 check "the Source Server keeps it, encrypted" '[ -s "$T/src-data/credentials.age" ] && ! grep -q "$GITPW" "$T/src-data/credentials.age"'
 check "the Control Plane keeps no credential" '[ ! -e "$T/data/credentials.age" ] && ! grep -rq "git.example.com" "$T/data"'
+# rotated: the same credential with a new token; deleted: gone from the Source Server (Q205)
+CID=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["id"])' "$T/cred.json")
+GITPW2=$(openssl rand -hex 12)
+code=$(curl -s -o /dev/null -w '%{http_code}' -X PUT "${H[@]}" -d '{"urlPrefix":"https://git.example.com/","username":"me","password":"'"$GITPW2"'"}' \
+  $API/settings/repo-credentials/$CID)
+check "rotated: its token replaced through the Control Plane ($code)" '[ "$code" = 200 ] && listed'
+check "and neither token is anywhere in the Control Plane's data" '! grep -rqF -e "$GITPW" -e "$GITPW2" "$T/data"'
+code=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "${H[@]}" $API/settings/repo-credentials/$CID)
+check "deleted: gone from the Source Server ($code)" '[ "$code" = 204 ] && ! listed'
+code=$(curl -s -o "$T/cred.json" -w '%{http_code}' "${H[@]}" -d '{"urlPrefix":"https://git.example.com/","username":"me","password":"'"$GITPW"'"}' \
+  $API/settings/repo-credentials) # again, for what follows
+
+# the Source Server uses a credential the Control Plane never sees: a private Forgejo repository (Q205)
+if docker inspect "$FJ" >/dev/null 2>&1; then
+  fj admin user delete --username $FU --purge >/dev/null 2>&1 # a run killed before its cleanup
+  fj admin user create --username $FU --password "$(openssl rand -hex 12)" --email src@example.com --must-change-password=false >/dev/null 2>&1
+  FTOK=$(fj admin user generate-access-token --username $FU --token-name e2e-$RANDOM --scopes write:repository,write:user --raw 2>/dev/null | tail -1)
+  curl -sf -H "Authorization: token $FTOK" -H 'Content-Type: application/json' \
+    -d '{"name":"private-src","auto_init":true,"default_branch":"main","private":true}' $FURL/api/v1/user/repos >/dev/null
+  PRIV=$FURL/$FU/private-src.git
+  check "Forgejo made a private repository for it" '[ -n "$FTOK" ] && curl -sf -H "Authorization: token $FTOK" $FURL/api/v1/repos/$FU/private-src | grep -q "\"private\":true"'
+  check "without a credential, the private repository is denied through it" \
+    'curl -sf "${H[@]}" -d "{\"repoURL\":\"$PRIV\"}" $API/repos/check | grep -q "\"access\":\"denied\""'
+  curl -sf -o /dev/null "${H[@]}" -d '{"urlPrefix":"'"$FURL/$FU/"'","username":"'"$FU"'","password":"'"$FTOK"'"}' $API/settings/repo-credentials
+  check "with one, the standalone Source Server reads it" \
+    'curl -sf "${H[@]}" -d "{\"repoURL\":\"$PRIV\"}" $API/repos/check | grep -q "\"access\":\"credential\",\"credentialPrefix\":\"$FURL/$FU/\""'
+  check "and the Forgejo token is nowhere in the Control Plane's data" '! grep -rqF "$FTOK" "$T/data"'
+else
+  echo "SKIP  a private Forgejo repository through it: no Forgejo container $FJ (set OMEGACD_E2E_FORGEJO)"
+fi
 
 stop $SRC; start_source
 check "it survives a Source Server restart" 'listed'
@@ -89,7 +131,7 @@ check "losing the Control Plane's data loses no credential" 'listed'
 check "a client without the certificate is refused" '! curl -s --http2 --cacert "$T/tls/ca.pem" -o /dev/null https://127.0.0.1:19090/'
 check "a client with the certificate gets in" 'curl -s --http2 --cacert "$T/tls/ca.pem" --cert "$T/tls/client.pem" --key "$T/tls/client.key" -o /dev/null -w "%{http_code}" https://127.0.0.1:19090/ | grep -q "^[0-9]"'
 
-check "the logs are at debug and hold no secret (Q62)" 'grep -q level=DEBUG "$T/source.log" && ! grep -qF -e "$GITPW" -e e2e-password-123 "$T/server.log" "$T/source.log" "$AGENT_LOG"'
+check "the logs are at debug and hold no secret (Q62)" 'grep -q level=DEBUG "$T/source.log" && ! grep -qF -e "$GITPW" -e "$GITPW2" -e "${FTOK:-$GITPW}" -e e2e-password-123 "$T/server.log" "$T/source.log" "$AGENT_LOG"'
 
 check "deployed by the Agent of the Control Plane's machine, as its log says (Q104)" 'grep -q "msg=deploy" "$AGENT_LOG"'
 

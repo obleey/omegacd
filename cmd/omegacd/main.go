@@ -164,6 +164,7 @@ func run(log *slog.Logger) error {
 				return writeBackup(ctx, st, backupFiles, w)
 			},
 			Source:         src,
+			SourceURL:      os.Getenv("OMEGACD_SOURCE_SERVER"),
 			WebhookSecret:  os.Getenv("OMEGACD_WEBHOOK_SECRET"),
 			WebhookParse:   source.ParseWebhook,
 			TrustedProxies: proxies,
@@ -210,7 +211,8 @@ func runSourceServer(log *slog.Logger) error {
 	}
 	src.KnownHostsFile = cmp.Or(os.Getenv("OMEGACD_SSH_KNOWN_HOSTS"), "/etc/omegacd/known_hosts")
 	src.Log = log.With("component", "source")
-	g := grpc.NewServer(grpc.Creds(credentials.NewTLS(cfg)))
+	g := grpc.NewServer(grpc.Creds(credentials.NewTLS(cfg)),
+		grpc.ChainUnaryInterceptor(source.ReceiveTrail), grpc.ChainStreamInterceptor(source.ReceiveTrailStream))
 	source.Serve(g, src, src.Log)
 	l, err := net.Listen("tcp", addr)
 	if err != nil {

@@ -67,6 +67,18 @@ func With(ctx context.Context, args ...any) context.Context {
 }
 
 // handler adds the context's attributes to each entry logged with a *Context method.
+// Value is the value ctx carries for key, as With set it: a Sync's app and op, which a call to another process passes
+// on (Q188).
+func Value(ctx context.Context, key string) (any, bool) {
+	args, _ := ctx.Value(ctxKey{}).([]any)
+	for i := 0; i+1 < len(args); i += 2 {
+		if args[i] == key {
+			return args[i+1], true
+		}
+	}
+	return nil, false
+}
+
 type handler struct{ slog.Handler }
 
 func (h handler) Handle(ctx context.Context, r slog.Record) error {

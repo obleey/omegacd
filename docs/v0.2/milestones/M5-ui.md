@@ -61,13 +61,15 @@ The offline times as fields (Q184); the last known Health dimmed (Q185); cancel 
 **Done when:** an offline Host's apps read clearly in the dashboard, tree and app page.
 
 ### M5-05 · Source Server settings and credentials
-**Status:** todo
+**Status:** done (2026-11-18, PR #148)
 **Depends on:** M1-06
 
 Settings → Source Server: in-process or standalone, reachable, version, cache size, from a new `Status` RPC
 (Q156). Repository credentials pass through to it; the access check in the app form asks it (Q40).
 
 The Source Server's log lines carry the app and Sync Operation of each call, from the Control Plane (Q188).
+What Settings shows (Q202), a version warning (Q203), the trail as gRPC metadata (Q204), the e2e's proof (Q205), no
+cache button (Q206); a Host card's Applications grouped by their App of Apps (Q207).
 
 **Done when:** credentials can be added, rotated and deleted without the Control Plane ever storing a secret.
 

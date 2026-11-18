@@ -141,6 +141,12 @@ func (g *grpcServer) DeleteCredential(ctx context.Context, r *sourcev1.DeleteCre
 }
 
 // toCredential never carries secrets: they only go to the Source Server.
+func (g *grpcServer) Status(ctx context.Context, _ *sourcev1.StatusRequest) (*sourcev1.StatusResponse, error) {
+	st, err := g.s.Status(ctx)
+	return &sourcev1.StatusResponse{Version: st.Version, Repositories: st.Repositories, RepoCacheBytes: st.RepoCacheBytes,
+		BlobCacheBytes: st.BlobCacheBytes}, g.toStatus(ctx, err)
+}
+
 func toCredential(c domain.RepoCredential) *sourcev1.Credential {
 	return &sourcev1.Credential{Id: c.ID, UrlPrefix: c.URLPrefix, Username: c.Username, HasPassword: c.HasPassword, HasSshKey: c.HasSSHKey}
 }
@@ -170,6 +176,7 @@ func Dial(rawURL, tlsDir string, log *slog.Logger) (*Client, error) {
 	}
 	// a restarted Source Server is found within seconds, not after gRPC's default backoff of up to two minutes (Q124)
 	conn, err := grpc.NewClient(u.Host, grpc.WithTransportCredentials(credentials.NewTLS(cfg)),
+		grpc.WithChainUnaryInterceptor(sendTrail), grpc.WithChainStreamInterceptor(sendTrailStream),
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: backoff.Config{BaseDelay: time.Second, Multiplier: 1.6,
 			Jitter: 0.2, MaxDelay: 5 * time.Second}, MinConnectTimeout: 5 * time.Second}))
 	if err != nil { // coverage: unreachable, grpc.NewClient fails only on bad options, and these are fixed
@@ -275,6 +282,21 @@ func (c *Client) CheckAccess(ctx context.Context, repoURL string) (domain.RepoAc
 		return domain.RepoAccess{}, fromStatus(err)
 	}
 	return domain.RepoAccess{Access: r.Access, CredentialPrefix: r.CredentialPrefix, DefaultBranch: r.DefaultBranch, Message: r.Message}, nil
+}
+
+// Status asks the Source Server about itself (Q156); one older than the RPC answers "unimplemented": its version
+// is then unknown, not an error.
+func (c *Client) Status(ctx context.Context) (domain.SourceStatus, error) {
+	r, err := c.c.Status(ctx, &sourcev1.StatusRequest{})
+	if status.Code(err) == codes.Unimplemented {
+		c.log.DebugContext(ctx, "the source server is older than its status: version unknown")
+		return domain.SourceStatus{}, nil
+	}
+	if err != nil {
+		return domain.SourceStatus{}, fromStatus(err)
+	}
+	return domain.SourceStatus{Version: r.Version, Repositories: r.Repositories, RepoCacheBytes: r.RepoCacheBytes,
+		BlobCacheBytes: r.BlobCacheBytes}, nil
 }
 
 func (c *Client) ListCredentials(ctx context.Context) ([]domain.RepoCredential, error) {

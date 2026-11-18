@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { HostView } from './api.ts';
-import { engineLabel, hostState, hostTone, lastSeen, parseAllowlist, renameBlocked } from './hosts.ts';
+import { engineLabel, groupByParent, hostState, hostTone, lastSeen, parseAllowlist, renameBlocked } from './hosts.ts';
 
 const host = (h: Partial<HostView>): HostView =>
 	({ name: 'web', createdAt: '', approved: false, status: { name: 'web', connected: false }, apps: [], ...h }) as HostView;
@@ -49,4 +49,15 @@ test('the allowlist editor takes lines, commas or spaces; empty is any', () => {
 test('renamed only while no Application uses it', () => {
 	assert.equal(renameBlocked(host({})), undefined);
 	assert.match(renameBlocked(host({ apps: ['shop', 'blog'] }))!, /shop, blog/);
+});
+
+test("a Host's Applications grouped by their App of Apps, standalone ones last", () => {
+	const parent: Record<string, string> = { blog: 'platform', shop: 'platform', api: 'backend' };
+	assert.deepEqual(groupByParent(['blog', 'docs', 'shop', 'api', 'echo'], (a) => parent[a]), [
+		{ parent: 'backend', apps: ['api'] },
+		{ parent: 'platform', apps: ['blog', 'shop'] },
+		{ apps: ['docs', 'echo'] }
+	]);
+	assert.deepEqual(groupByParent(['docs'], () => undefined), [{ apps: ['docs'] }]);
+	assert.deepEqual(groupByParent([], () => undefined), []);
 });

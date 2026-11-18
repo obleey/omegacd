@@ -30,6 +30,7 @@ const (
 	SourceService_ListCredentials_FullMethodName  = "/omegacd.source.v1.SourceService/ListCredentials"
 	SourceService_PutCredential_FullMethodName    = "/omegacd.source.v1.SourceService/PutCredential"
 	SourceService_DeleteCredential_FullMethodName = "/omegacd.source.v1.SourceService/DeleteCredential"
+	SourceService_Status_FullMethodName           = "/omegacd.source.v1.SourceService/Status"
 )
 
 // SourceServiceClient is the client API for SourceService service.
@@ -45,6 +46,8 @@ type SourceServiceClient interface {
 	ListCredentials(ctx context.Context, in *ListCredentialsRequest, opts ...grpc.CallOption) (*ListCredentialsResponse, error)
 	PutCredential(ctx context.Context, in *PutCredentialRequest, opts ...grpc.CallOption) (*PutCredentialResponse, error)
 	DeleteCredential(ctx context.Context, in *DeleteCredentialRequest, opts ...grpc.CallOption) (*DeleteCredentialResponse, error)
+	// Status is what Settings shows about the Source Server (Q156); an older one answers "unimplemented".
+	Status(ctx context.Context, in *StatusRequest, opts ...grpc.CallOption) (*StatusResponse, error)
 }
 
 type sourceServiceClient struct {
@@ -154,6 +157,16 @@ func (c *sourceServiceClient) DeleteCredential(ctx context.Context, in *DeleteCr
 	return out, nil
 }
 
+func (c *sourceServiceClient) Status(ctx context.Context, in *StatusRequest, opts ...grpc.CallOption) (*StatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StatusResponse)
+	err := c.cc.Invoke(ctx, SourceService_Status_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SourceServiceServer is the server API for SourceService service.
 // All implementations must embed UnimplementedSourceServiceServer
 // for forward compatibility.
@@ -167,6 +180,8 @@ type SourceServiceServer interface {
 	ListCredentials(context.Context, *ListCredentialsRequest) (*ListCredentialsResponse, error)
 	PutCredential(context.Context, *PutCredentialRequest) (*PutCredentialResponse, error)
 	DeleteCredential(context.Context, *DeleteCredentialRequest) (*DeleteCredentialResponse, error)
+	// Status is what Settings shows about the Source Server (Q156); an older one answers "unimplemented".
+	Status(context.Context, *StatusRequest) (*StatusResponse, error)
 	mustEmbedUnimplementedSourceServiceServer()
 }
 
@@ -203,6 +218,9 @@ func (UnimplementedSourceServiceServer) PutCredential(context.Context, *PutCrede
 }
 func (UnimplementedSourceServiceServer) DeleteCredential(context.Context, *DeleteCredentialRequest) (*DeleteCredentialResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteCredential not implemented")
+}
+func (UnimplementedSourceServiceServer) Status(context.Context, *StatusRequest) (*StatusResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Status not implemented")
 }
 func (UnimplementedSourceServiceServer) mustEmbedUnimplementedSourceServiceServer() {}
 func (UnimplementedSourceServiceServer) testEmbeddedByValue()                       {}
@@ -380,6 +398,24 @@ func _SourceService_DeleteCredential_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SourceService_Status_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SourceServiceServer).Status(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SourceService_Status_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SourceServiceServer).Status(ctx, req.(*StatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SourceService_ServiceDesc is the grpc.ServiceDesc for SourceService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -418,6 +454,10 @@ var SourceService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteCredential",
 			Handler:    _SourceService_DeleteCredential_Handler,
+		},
+		{
+			MethodName: "Status",
+			Handler:    _SourceService_Status_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
