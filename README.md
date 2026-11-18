@@ -384,6 +384,10 @@ how fast, its version (warned when it doesn't fit OmegaCD's) and the size of its
 standalone Source Server's log lines carry the Application and Sync Operation of each call (`app=… op=…`), so one
 Sync reads through the Control Plane's, the Source Server's and the Agent's logs.
 
+A decrypted file (an env file from `app.sops.env`, say) shows its key names only, `API_TOKEN=••••`: OmegaCD reads
+them from the encrypted file in Git, where SOPS leaves names readable. Its values are decrypted only on the Host and
+never sent anywhere.
+
 Public repositories need no setup; the New Application form checks access as you type (public / private with a credential / denied, with an inline *Add credential*). For private ones, add a credential under **Settings → Repository credentials** (for reading Git repositories), matched by URL prefix: a username and password/token for HTTPS, or an SSH private key. Credentials are kept by the [Source Server](#standalone-source-server), not in OmegaCD's database: in `credentials.age` in its data dir, encrypted with its own key `source.key` (created at its first start, owner-only). Back up both together; without `source.key` the credentials can't be read. Secrets go in and are never shown again. Private images need **Settings → Registry credentials** (for pulling Docker images), keyed by registry host such as `ghcr.io` — not a URL.
 
 ![New Application form reporting a public repository](assets/screenshots/new-app.png)

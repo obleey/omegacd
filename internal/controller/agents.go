@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/obleey/omegacd/internal/agents"
 	"github.com/obleey/omegacd/internal/domain"
 	agentv1 "github.com/obleey/omegacd/internal/proto/agent/v1"
+	"github.com/obleey/omegacd/internal/secrets"
 	"github.com/obleey/omegacd/internal/workdir"
 )
 
@@ -417,10 +419,6 @@ func (c *Controller) agentDetail(ctx context.Context, a domain.Application, d do
 		d.Info = st.Details[d.Kind+"/"+d.Name]
 		return d, nil
 	}
-	if d.Secret {
-		d.Info = map[string]string{"type": "file", "secret": "decrypted on the Host: its content never leaves it"}
-		return d, nil
-	}
 	last, err := c.cfg.Store.LastSucceededOp(ctx, a.Name)
 	if err != nil {
 		return d, err
@@ -428,6 +426,9 @@ func (c *Controller) agentDetail(ctx context.Context, a domain.Application, d do
 	r, err := c.render(ctx, a, last.Revision)
 	if err != nil {
 		return d, err
+	}
+	if d.Secret {
+		return c.secretDetail(ctx, a, d, r)
 	}
 	i := slices.IndexFunc(r.Files, func(f domain.File) bool { return f.Path == filepath.ToSlash(d.Name) })
 	if i < 0 {
@@ -444,5 +445,44 @@ func (c *Controller) agentDetail(ctx context.Context, a domain.Application, d do
 		d.Info["truncated"] = "showing the first 256 KiB"
 	}
 	d.Content = string(b)
+	return d, nil
+}
+
+// secretDetail shows a decrypted file by its key names, KEY=•••• (Q208, Q209): read from its encrypted source in Git
+// (x.sops.env for x.env), whose names SOPS leaves readable. No value is ever decrypted or shown here, and the Agent
+// sends nothing about it (Q210).
+func (c *Controller) secretDetail(ctx context.Context, a domain.Application, d domain.ResourceDetail, r domain.Rendered) (domain.ResourceDetail, error) {
+	d.Info = map[string]string{"type": "file", "secret": "values decrypted only on the Host: never sent anywhere"}
+	name := filepath.ToSlash(d.Name)
+	i := slices.IndexFunc(r.Files, func(f domain.File) bool {
+		return path.Join(path.Dir(f.Path), strings.Replace(path.Base(f.Path), ".sops.", ".", 1)) == name && f.Path != name
+	})
+	if i < 0 { // not from a SOPS file in Git: a Compose secret made on the Host
+		return d, nil
+	}
+	b, err := c.cfg.Source.Blob(ctx, r.Files[i].SHA256)
+	if err != nil {
+		return d, err
+	}
+	keys, err := secrets.Keys(b, r.Files[i].Path)
+	if err != nil {
+		c.cfg.Log.WarnContext(ctx, "the key names of a secret file not shown", "app", a.Name, "file", r.Files[i].Path, "err", err)
+		d.Info["keys"] = "can't be read from " + r.Files[i].Path
+		return d, nil
+	}
+	if keys == nil {
+		d.Info["keys"] = "none: an encrypted binary file"
+		return d, nil
+	}
+	sep := "="
+	if ext := path.Ext(name); ext == ".yaml" || ext == ".yml" || ext == ".json" {
+		sep = ": "
+	}
+	var lines []string
+	for _, k := range keys {
+		lines = append(lines, k+sep+"••••")
+	}
+	d.Info["from"] = r.Files[i].Path
+	d.Content, d.Masked = strings.Join(lines, "\n")+"\n", true
 	return d, nil
 }

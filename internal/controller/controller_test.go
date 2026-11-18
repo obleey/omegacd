@@ -1622,7 +1622,7 @@ func TestAgentViews(t *testing.T) {
 	for _, tc := range []struct{ kind, name, want string }{
 		{"volume", "web_data", "local"},
 		{"bind", "compose.yaml", "services: {}"},
-		{"env_file", ".env", "decrypted on the Host"},
+		{"env_file", ".env", "decrypted only on the Host"}, // no SOPS source in Git: no key names
 		{"bind", "uploads", "on the Host only"},
 	} {
 		d, err := r.c.ResourceDetail(ctx, "web", tc.kind, tc.name)
