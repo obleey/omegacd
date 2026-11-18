@@ -7,14 +7,16 @@
 	import Graph, { type GNode } from './Graph.svelte';
 	import { langFor, lineToks, tokenize, type Tok } from '../highlight.ts';
 	import { uptime } from '../uptime.ts';
+	import { when } from '../display.svelte.ts';
 
 	let {
 		name,
+		offline,
 		state: live,
 		syncStatus,
 		prunePending = [],
 		onlogs
-	}: { name: string; state: LiveState | null; syncStatus: string; prunePending?: string[]; onlogs: (c: Container) => void } = $props();
+	}: { name: string; offline?: { since?: string; at?: string }; state: LiveState | null; syncStatus: string; prunePending?: string[]; onlogs: (c: Container) => void } = $props();
 
 	// uptimes count on between reports (Q179)
 	let now = $state(Date.now());
@@ -22,6 +24,10 @@
 		const t = setInterval(() => (now = Date.now()), 1000);
 		return () => clearInterval(t);
 	});
+
+	// offline, the last known state as of its Agent's last report: uptimes up to then, not counting on (Q179, Q187)
+	const shown = (c: Container) =>
+		offline?.at ? `${uptime(c, Date.parse(offline.at))}, as of ${when(offline.at, 'time')}` : uptime(c, now);
 
 	// The graph needs width; small screens start with the list.
 	let mode = $state<'graph' | 'list'>(matchMedia('(max-width: 640px)').matches ? 'list' : 'graph');
@@ -59,11 +65,11 @@
 				id: `s:${s.name}`, parent: 'app', icon: 'service', kind: 'Service', name: s.name,
 				sub: pending ? 'Not declared, stopped' : `${s.containers.length} container${s.containers.length === 1 ? '' : 's'}`,
 				status: pending ? undefined : [['Health Status', health]],
-				dim: pending, tag: pending ? 'prune pending' : undefined
+				dim: pending || !!offline, tag: pending ? 'prune pending' : undefined
 			});
 			for (const c of s.containers)
 				out.push({
-					id: `c:${c.id}`, parent: `s:${s.name}`, icon: 'container', kind: 'Container', name: c.name, sub: uptime(c, now) || c.image,
+					id: `c:${c.id}`, parent: `s:${s.name}`, icon: 'container', kind: 'Container', name: c.name, sub: shown(c) || c.image, dim: !!offline,
 					status: [['State', c.state], ['Health Status', c.health]], onclick: () => onlogs(c), action: `Show logs for ${c.name}`
 				});
 		}
@@ -125,6 +131,11 @@
 		<p>Sync the Application to create its containers from the Desired State.</p>
 	</Empty>
 {:else}
+	{#if offline}
+		<p class="small stale-note" role="note">
+		<Icon name="x-circle" size={14} />Last known{offline.at ? `, as of ${when(offline.at)}` : ''}: Host offline{offline.since ? ` since ${when(offline.since)}` : ''}
+		</p>
+	{/if}
 	<div class="bar">
 		<span class="muted small">{services.length} service{services.length === 1 ? '' : 's'} · {live.containers?.length ?? 0} container{live.containers?.length === 1 ? '' : 's'} · {live.resources?.length ?? 0} other resource{live.resources?.length === 1 ? '' : 's'}</span>
 		<span class="spacer"></span>
@@ -164,7 +175,7 @@
 											<Badge status={c.state} label="State" />
 											<Badge status={c.health} label="Health Status" />
 											<span class="muted small mono trunc" title={c.image}>{c.image}</span>
-											<span class="muted small" title={c.status}>{uptime(c, now)}</span>
+											<span class="muted small" title={c.status}>{shown(c)}</span>
 										</div>
 									</li>
 								{/each}
@@ -252,4 +263,5 @@
 	.info td { word-break: break-all; }
 	.code { background: var(--crust); border: 1px solid var(--surface0); border-radius: var(--radius); padding: 0.6rem 0.8rem; overflow: auto; max-height: 55vh; margin: 0.6rem 0 0; line-height: 1.45; }
 	.ln { display: inline-block; min-width: 2.5rem; margin-right: 0.8rem; text-align: right; color: var(--overlay0); user-select: none; }
+	.stale-note { display: flex; align-items: center; gap: 0.4rem; color: var(--red); margin: 0 0 0.5rem; }
 </style>

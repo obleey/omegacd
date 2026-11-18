@@ -19,7 +19,7 @@ import (
 // every command with arguments it takes, for what all of them do alike
 var everyCommand = [][]string{
 	{"login"}, {"app", "list"}, {"app", "get", "web"}, {"app", "create", "web", "--repo", "r"}, {"app", "delete", "web", "--yes"},
-	{"app", "sync", "web"}, {"app", "refresh", "web"}, {"app", "diff", "web"}, {"app", "history", "web"},
+	{"app", "sync", "web"}, {"app", "refresh", "web"}, {"app", "diff", "web"}, {"app", "history", "web"}, {"app", "cancel", "web"},
 	{"app", "rollback", "web", "1"}, {"app", "wait", "web"}, {"app", "logs", "web"}, {"app", "export", "web"},
 	{"host", "list"}, {"host", "add", "edge"}, {"host", "approve", "edge", "SHA256:x"}, {"host", "rotate", "edge"},
 	{"host", "allow", "edge"}, {"host", "unlock", "edge"}, {"host", "rename", "edge", "edge-1"}, {"host", "delete", "edge"}, {"host", "key", "show", "edge"},

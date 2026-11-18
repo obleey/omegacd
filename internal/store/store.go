@@ -367,6 +367,11 @@ func (s *Store) SetOpPhase(ctx context.Context, id int64, phase domain.OpPhase, 
 	return affected(s.db.ExecContext(ctx, `UPDATE ops SET phase=?, message=? WHERE id=? AND finished_at=0`, phase, message, id))
 }
 
+func (s *Store) CancelWaitingOp(ctx context.Context, app string, id int64, message string) error {
+	return affected(s.db.ExecContext(ctx, `UPDATE ops SET phase=?, message=?, finished_at=? WHERE id=? AND app=? AND phase=?`,
+		domain.OpSuperseded, message, toUnix(time.Now()), id, app, domain.OpWaiting))
+}
+
 func (s *Store) SupersedeWaitingOps(ctx context.Context, app string, by int64) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE ops SET phase=?, message=?, finished_at=? WHERE app=? AND phase=? AND id<>?`,
 		domain.OpSuperseded, fmt.Sprintf("superseded by Sync Operation %d before the Host came back", by),

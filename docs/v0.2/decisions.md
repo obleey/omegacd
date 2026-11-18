@@ -595,3 +595,62 @@ is declared. Their details (syntax, UI, messages) are decided when each is built
 - **Q183** The web UI moves from npm to pnpm, as its own ticket (M5-10): `pnpm-lock.yaml` in place of
   `package-lock.json`, pnpm from nix, and the Makefile, the Dockerfile, CI, the release workflow, CLAUDE.md and
   TESTING.md together; one package manager, never two lockfiles.
+
+## Offline apps and queued Syncs (before M5-04, 2026-11-18)
+
+- **Q184** An Application's view carries its Host's offline state as times, `hostOffline`, `hostOfflineSince` (when
+  its Agent left) and `stateAt` (when what is shown was reported), not a sentence in `syncMessage` written in the
+  server's time zone and format: the UI writes it in the viewer's chosen format (Q168), `omegacd app get` in local
+  time. The UI also takes "offline" from the live Hosts, so a view not yet recomputed reads offline at once.
+- **Q185** While its Host is offline an Application keeps its last known Health (Q38), dimmed, its tooltip "as of 14:05:
+  Host … offline", beside the red "Host offline" badge; not Unknown as Argo CD shows.
+- **Q186** A queued Sync is cancelled from the Last Sync card and its History row (no confirmation: nothing is undone)
+  and with `omegacd app cancel NAME`; the store finishes it only while it still waits, so a Host coming back runs it.
+- **Q187** Offline, Resources says "Last known, as of …: Host offline since …" above the tree, its services and
+  containers dimmed, their uptimes "as of" the last report (Q179); the Logs tab says logs come only from the Agent.
+- **Q188** The Source Server joins a Sync's log trail: the Control Plane passes the app and the Sync Operation's id with
+  each call (gRPC metadata) and the Source Server's log lines carry them, so `op=…` reads through all three logs.
+  In M5-05.
+
+## Editing secrets (design check, 2026-11-18)
+
+How people encrypt and edit the secrets a Host decrypts. A Host Key's private half never leaves its Host (Q108), so a
+file encrypted for the Host alone can be opened by no person again.
+
+- **Q189** OmegaCD keeps a list of **encryption keys**: a name and an age **public** key each, never a private one
+  ("Miha's laptop: age1…"), in Settings → Encryption keys; not tied to accounts (v0.2 has one admin, Q49; v0.3's
+  users can link to it). The admin adds keys in the UI or with `omegacd secrets key add NAME age1…`; a developer sends
+  their public key.
+- **Q190** Each key covers all Hosts (the default) or chosen ones. A Host's `.sops.yaml` rule gets its Host Key plus the
+  keys allowed for that Host: the Host card's "Copy .sops.yaml rule" and "for all Hosts", `omegacd secrets init` and the
+  import. A solo setup with one key on all Hosts needs no extra step.
+- **Q191** Recovery is a key on the list kept offline (made with `omegacd keygen`, stored safely); the docs recommend
+  one. With the list empty the UI warns that only the Hosts can decrypt: nobody can edit, and a lost Host loses them.
+- **Q192** The Control Plane's Master Key is never a recipient: the Control Plane never decrypts an Application's
+  secrets (Q108).
+- **Q193** Removing a key leaves files as they are until `omegacd secrets rekey` re-encrypts every file for the current
+  keys, on a machine holding one of them. Old commits stay readable to the removed key: the UI and docs say to change
+  the secret values themselves when someone leaves.
+- **Q194** `omegacd import` encrypts for the Host's key plus the people's keys allowed for that Host, not the Host's
+  alone (whose files nobody could open again).
+- **Q195** All of it is M6-08.
+- **Q196** An Application warns, not fails, when its secret files are encrypted for another set of keys than its
+  Host's key and the allowed people's: "run `omegacd secrets rekey`"; the Source Server compares each `*.sops.*`
+  file's recipients as it renders. In M6-08, which builds the key list it compares against (M5-08's "this Host can't
+  decrypt it" needs only the Host's key).
+- **Q197** `omegacd secrets init` writes one rule per Application path (`path_regex: ^apps/shop/.*\.sops\.`, with that
+  Host's keys), from OmegaCD's definitions; `--path` adds others. The Host card copies a per-Host rule for a quick start.
+- **Q198** Taking a Host from a key is a removal (Q193): rekey, and change that Host's secret values.
+- **Q199** Any logged-in user or token reads the key list (public halves; `GET /api/settings/encryption-keys`, what
+  `secrets init` and `rekey` use); only the admin changes it.
+- **Q200** `omegacd secrets rekey` goes through every file, rekeys what it can and lists the ones it can't open
+  (encrypted only for keys the user doesn't hold, such as a Host's alone): write their values again and encrypt them.
+  Q196's warning names the same files.
+- **Q201** `omegacd secrets init` and `import` refuse to encrypt for a Host alone when no person's key covers it ("add
+  yours, or pass `--host-only`"); the Host card warns beside "Copy .sops.yaml rule". Only a hand-written rule can still
+  make such a file, and Q196's warning shows it.
+
+Two things the docs say with it: the key list controls who can **read** a Host's secrets, not who can **change**
+them: anyone who can push to the repository can encrypt a new value with the Host's public key, so who may change
+production is decided in Git (branch protection, reviews). And `omegacd keygen` writes a person's key where `sops`
+looks for it (`~/.config/sops/age/keys.txt`) by default.

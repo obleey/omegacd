@@ -412,7 +412,11 @@ Wherever an Application shows (its tile, its row, its page), its Host's name com
 (`obleey-macbook · Docker 29.8.2`), and badges say what needs attention: **Host offline**, **Agent outdated**,
 **Rolled back on the Host** (with `omegacd agent rollback`) and **Sync queued**; each tooltip says what it means and
 what to do. The tiles are one grid, as in Argo CD: an App of Apps is a tile with its child count, and each child names
-it (**↳ platform**). A container's uptime
+it (**↳ platform**).
+
+While a Host is offline its Applications show what its Agent last reported, dimmed and "as of" when, with since when
+the Host is offline; a Sync waits for it (**Sync queued**) and is cancelled with **Cancel** on the Last Sync card or in
+History, or `omegacd app cancel NAME`. Logs come only from the Agent: OmegaCD stores none. A container's uptime
 ("Up 2 h 14 min", "Exited (1) 5 min ago") counts on live from the start time its Agent reports.
 
 **Settings → Display** picks how dates and times are shown, in this browser: the browser's own format, European
@@ -603,6 +607,7 @@ omegacd keygen --out age.key               # a new age key, e.g. the Master Key 
 | `host list` | |
 | `host add NAME`, `host approve NAME FINGERPRINT` | enrolls a Host's Agent with a single-use invite (valid an hour), approved by its key's fingerprint; Applications on it then deploy through the Agent, which decrypts their secrets and reports their Health, containers, resources and logs (a Sync to it while it's offline waits for it; offline, the app shows its last known state and since when the Host is gone). The Agent connects over https only, except to its own machine; `OMEGACD_AGENT_CA_FILE` trusts a private CA |
 | `host allow NAME [CIDR]...` | the addresses the Host's Agent may connect from (behind a reverse proxy: set `OMEGACD_TRUSTED_PROXIES`); none: anywhere |
+| `app cancel NAME` | cancel the Sync waiting for the Application's offline Host: it won't run when the Host is back |
 | `host rename NAME NEW` | rename a Host no Application uses; its Agent reconnects under the new name |
 | `host rotate NAME`, `host unlock NAME`, `host delete NAME` | a new signing key for the connected Agent; let a Host locked by two connections with its key connect again; delete a Host, revoking its Agent's key |
 | `host key show HOST` | the public half of its Host Key; the private half never leaves the Host |

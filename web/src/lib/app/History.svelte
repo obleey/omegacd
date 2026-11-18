@@ -9,7 +9,12 @@
 	import { triggerLabel } from '../badges.ts';
 
 	// onrollback is omitted for Child Applications: their Revision is pinned in Git, not rolled back here.
-	let { ops, onrollback, web }: { ops: SyncOperation[] | null; onrollback?: (op: SyncOperation) => void; web?: GitWeb | null } = $props();
+	let {
+		ops,
+		onrollback,
+		oncancel,
+		web
+	}: { ops: SyncOperation[] | null; onrollback?: (op: SyncOperation) => void; oncancel?: (op: SyncOperation) => void; web?: GitWeb | null } = $props();
 
 	// The current deployment is the newest Succeeded op; rolling back to it is a no-op.
 	let currentID = $derived(ops?.find((o) => o.phase === 'Succeeded')?.id);
@@ -49,6 +54,8 @@
 						<td class="right">
 							{#if o.id === currentID}
 								<span class="tag">Current</span>
+							{:else if o.phase === 'Waiting' && oncancel}
+								<button class="sm" onclick={() => oncancel(o)} aria-label="Cancel Sync Operation {o.id}"><Icon name="x" size={14} />Cancel</button>
 							{:else if o.phase === 'Succeeded' && onrollback}
 								<button class="sm" onclick={() => onrollback(o)} aria-label="Rollback to {short(o.revision)}"><Icon name="undo" size={14} />Rollback</button>
 							{/if}

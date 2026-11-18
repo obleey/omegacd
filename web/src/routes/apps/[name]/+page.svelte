@@ -34,7 +34,8 @@
 	import History from '#lib/app/History.svelte';
 	import Logs from '#lib/app/Logs.svelte';
 	import Children from '#lib/app/Children.svelte';
-	import { appBadges, triggerLabel } from '#lib/badges.ts';
+	import { appBadges, isOffline, offlineNote, staleTitle, triggerLabel } from '#lib/badges.ts';
+	import { when } from '#lib/display.svelte.ts';
 	import HostBadges from '#lib/HostBadges.svelte';
 	import { engineLabel } from '#lib/hosts.ts';
 
@@ -128,6 +129,16 @@
 		if (t === 'diff') get<DiffView>(`/apps/${enc(n)}/diff`).then((v) => (diff = v), fail);
 		if (t === 'history') get<SyncOperation[]>(`/apps/${enc(n)}/history`).then((v) => (ops = v ?? []), fail);
 	});
+
+	// a Sync waiting for its offline Host won't run when it's back (Q154, Q186)
+	async function cancelSync(id: number) {
+		try {
+			await api('POST', `/apps/${enc(name)}/syncs/${id}/cancel`);
+			toast('green', 'Sync cancelled', "It won't run when the Host is back");
+		} catch (e) {
+			toastError(e, 'Cancelling the Sync failed');
+		}
+	}
 
 	async function act(label: string, fn: () => Promise<unknown>) {
 		error = '';
@@ -239,8 +250,8 @@
 		<div class="panels">
 			<section class="panel" aria-label="Health Status">
 				<span class="plabel">Health Status</span>
-				<Badge status={app.health} size="lg" label="Health Status" />
-				<span class="muted small">Reconciled {ago(app.reconciledAt)}</span>
+				<span class:stale={isOffline(app, live.hosts[app.host ?? ''])} title={staleTitle(app, when, live.hosts[app.host ?? ''])}><Badge status={app.health} size="lg" label="Health Status" /></span>
+				<span class="muted small">{#if isOffline(app, live.hosts[app.host ?? ''])}{app.stateAt ? `Last known, as of ${when(app.stateAt)}` : 'Last known'}{:else}Reconciled {ago(app.reconciledAt)}{/if}</span>
 			</section>
 			<section class="panel" aria-label="Sync Status">
 				<span class="plabel">Sync Status</span>
@@ -255,6 +266,7 @@
 				{#if op}
 					<Badge status={op.phase} size="lg" label="Last Sync Operation" text={op.phase === 'Running' ? 'Syncing' : op.phase} />
 					<span class="muted small">{triggerLabel(op.trigger)} · {ago(op.finishedAt || op.startedAt)} · <span class="mono"><GitLink href={op.revision && web?.commit(op.revision)} title="Open commit {op.revision}">{short(op.revision)}</GitLink></span></span>
+					{#if op.phase === 'Waiting'}<button class="sm" onclick={() => cancelSync(op.id)}><Icon name="x" size={14} />Cancel</button>{/if}
 				{:else}
 					<Badge status="Unknown" size="lg" text="Never synced" />
 					<span class="muted small">Sync to deploy the Desired State</span>
@@ -270,6 +282,7 @@
 			<div><dt><Icon name="commit" size={12} />Deployed Revision</dt><dd class="mono"><GitLink href={app.deployedSHA && web?.commit(app.deployedSHA)} title="Open commit {app.deployedSHA}">{short(app.deployedSHA)}</GitLink></dd></div>
 		</dl>
 		{#if app.syncMessage}<p class="small syncmsg"><Icon name="info" size={14} />{app.syncMessage}</p>{/if}
+		{#if offlineNote(app, when, live.hosts[app.host ?? ''])}<p class="small syncmsg offline"><Icon name="x-circle" size={14} />{offlineNote(app, when, live.hosts[app.host ?? ''])}</p>{/if}
 		<SyncPolicy {app} />
 	</header>
 
@@ -337,7 +350,7 @@
 			{#if tab === 'resources' && isApps}
 				<Children {app} apps={children} />
 			{:else if tab === 'resources'}
-				<Resources name={app.name} state={liveState} syncStatus={shownSync(app)} prunePending={app.prunePending} onlogs={showLogs} />
+				<Resources name={app.name} offline={isOffline(app, live.hosts[app.host ?? '']) ? { since: app.hostOfflineSince ?? live.hosts[app.host ?? '']?.agent?.leftAt, at: app.stateAt } : undefined} state={liveState} syncStatus={shownSync(app)} prunePending={app.prunePending} onlogs={showLogs} />
 			{:else if tab === 'diff'}
 				<Diff {diff} apps={isApps} {web} prune={app.prune} pruneVolumes={app.pruneVolumes} />
 			{:else if tab === 'history'}
@@ -350,6 +363,7 @@
 				<History
 					{ops}
 					{web}
+					oncancel={(o) => cancelSync(o.id)}
 					onrollback={app.parent
 						? undefined
 						: (o) => {
@@ -359,6 +373,9 @@
 				/>
 			{:else if isApps}
 				<p class="muted">An App of Apps has no containers.</p>
+			{:else if isOffline(app, live.hosts[app.host ?? ''])}
+				<!-- the Control Plane stores no logs (Q155): they come from the Host's Agent, when it's back -->
+				<p class="muted offnote"><Icon name="x-circle" size={14} />{offlineNote(app, when, live.hosts[app.host ?? ''])?.replace(/; last known.*/, '')}: logs come only from its Agent, live; OmegaCD stores none.</p>
 			{:else if liveState}
 				<Logs app={app.name} containers={liveState.containers ?? []} bind:selected={logContainer} />
 			{:else}
@@ -482,4 +499,7 @@
 		.actions > :global(*) { flex: 1 1 auto; }
 	}
 	.hostline { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.5rem; }
+	.stale { opacity: 0.55; } /* last known, its Host offline (Q185) */
+	.syncmsg.offline, .syncmsg.offline :global(.icon) { color: var(--red); }
+	.offnote { display: flex; align-items: center; gap: 0.4rem; }
 </style>

@@ -289,6 +289,13 @@ func (c *fakeController) Sync(ctx context.Context, name string, req domain.SyncR
 	return 7, c.syncErr
 }
 
+func (c *fakeController) CancelSync(_ context.Context, name string, id int64) error {
+	if id != 7 {
+		return fmt.Errorf("%w: %s has no Sync Operation %d waiting for its Host", domain.ErrInvalid, name, id)
+	}
+	return nil
+}
+
 func (c *fakeController) Rollback(_ context.Context, name string, opID int64) (int64, error) {
 	return opID + 1, nil
 }
@@ -561,6 +568,11 @@ func TestAppsCRUD(t *testing.T) {
 		t.Fatalf("one-off prune not passed: %v", p)
 	}
 	e.expect("POST", "/api/apps/web/sync", `{bad`, 400)
+	e.expect("POST", "/api/apps/web/syncs/7/cancel", "", 204) // Q154
+	if b := e.expect("POST", "/api/apps/web/syncs/8/cancel", "", 400); !strings.Contains(b, "no Sync Operation 8 waiting") {
+		t.Fatal(b)
+	}
+	e.expect("POST", "/api/apps/web/syncs/x/cancel", "", 400)
 	if b := e.expect("POST", "/api/apps/web/rollback", `{"opID":3}`, 202); !strings.Contains(b, `"opID":4`) {
 		t.Fatal(b)
 	}

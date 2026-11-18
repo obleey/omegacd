@@ -131,7 +131,30 @@ func TestListAndGet(t *testing.T) {
 		{Application: domain.Application{Name: "api", Kind: "compose", Host: "edge"}, SyncStatus: domain.Unknown, Health: domain.Missing,
 			LastOperation: &domain.SyncOperation{ID: 3, Phase: domain.OpFailed, StartedAt: time.Now()}},
 	}
-	_, srv := newAPI(t, map[string]any{"GET /api/apps": apps, "GET /api/apps/web": apps[0]})
+	left, seen := time.Date(2026, 11, 18, 9, 0, 0, 0, time.UTC), time.Date(2026, 11, 18, 8, 59, 0, 0, time.UTC)
+	offline := domain.AppView{Application: domain.Application{Name: "api", Kind: "compose", Host: "edge"}, SyncStatus: domain.Synced,
+		Health: domain.Healthy, HostOffline: true, HostOfflineSince: left, StateAt: seen}
+	waiting := []domain.SyncOperation{{ID: 9, App: "api", Phase: domain.OpWaiting}, {ID: 8, App: "api", Phase: domain.OpSucceeded}}
+	f, srv := newAPI(t, map[string]any{"GET /api/apps": apps, "GET /api/apps/web": apps[0], "GET /api/apps/api": offline,
+		"GET /api/apps/api/history": waiting, "POST /api/apps/api/syncs/9/cancel": nil, "GET /api/apps/web/history": []domain.SyncOperation{},
+		"GET /api/apps/gone/history": waiting}) // its cancel isn't served: the request fails
+
+	// Q184: offline, since when and as of when, in this computer's time
+	if r := run(t, srv, nil, "", "app", "get", "api"); r.code != 0 || !strings.Contains(r.stdout,
+		"Host edge offline since "+left.Local().Format(time.DateTime)+"; last known state from "+seen.Local().Format(time.DateTime)) {
+		t.Fatalf("offline: %+v", r)
+	}
+	// Q186: the Sync waiting for its Host cancelled; none waiting says so
+	if r := run(t, srv, nil, "", "app", "cancel", "api"); r.code != 0 || !strings.Contains(r.stdout, "Sync Operation #9 of api cancelled") ||
+		!f.called("POST /api/apps/api/syncs/9/cancel") {
+		t.Fatalf("cancel: %+v", r)
+	}
+	if r := run(t, srv, nil, "", "app", "cancel", "web"); r.code == 0 || !strings.Contains(r.stderr, "no Sync of web waits for its Host") {
+		t.Fatalf("none waiting: %+v", r)
+	}
+	if r := run(t, srv, nil, "", "app", "cancel", "gone"); r.code == 0 || strings.Contains(r.stdout, "cancelled") {
+		t.Fatalf("cancel refused: %+v", r)
+	}
 
 	r := run(t, srv, nil, "", "app", "list")
 	if r.code != 0 {

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { AppView, HostView } from './api.ts';
-import { appBadges, hostBadges, triggerLabel } from './badges.ts';
+import { appBadges, hostBadges, isOffline, offlineNote, staleTitle, triggerLabel } from './badges.ts';
 
 const host = (h: Partial<HostView>): HostView =>
 	({ name: 'edge', createdAt: '', approved: true, fingerprint: 'SHA256:x', status: { name: 'edge', connected: true }, apps: [], ...h }) as HostView;
@@ -41,4 +41,25 @@ test("the history names a rollback on the Host and the App of Apps' Syncs; the r
 	assert.equal(triggerLabel('host-rollback'), 'rollback on the Host');
 	assert.equal(triggerLabel('app-of-apps'), 'App of Apps');
 	assert.equal(triggerLabel('manual'), 'manual');
+});
+
+test("offline: since when and as of when, in the viewer's format; nothing while online", () => {
+	const when = (ts: string, what = 'datetime') => `${what}:${ts}`;
+	const off = app({ hostOffline: true, hostOfflineSince: 'T1', stateAt: 'T0' });
+	assert.equal(offlineNote(off, when), 'Host edge offline since datetime:T1; last known state from datetime:T0');
+	assert.equal(staleTitle(off, when), 'As of time:T0: Host edge offline');
+	assert.equal(offlineNote(app({ hostOffline: true }), when), 'Host edge offline');
+	assert.equal(staleTitle(app({ hostOffline: true }), when), 'Host edge offline');
+	assert.equal(offlineNote(app({}), when), undefined);
+	assert.equal(staleTitle(app({}), when), undefined);
+});
+
+test("offline as the live Hosts say, before the app's view is recomputed", () => {
+	const when = (ts: string) => ts;
+	const gone = host({ status: { name: 'edge', connected: false }, agent: { ...agent, leftAt: 'T9' } });
+	assert.equal(isOffline(app({}), gone), true);
+	assert.equal(isOffline(app({}), host({})), false);
+	assert.equal(isOffline(app({}), host({ fingerprint: undefined, status: { name: 'edge', connected: false } })), false); // only invited
+	assert.equal(offlineNote(app({ stateAt: 'T0' }), when, gone), 'Host edge offline since T9; last known state from T0');
+	assert.equal(staleTitle(app({}), when, gone), 'Host edge offline');
 });

@@ -244,10 +244,10 @@ func (c *Controller) reconcileWith(ctx context.Context, a domain.Application, fe
 	if viaAgent {
 		v.Health = domain.HealthUnknown // until its Agent first reports
 		if st, err := c.cfg.Store.AgentStatus(ctx, a.Name); err == nil {
-			v.Health = st.Health
+			v.Health, v.StateAt = st.Health, st.At
 		}
 		if !c.cfg.Agents.Online(a.Host) {
-			v.SyncMessage = strings.TrimPrefix(v.SyncMessage+"; "+c.offline(ctx, a), "; ")
+			v.HostOffline, v.HostOfflineSince = true, c.offlineSince(ctx, a.Host)
 		}
 	}
 
@@ -1384,6 +1384,25 @@ func (c *Controller) RenameHost(ctx context.Context, old, name string) error {
 	c.cfg.Log.InfoContext(ctx, "host renamed", "host", old, "to", name)
 	c.HostChanged(ctx, old)
 	c.HostChanged(ctx, name)
+	return nil
+}
+
+// CancelSync cancels a Sync waiting for its Host (Q154, Q186). Only a waiting one: the store checks it in the same
+// statement, so a Host coming back meanwhile runs it instead.
+func (c *Controller) CancelSync(ctx context.Context, app string, id int64) error {
+	err := c.cfg.Store.CancelWaitingOp(ctx, app, id, "cancelled by admin")
+	if errors.Is(err, domain.ErrNotFound) {
+		return fmt.Errorf("%w: %s has no Sync Operation %d waiting for its Host", domain.ErrInvalid, app, id)
+	}
+	if err != nil {
+		return err
+	}
+	c.cfg.Log.InfoContext(ctx, "sync cancelled", "app", app, "op", id)
+	if op, err := c.cfg.Store.GetOp(ctx, id); err == nil {
+		c.emit(domain.Event{Type: "op", App: app, Data: op})
+	} else {
+		c.cfg.Log.ErrorContext(ctx, "a cancelled sync not shown", "app", app, "op", id, "err", err)
+	}
 	return nil
 }
 

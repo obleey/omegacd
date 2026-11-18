@@ -52,6 +52,10 @@ export interface AppView extends Application {
 	prunePending?: string[];
 	/** App of Apps: the Hosts its Child Applications deploy to */
 	hosts?: string[];
+	/** its Host's Agent offline (Q38, Q184): since when, and when what is shown of it was reported */
+	hostOffline?: boolean;
+	hostOfflineSince?: string;
+	stateAt?: string;
 }
 
 export interface ServiceDiff {

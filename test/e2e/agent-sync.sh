@@ -103,9 +103,15 @@ check "app sync --wait stops at a Sync waiting for its Host, saying so" '[ $rc -
 check "a Sync to an offline Host waits for it (Q81)" '"$BIN" app history $APP -o json | python3 -c "
 import json,sys; op=json.load(sys.stdin)[0]; assert op[\"phase\"]==\"Waiting\" and \"waiting for Host edge\" in op[\"message\"], op"'
 check "its containers keep running meanwhile" '[ -n "$(ctr)" ]'
-check "offline, the app shows its Host offline since when, and the last known state from when (Q38)" '"$BIN" app get $APP -o json | python3 -c "
-import json,sys; v=json.load(sys.stdin); m=v.get(\"syncMessage\",\"\")
-assert \"Host edge offline since\" in m and \"last known state from\" in m and v[\"health\"]==\"Healthy\", v"'
+check "offline, the app shows its Host offline since when and its last known state as of when, as times (Q38, Q184)" '"$BIN" app get $APP -o json | python3 -c "
+import json,sys; v=json.load(sys.stdin)
+assert v[\"hostOffline\"] and v[\"hostOfflineSince\"] and v[\"stateAt\"] and v[\"health\"]==\"Healthy\" and \"offline\" not in v.get(\"syncMessage\",\"\"), v"'
+check "app get writes it in this computer's time" '"$BIN" app get $APP | grep -q "^Offline: *Host edge offline since .*; last known state from "'
+out=$("$BIN" app cancel $APP 2>&1)
+check "app cancel: the waiting Sync finishes Superseded, cancelled by admin (Q154, Q186)" 'echo "$out" | grep -q "cancelled: it won.t run when the Host is back" && "$BIN" app history $APP -o json | python3 -c "
+import json,sys; op=json.load(sys.stdin)[0]; assert op[\"phase\"]==\"Superseded\" and op[\"message\"]==\"cancelled by admin\", op"'
+check "with none waiting any more, app cancel says so" '! "$BIN" app cancel $APP 2>&1 | grep -q cancelled'
+"$BIN" app sync $APP >/dev/null 2>&1 # queued again, for what follows
 check "its resources still show, as last known" 'api resources | grep -q "\"state\":\"running\""'
 check "and logs say the Host is offline" '! "$BIN" app logs $APP --tail 5 >/dev/null 2>&1'
 out=$("$BIN" app diff $APP 2>&1)

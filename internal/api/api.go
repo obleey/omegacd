@@ -67,6 +67,7 @@ func New(cfg Config) http.Handler {
 	mux.HandleFunc("POST /api/apps/{name}/sync", s.syncApp)
 	mux.HandleFunc("POST /api/apps/{name}/rollback", s.rollbackApp)
 	mux.HandleFunc("POST /api/apps/{name}/refresh", s.refreshApp)
+	mux.HandleFunc("POST /api/apps/{name}/syncs/{id}/cancel", s.cancelSync)
 	mux.HandleFunc("GET /api/apps/{name}/history", s.history)
 	mux.HandleFunc("GET /api/apps/{name}/diff", s.diff)
 	mux.HandleFunc("GET /api/apps/{name}/resources", s.resources)
