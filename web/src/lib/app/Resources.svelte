@@ -6,6 +6,7 @@
 	import Empty from '../Empty.svelte';
 	import Graph, { type GNode } from './Graph.svelte';
 	import { langFor, lineToks, tokenize, type Tok } from '../highlight.ts';
+	import { uptime } from '../uptime.ts';
 
 	let {
 		name,
@@ -14,6 +15,13 @@
 		prunePending = [],
 		onlogs
 	}: { name: string; state: LiveState | null; syncStatus: string; prunePending?: string[]; onlogs: (c: Container) => void } = $props();
+
+	// uptimes count on between reports (Q179)
+	let now = $state(Date.now());
+	$effect(() => {
+		const t = setInterval(() => (now = Date.now()), 1000);
+		return () => clearInterval(t);
+	});
 
 	// The graph needs width; small screens start with the list.
 	let mode = $state<'graph' | 'list'>(matchMedia('(max-width: 640px)').matches ? 'list' : 'graph');
@@ -55,7 +63,7 @@
 			});
 			for (const c of s.containers)
 				out.push({
-					id: `c:${c.id}`, parent: `s:${s.name}`, icon: 'container', kind: 'Container', name: c.name, sub: c.status || c.image,
+					id: `c:${c.id}`, parent: `s:${s.name}`, icon: 'container', kind: 'Container', name: c.name, sub: uptime(c, now) || c.image,
 					status: [['State', c.state], ['Health Status', c.health]], onclick: () => onlogs(c), action: `Show logs for ${c.name}`
 				});
 		}
@@ -156,7 +164,7 @@
 											<Badge status={c.state} label="State" />
 											<Badge status={c.health} label="Health Status" />
 											<span class="muted small mono trunc" title={c.image}>{c.image}</span>
-											<span class="muted small">{c.status}</span>
+											<span class="muted small" title={c.status}>{uptime(c, now)}</span>
 										</div>
 									</li>
 								{/each}

@@ -37,6 +37,12 @@ export const statusMeta: Record<string, [Tone, IconName, boolean?]> = {
 	Locked: ['red', 'lock'],
 	Refused: ['red', 'x-circle'],
 	Outdated: ['yellow', 'alert'],
+	// about an Application's Host (M5-03)
+	Docker: ['overlay', 'container'],
+	Podman: ['overlay', 'container'],
+	'Host offline': ['red', 'x-circle'],
+	'Rolled back on Host': ['yellow', 'undo'],
+	Queued: ['yellow', 'clock'],
 	// container state
 	running: ['green', 'check-circle'],
 	restarting: ['yellow', 'notch', true],

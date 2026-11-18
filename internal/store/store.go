@@ -640,9 +640,13 @@ func (s *Store) ApplyAgentReport(ctx context.Context, host string, seq uint64, r
 			WHERE id=? AND app=? AND finished_at=0 AND app IN (SELECT name FROM apps WHERE host=?)`,
 			r.Phase, r.Message, at, r.Checksum, r.Op, r.App, host)
 	} else {
+		trigger := r.Trigger // one the Agent started: its rollback is the Host's own (Q174)
+		if trigger == "rollback" {
+			trigger = domain.TriggerHostRollback
+		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO ops (app, revision, tree_hash, phase, message, trigger, started_at, finished_at)
 			SELECT name, ?, ?, ?, ?, ?, ?, ? FROM apps WHERE name=? AND host=?`,
-			r.Revision, r.Checksum, r.Phase, r.Message, r.Trigger, at, at, r.App, host)
+			r.Revision, r.Checksum, r.Phase, r.Message, trigger, at, at, r.App, host)
 		if err == nil && r.Trigger == "rollback" && r.Phase == domain.OpSucceeded {
 			_, err = tx.ExecContext(ctx, `UPDATE apps SET rolled_back=1, auto_sync=0 WHERE name=? AND host=?`, r.App, host)
 		}

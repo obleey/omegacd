@@ -83,6 +83,8 @@ export interface Container {
 	status: string;
 	exitCode: number;
 	health: HealthStatus;
+	startedAt?: string; // when it last started and stopped, for its uptime counted live (Q179); none from an older Agent
+	finishedAt?: string;
 }
 
 export interface LiveState {

@@ -57,6 +57,9 @@ check "work dir has the decrypted files" '[ -f "$W/.env" ] && [ -f "$W/app.env" 
 check "and no *.sops.* copies" '[ -z "$(ls -A "$W" | grep "\.sops\.")" ]'
 check "container got both secrets" '[ "$(docker exec $(ctr) printenv DB_PASSWORD)" = first-db-pw ] && [ "$(docker exec $(ctr) printenv API_TOKEN)" = first-token ]'
 R=$(api resources)
+check "its containers come with their start time, through the Agent, for uptime counted live (Q179)" 'echo "$R" | python3 -c "
+import json,sys; cs=json.load(sys.stdin)[\"containers\"]
+assert cs and all(c.get(\"startedAt\", \"\")[:4] > \"2000\" for c in cs), cs"'
 check "Resources marks app.env as secret" 'echo "$R" | python3 -c "import json,sys; r=[x for x in json.load(sys.stdin)[\"resources\"] if x[\"name\"]==\"app.env\"]; sys.exit(0 if r and r[0].get(\"secret\") else 1)"'
 D=$(api "resource?kind=env_file&name=app.env")
 # through an Agent the Control Plane never has the decrypted file: nothing of it is shown (M5-06 adds its key names, masked)

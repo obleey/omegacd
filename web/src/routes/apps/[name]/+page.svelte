@@ -34,6 +34,9 @@
 	import History from '#lib/app/History.svelte';
 	import Logs from '#lib/app/Logs.svelte';
 	import Children from '#lib/app/Children.svelte';
+	import { appBadges, triggerLabel } from '#lib/badges.ts';
+	import HostBadges from '#lib/HostBadges.svelte';
+	import { engineLabel } from '#lib/hosts.ts';
 
 	type Tab = 'resources' | 'diff' | 'history' | 'logs';
 	const tabIcon: Record<Tab, IconName> = { resources: 'tree', diff: 'diff', history: 'clock', logs: 'terminal' };
@@ -251,7 +254,7 @@
 				<span class="plabel">Last Sync</span>
 				{#if op}
 					<Badge status={op.phase} size="lg" label="Last Sync Operation" text={op.phase === 'Running' ? 'Syncing' : op.phase} />
-					<span class="muted small">{op.trigger} · {ago(op.finishedAt || op.startedAt)} · <span class="mono"><GitLink href={op.revision && web?.commit(op.revision)} title="Open commit {op.revision}">{short(op.revision)}</GitLink></span></span>
+					<span class="muted small">{triggerLabel(op.trigger)} · {ago(op.finishedAt || op.startedAt)} · <span class="mono"><GitLink href={op.revision && web?.commit(op.revision)} title="Open commit {op.revision}">{short(op.revision)}</GitLink></span></span>
 				{:else}
 					<Badge status="Unknown" size="lg" text="Never synced" />
 					<span class="muted small">Sync to deploy the Desired State</span>
@@ -260,7 +263,7 @@
 		</div>
 
 		<dl class="meta">
-			{#if isApps}<div><dt><Icon name="server" size={12} />Hosts</dt><dd class="mono">{app.hosts?.join(', ') || '—'}</dd></div>{:else}<div><dt><Icon name="server" size={12} />Host</dt><dd class="mono">{app.host}</dd></div>{/if}
+			{#if isApps}<div><dt><Icon name="server" size={12} />Hosts</dt><dd class="mono">{app.hosts?.join(', ') || '—'}</dd></div>{:else}<div><dt><Icon name="server" size={12} />Host</dt><dd class="mono hostline"><a href="/hosts#host-{app.host}">{app.host}</a>{#if live.hosts[app.host ?? '']?.agent?.engine}<span class="muted">{`· ${engineLabel(live.hosts[app.host ?? ''].agent)}`}</span>{/if}<HostBadges badges={appBadges(app, live.hosts[app.host ?? ''])} /></dd></div>{/if}
 			<div class="wide"><dt><Icon name="folder" size={12} />Repository</dt><dd class="mono"><GitLink href={web?.repo} title="Open the Repository">{app.repoURL}</GitLink></dd></div>
 			<div><dt><Icon name="folder" size={12} />Path</dt><dd class="mono"><GitLink href={web && (app.deployedSHA || app.targetSHA) ? web.tree(app.deployedSHA || app.targetSHA!, app.path || '') : null} title="Open this folder in the Repository">{app.path || '.'}</GitLink></dd></div>
 			<div><dt><Icon name="branch" size={12} />Target Revision</dt><dd class="mono">{app.targetRevision} <span class="muted">(<GitLink href={app.targetSHA && web?.commit(app.targetSHA)} title="Open commit {app.targetSHA}">{short(app.targetSHA)}</GitLink>)</span></dd></div>
@@ -478,4 +481,5 @@
 		.actions { width: 100%; }
 		.actions > :global(*) { flex: 1 1 auto; }
 	}
+	.hostline { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.5rem; }
 </style>

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { gitWeb } from './gitweb.ts';
+import { gitWeb, repoName } from './gitweb.ts';
 
 test('GitHub https, with and without .git', () => {
 	for (const u of ['https://github.com/obleey/omegacd.git', 'https://github.com/obleey/omegacd', 'https://github.com/obleey/omegacd/']) {
@@ -32,4 +32,11 @@ test('GitLab, Gitea/Forgejo and Bitbucket layouts', () => {
 
 test('local paths have no web page', () => {
 	for (const u of ['/srv/git/repo', 'file:///srv/git/repo', './repo', '']) assert.equal(gitWeb(u), null);
+});
+
+test('a Repository by its name', () => {
+	assert.equal(repoName('https://github.com/acme/deploy.git'), 'deploy');
+	assert.equal(repoName('git@github.com:acme/deploy.git'), 'deploy');
+	assert.equal(repoName('ssh://git@forgejo.local:2222/acme/deploy/'), 'deploy');
+	assert.equal(repoName('/srv/git/server-apps'), 'server-apps');
 });

@@ -36,11 +36,14 @@ A Date and time format setting, per browser: Browser default, European 24-hour, 
 secret encrypted with the copied key (or the copied `.sops.yaml` rule) deploys to that Host.
 
 ### M5-03 · Badges everywhere
-**Status:** todo
+**Status:** done (2026-11-18, PR #145)
 **Depends on:** M5-02, M4-02
 
-Engine, Host offline, rolled back on the Host, queued Sync, Agent outdated: on app tiles, the app header, the tree's
-Host node, lists and Host cards, with tooltips (Q34, Q39).
+Engine, Host offline, rolled back on the Host, queued Sync, Agent outdated: on app tiles, the app header, lists and
+Host cards, with tooltips (Q34, Q39).
+Worked out in the UI from the Hosts store (Q173); a rollback on the Host recorded as `host-rollback` (Q174); no Host
+node in the tree (Q175); where each shows (Q176); offline views stay M5-04 (Q177); a Host card's
+Applications link to them (Q178); containers' uptime counted live from the start time their Agent reports (Q179).
 
 **Done when:** a visual check of every screen shows them, and a UI test covers their logic.
 
@@ -51,6 +54,7 @@ Host node, lists and Host cards, with tooltips (Q34, Q39).
 Last known Live State, Health and Diff with "Host offline since …"; the Logs tab says logs come from the Agent (no logs
 are stored, Q155); queued Syncs shown as waiting for the Host, cancellable (Q38; `POST /api/apps/{name}/syncs/{id}/cancel`
 finishes one Superseded, "cancelled by admin", Q154).
+While the Host is offline, a container's uptime says "as of" the Agent's last report (Q179; the live count is M5-03's).
 
 **Done when:** an offline Host's apps read clearly in the dashboard, tree and app page.
 
@@ -108,3 +112,14 @@ so both are tested together (Q172).
 
 **Done when:** a child is rolled back from the UI and the CLI, a Sync of its App of Apps leaves it rolled back, a
 manual Sync of the child ends it, and an e2e drives it through an Agent.
+
+### M5-10 · pnpm for the web UI
+**Status:** todo
+**Depends on:** M5-03
+
+The web UI moves from npm to pnpm (Q183): `pnpm-lock.yaml` replaces `package-lock.json` (the same versions, imported
+with `pnpm import`), pnpm comes from nix (`~/nix-config/common/packages.nix`) and from a pinned `corepack` in CI and
+the Dockerfile, and the Makefile, `.github/workflows/ci.yml`, `release.yml`, CLAUDE.md and TESTING.md say `pnpm`.
+
+**Done when:** `make build`, CI, the image build and the release workflow use pnpm, no `package-lock.json` is left,
+and the built UI is the same.

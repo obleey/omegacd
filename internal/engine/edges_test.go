@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/docker/cli/cli/command"
@@ -244,5 +245,18 @@ func TestEventStreamBreaks(t *testing.T) {
 	err := e.streamEvents(t.Context(), client.Filters{}, func(string) {}, func() { connected = true })
 	if err == nil || err.Error() != "stream broken off" || !connected {
 		t.Fatalf("%v, connected %v", err, connected)
+	}
+}
+
+// Q179: a container's start or finish time as Docker writes it; "never" (0001-01-01) and a format it can't read are
+// zero, "not known".
+func TestDockerTime(t *testing.T) {
+	if got := dockerTime("2026-11-17T18:05:43.436682601Z"); !got.Equal(time.Date(2026, 11, 17, 18, 5, 43, 436682601, time.UTC)) {
+		t.Errorf("a start time: %v", got)
+	}
+	for _, s := range []string{"0001-01-01T00:00:00Z", "", "yesterday"} {
+		if got := dockerTime(s); !got.IsZero() {
+			t.Errorf("%q: %v", s, got)
+		}
 	}
 }

@@ -404,9 +404,16 @@ In the UI it is **Hosts → Add Host**: name the Host, copy the command that run
 in a container: `docker run` of OmegaCD's image), and watch it connect; compare the fingerprint it shows with the one
 the Agent printed, and **Approve**. Agents connect over https only: open OmegaCD at the address they reach it at.
 Each Host then has a card, live: online or last seen, its Agent's version (flagged **outdated** when older than
-OmegaCD), engine and rootless, OS/arch, its Applications, its key's fingerprint and its Host Key with its `.sops.yaml`
+OmegaCD), engine and rootless, OS/arch, its Applications (each a link, with a dot in its status color), its key's fingerprint and its Host Key with its `.sops.yaml`
 rule to copy; and **Rotate key**, **Allowlist…** (showing the address its Agent last connected from), **Rename…**
 (only while no Application uses it), **Revoke**, and for a locked Host both connections with **Unlock**.
+
+Wherever an Application shows (its tile, its row, its page), its Host's name comes with its engine
+(`obleey-macbook · Docker 29.8.2`), and badges say what needs attention: **Host offline**, **Agent outdated**,
+**Rolled back on the Host** (with `omegacd agent rollback`) and **Sync queued**; each tooltip says what it means and
+what to do. The tiles are one grid, as in Argo CD: an App of Apps is a tile with its child count, and each child names
+it (**↳ platform**). A container's uptime
+("Up 2 h 14 min", "Exited (1) 5 min ago") counts on live from the start time its Agent reports.
 
 **Settings → Display** picks how dates and times are shown, in this browser: the browser's own format, European
 (`17.11.2026 18:42`) or US (`11/17/2026 6:42 PM`).

@@ -25,3 +25,6 @@ export function lineDiff(a: string, b: string): DiffLine[] {
 	while (j < m) out.push({ op: '+', text: y[j++] });
 	return out;
 }
+
+/** The files a git diff changes, by their path in the newer Revision. */
+export const changedFiles = (gitDiff?: string) => [...(gitDiff ?? '').matchAll(/^diff --git a\/\S+ b\/(\S+)$/gm)].map((m) => m[1]);

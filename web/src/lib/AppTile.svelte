@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { gitWeb } from './gitweb.ts';
+	import { gitWeb, repoName } from './gitweb.ts';
 	import GitLink from './GitLink.svelte';
 	import { ago, enc, short, type AppView } from './api.ts';
 	import Badge from './Badge.svelte';
@@ -8,6 +8,10 @@
 	import { refreshApp, syncApp } from './actions.ts';
 	import RefreshNote from './RefreshNote.svelte';
 	import PolicyChips from './PolicyChips.svelte';
+	import { appBadges } from './badges.ts';
+	import { engineLabel } from './hosts.ts';
+	import HostBadges from './HostBadges.svelte';
+	import { live } from './live.svelte.ts';
 
 	let { a, kids }: { a: AppView; kids?: number } = $props();
 	let busy = $state('');
@@ -20,6 +24,7 @@
 		busy = '';
 	}
 	let web = $derived(gitWeb(a.repoURL));
+	let engine = $derived(engineLabel(live.hosts[a.host ?? '']?.agent).replace(/^—$/, '')); // by the Host's name (Q181)
 </script>
 
 <article class="tile {appTone(a)}" class:running>
@@ -28,29 +33,31 @@
 		<h3><a class="stretch" href="/apps/{enc(a.name)}">{a.name}</a></h3>
 		{#if a.kind === 'apps'}<span class="tag">App of Apps</span>{/if}
 		{#if a.notInGit}<span class="tag warn">not in Git</span>{/if}
+		{#if a.parent}<a class="parent small" href="/apps/{enc(a.parent)}" title="Its App of Apps">↳ {a.parent}</a>{/if}
 	</header>
 	<div class="status">
 		<Badge status={shownSync(a)} label="Sync Status" />
 		<Badge status={a.health} label="Health Status" />
 		<PolicyChips {a} />
+		<HostBadges badges={appBadges(a, live.hosts[a.host ?? ''])} />
+		{#if a.kind === 'apps'}<span class="tag kids"><Icon name="apps" size={12} />{kids ?? 0} Child Application{kids === 1 ? '' : 's'}</span>{/if}
 	</div>
+
 	{#if a.syncStatus === 'Unknown' && a.syncMessage}
 		<!-- why OmegaCD can't tell, e.g. a Git token that stopped working, without opening the app -->
 		<p class="why small" title={a.syncMessage}><Icon name="info" size={13} /><span>{a.syncMessage}</span></p>
 	{/if}
 	<dl>
 		{#if a.kind === 'apps'}
-			<dt><Icon name="apps" size={13} />Children</dt>
-			<dd>{kids ?? 0} Child Application{kids === 1 ? '' : 's'}</dd>
 			<dt><Icon name="server" size={13} />Hosts</dt>
 			<dd class="mono">{a.hosts?.join(', ') || '—'}</dd>
 		{:else}
 			<dt><Icon name="server" size={13} />Host</dt>
-			<dd class="mono">{a.host}</dd>
+			<dd class="mono trunc">{a.host}{#if engine}<span class="muted">{` · ${engine}`}</span>{/if}</dd>
 		{/if}
 		<dt><Icon name="folder" size={13} />Repository</dt>
 		<dd class="mono trunc" title="{a.repoURL} {a.path}">
-			<GitLink href={web?.repo}>{a.repoURL.replace(/^https?:\/\//, '').replace(/\.git$/, '')}</GitLink>{#if a.path && a.path !== '.'} · <GitLink href={web && a.targetSHA ? web.tree(a.targetSHA, a.path) : null}>{a.path}</GitLink>{/if}
+			<GitLink href={web?.repo}>{repoName(a.repoURL)}</GitLink>{#if a.path && a.path !== '.'}{' · '}<GitLink href={web && a.targetSHA ? web.tree(a.targetSHA, a.path) : null}>{a.path}</GitLink>{/if}
 		</dd>
 		<dt><Icon name="branch" size={13} />Revision</dt>
 		<dd class="mono">{a.targetRevision} <span class="muted"><GitLink href={a.targetSHA && web?.commit(a.targetSHA)} title="Open commit {a.targetSHA}">{short(a.targetSHA)}</GitLink></span></dd>
@@ -110,6 +117,8 @@
 	h3 a { color: var(--text); }
 	/* the name link covers the tile; buttons sit above it */
 	.stretch::after { content: ''; position: absolute; inset: 0; z-index: 1; }
+	.parent { position: relative; z-index: 2; margin-left: auto; color: var(--subtext0); white-space: nowrap; }
+	.parent:hover { color: var(--accent); }
 	.stretch:focus-visible { outline: none; }
 	.stretch:focus-visible::after { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: var(--radius-lg); }
 	.status { display: flex; gap: 0.4rem; flex-wrap: wrap; align-items: center; }
@@ -120,4 +129,6 @@
 	dd { margin: 0; display: flex; align-items: center; gap: 0.4rem; min-width: 0; }
 	.trunc { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	footer { display: flex; gap: 0.4rem; margin-top: auto; padding-top: 0.2rem; position: relative; z-index: 2; }
+	/* an App of Apps' children counted in its badge row: its details are as many rows as any tile's (Q180) */
+	.kids { display: inline-flex; align-items: center; gap: 0.25rem; }
 </style>

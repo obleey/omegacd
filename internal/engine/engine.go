@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/compose-spec/compose-go/v2/cli"
 	"github.com/compose-spec/compose-go/v2/loader"
@@ -644,14 +645,16 @@ func (e *Engine) Status(ctx context.Context, app domain.Application) (domain.Liv
 			health = string(st.Health.Status)
 		}
 		dc := domain.Container{
-			ID:       ct.ID,
-			Name:     strings.TrimPrefix(insp.Container.Name, "/"),
-			Service:  ct.Labels[api.ServiceLabel],
-			Image:    ct.Image,
-			State:    string(st.Status),
-			Status:   ct.Status,
-			ExitCode: st.ExitCode,
-			Health:   containerHealth(string(st.Status), health, st.ExitCode, insp.Container.RestartCount, keepsRunning(string(insp.Container.HostConfig.RestartPolicy.Name))),
+			ID:         ct.ID,
+			Name:       strings.TrimPrefix(insp.Container.Name, "/"),
+			Service:    ct.Labels[api.ServiceLabel],
+			Image:      ct.Image,
+			State:      string(st.Status),
+			Status:     ct.Status,
+			ExitCode:   st.ExitCode,
+			Health:     containerHealth(string(st.Status), health, st.ExitCode, insp.Container.RestartCount, keepsRunning(string(insp.Container.HostConfig.RestartPolicy.Name))),
+			StartedAt:  dockerTime(st.StartedAt),
+			FinishedAt: dockerTime(st.FinishedAt),
 		}
 		ls.Containers = append(ls.Containers, dc)
 		seen[dc.Service] = true
@@ -936,4 +939,14 @@ func lastLines(ctx context.Context, c client.APIClient, id string, n int) string
 	var out strings.Builder
 	stdcopy.StdCopy(&out, &out, r)
 	return strings.TrimSpace(out.String())
+}
+
+// dockerTime reads a container's start or finish time (Q179). Zero is "not known": never started or stopped (Docker's
+// 0001-01-01), or a format it can't read; the UI then shows the engine's status line as it is.
+func dockerTime(s string) time.Time {
+	t, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil || t.Year() <= 1 {
+		return time.Time{}
+	}
+	return t
 }
