@@ -184,6 +184,20 @@ export interface HostView {
 	apps: string[];
 }
 
+/** Settings → Source Server (Q156, Q202, Q203): where it runs, whether it answers, its version and caches. */
+export interface SourceStatus {
+	mode: 'in-process' | 'standalone';
+	url?: string;
+	reachable: boolean;
+	error?: string;
+	latencyMs: number;
+	warning?: string; // its version doesn't fit OmegaCD's
+	version: string; // empty: an older Source Server, version unknown
+	repositories: number;
+	repoCacheBytes: number;
+	blobCacheBytes: number;
+}
+
 /** A Host Key's public half; the private half never leaves its Agent. */
 export interface HostKey {
 	recipient: string;

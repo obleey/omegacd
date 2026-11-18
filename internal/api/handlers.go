@@ -18,6 +18,7 @@ import (
 	"github.com/obleey/omegacd/internal/appdef"
 	"github.com/obleey/omegacd/internal/domain"
 	"github.com/obleey/omegacd/internal/source"
+	"github.com/obleey/omegacd/internal/version"
 )
 
 func (s *server) listApps(w http.ResponseWriter, r *http.Request) {
@@ -356,6 +357,37 @@ func (s *server) deleteRepoCred(w http.ResponseWriter, r *http.Request) {
 		err = s.Source.DeleteCredential(r.Context(), id)
 	}
 	respond(w, http.StatusNoContent, nil, err)
+}
+
+// sourceStatus is Settings → Source Server (Q156, Q202, Q203): where it runs, whether it answers and how fast, its
+// version (warned when it doesn't fit the Control Plane's) and its caches. Unreachable is an answer, not an error.
+func (s *server) sourceStatus(w http.ResponseWriter, r *http.Request) {
+	out := struct {
+		Mode      string `json:"mode"`
+		URL       string `json:"url,omitempty"`
+		Reachable bool   `json:"reachable"`
+		Error     string `json:"error,omitempty"`
+		LatencyMs int64  `json:"latencyMs"`
+		Warning   string `json:"warning,omitempty"`
+		domain.SourceStatus
+	}{Mode: "in-process", URL: s.SourceURL}
+	if s.SourceURL != "" {
+		out.Mode = "standalone"
+	}
+	start := time.Now()
+	st, err := s.Source.Status(r.Context())
+	out.LatencyMs = time.Since(start).Milliseconds()
+	if err != nil {
+		s.Log.WarnContext(r.Context(), "source server status", "err", err)
+		out.Error = err.Error()
+	} else {
+		out.Reachable, out.SourceStatus = true, st
+		cp := version.String()
+		if st.Version != "" && !version.Compatible(cp, st.Version) {
+			out.Warning = fmt.Sprintf("Source Server %s doesn't fit OmegaCD %s (the same minor version or one behind): upgrade it", st.Version, cp)
+		}
+	}
+	respond(w, http.StatusOK, out, nil)
 }
 
 func (s *server) listHosts(w http.ResponseWriter, r *http.Request) {

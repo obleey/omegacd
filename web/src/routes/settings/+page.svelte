@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api, ago, errMsg, get, type APIToken, type RegistryCredential, type RepoCredential } from '#lib/api.ts';
+	import { api, ago, errMsg, get, type APIToken, type RegistryCredential, type RepoCredential, type SourceStatus } from '#lib/api.ts';
+	import { bytes } from '#lib/size.ts';
 	import { type DateFormat, dateFormats, formatDate } from '#lib/datetime.ts';
 	import { display, setDateFormat } from '#lib/display.svelte.ts';
 	import Icon from '#lib/Icon.svelte';
@@ -9,6 +10,18 @@
 	let repos = $state<RepoCredential[]>([]);
 	let regs = $state<RegistryCredential[]>([]);
 	let tokens = $state<APIToken[]>([]);
+	let source = $state<SourceStatus | null>(null);
+	let sourceBusy = $state(false);
+	async function loadSource() {
+		sourceBusy = true;
+		try {
+			source = await get<SourceStatus>('/settings/source');
+		} catch (e) {
+			toastError(e, 'Loading the Source Server failed');
+		} finally {
+			sourceBusy = false;
+		}
+	}
 	let error = $state('');
 
 	// Forms: id 0 = create. Secret fields are write-only; empty keeps the stored value on edit.
@@ -31,7 +44,10 @@
 			error = errMsg(e);
 		}
 	}
-	onMount(load);
+	onMount(() => {
+		load();
+		loadSource();
+	});
 
 	async function run(fn: () => Promise<unknown>) {
 		error = '';
@@ -92,6 +108,30 @@
 	</div>
 </section>
 {#if error}<p class="error" role="alert">{error}</p>{/if}
+
+<section class="card">
+	<h2><span class="hicon"><Icon name="branch" size={17} /></span>Source Server <span class="muted small">— reads Git and renders, with the credentials below</span></h2>
+	{#if source}
+		<dl class="src">
+			<dt>Runs</dt>
+			<dd>{source.mode === 'in-process' ? 'in-process, inside OmegaCD' : 'standalone'}{#if source.url}{' at '}<code>{source.url}</code>{/if}</dd>
+			<dt>Reachable</dt>
+			<dd>{#if source.reachable}<span class="ok">yes</span>, answered in {source.latencyMs} ms{:else}<span class="bad">no</span>: {source.error}{/if}</dd>
+			{#if source.reachable}
+				<dt>Version</dt>
+				<dd>{source.version || 'unknown (an older Source Server)'}</dd>
+				<dt>Repository cache</dt>
+				<dd>{source.repositories} Repositor{source.repositories === 1 ? 'y' : 'ies'}, {bytes(source.repoCacheBytes)}</dd>
+				<dt>Blob cache</dt>
+				<dd>{bytes(source.blobCacheBytes)}</dd>
+			{/if}
+		</dl>
+		{#if source.warning}<p class="warn small" role="alert"><Icon name="alert" size={14} />{source.warning}</p>{/if}
+	{:else}
+		<p class="muted small" role="status">Loading…</p>
+	{/if}
+	<div class="row"><button class="sm" onclick={loadSource} disabled={sourceBusy}><Icon name="refresh" size={14} spin={sourceBusy} />Refresh</button></div>
+</section>
 
 <section class="card">
 	<h2><span class="hicon"><Icon name="folder" size={17} /></span>Repository credentials <span class="muted small">— for reading Git repositories</span></h2>
@@ -238,4 +278,10 @@
 	.newtoken p { margin: 0 0 0.4rem; }
 	.tok { background: var(--crust); padding: 0.3rem 0.5rem; border-radius: 4px; word-break: break-all; flex: 1; }
 	.narrow { max-width: 24rem; }
+	.src { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.35rem 1rem; margin: 0 0 0.8rem; font-size: 0.9rem; }
+	.src dt { color: var(--subtext0); }
+	.src dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+	.ok { color: var(--green); }
+	.bad { color: var(--red); }
+	.warn { color: var(--yellow); display: flex; align-items: center; gap: 0.4rem; }
 </style>

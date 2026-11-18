@@ -379,6 +379,11 @@ Your Applications' secrets are not in either: each Host's Agent holds its own Ho
 
 ## Git access
 
+**Settings → Source Server** shows where it runs (in-process, or standalone at its address), whether it answers and
+how fast, its version (warned when it doesn't fit OmegaCD's) and the size of its Repository and blob caches. A
+standalone Source Server's log lines carry the Application and Sync Operation of each call (`app=… op=…`), so one
+Sync reads through the Control Plane's, the Source Server's and the Agent's logs.
+
 Public repositories need no setup; the New Application form checks access as you type (public / private with a credential / denied, with an inline *Add credential*). For private ones, add a credential under **Settings → Repository credentials** (for reading Git repositories), matched by URL prefix: a username and password/token for HTTPS, or an SSH private key. Credentials are kept by the [Source Server](#standalone-source-server), not in OmegaCD's database: in `credentials.age` in its data dir, encrypted with its own key `source.key` (created at its first start, owner-only). Back up both together; without `source.key` the credentials can't be read. Secrets go in and are never shown again. Private images need **Settings → Registry credentials** (for pulling Docker images), keyed by registry host such as `ghcr.io` — not a URL.
 
 ![New Application form reporting a public repository](assets/screenshots/new-app.png)
@@ -404,7 +409,7 @@ In the UI it is **Hosts → Add Host**: name the Host, copy the command that run
 in a container: `docker run` of OmegaCD's image), and watch it connect; compare the fingerprint it shows with the one
 the Agent printed, and **Approve**. Agents connect over https only: open OmegaCD at the address they reach it at.
 Each Host then has a card, live: online or last seen, its Agent's version (flagged **outdated** when older than
-OmegaCD), engine and rootless, OS/arch, its Applications (each a link, with a dot in its status color), its key's fingerprint and its Host Key with its `.sops.yaml`
+OmegaCD), engine and rootless, OS/arch, its Applications (each a link, with a dot in its status color, grouped by the App of Apps that declares them), its key's fingerprint and its Host Key with its `.sops.yaml`
 rule to copy; and **Rotate key**, **Allowlist…** (showing the address its Agent last connected from), **Rename…**
 (only while no Application uses it), **Revoke**, and for a locked Host both connections with **Unlock**.
 

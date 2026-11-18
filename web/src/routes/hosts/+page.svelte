@@ -9,7 +9,7 @@
 	import { when } from '#lib/display.svelte.ts';
 	import Empty from '#lib/Empty.svelte';
 	import { shortKey, sopsYaml } from '#lib/hostkeys.ts';
-	import { hostState, hostTone, lastSeen, parseAllowlist, renameBlocked } from '#lib/hosts.ts';
+	import { groupByParent, hostState, hostTone, lastSeen, parseAllowlist, renameBlocked } from '#lib/hosts.ts';
 	import { hostBadges } from '#lib/badges.ts';
 	import HostBadges from '#lib/HostBadges.svelte';
 	import Icon from '#lib/Icon.svelte';
@@ -169,12 +169,19 @@
 					<dt>Applications</dt>
 					<dd>
 						{#if h.apps.length}
-							<span class="apps">
-								{#each h.apps as name (name)}
-									{@const a = live.apps[name]}
-									<a class="appchip {a ? appTone(a) : 'overlay'}" href="/apps/{enc(name)}" title={a ? `${a.syncStatus} · ${a.health}` : undefined}><Icon name="app" size={13} />{name}</a>
-								{/each}
-							</span>
+							<!-- grouped by the App of Apps that declares them (Q207): it heads its group, it doesn't run here -->
+							{#each groupByParent(h.apps, (n) => live.apps[n]?.parent || undefined) as g (g.parent ?? '')}
+								<span class="apps">
+									{#if g.parent}
+										{@const pa = live.apps[g.parent]}
+										<a class="appchip {pa ? appTone(pa) : 'overlay'}" href="/apps/{enc(g.parent)}" title="App of Apps{pa ? ` · ${pa.syncStatus} · ${pa.health}` : ''}"><Icon name="apps" size={13} />{g.parent}</a>
+									{/if}
+									{#each g.apps as name (name)}
+										{@const a = live.apps[name]}
+										<a class="appchip {a ? appTone(a) : 'overlay'}" href="/apps/{enc(name)}" title={a ? `${a.syncStatus} · ${a.health}` : undefined}><Icon name="app" size={13} />{name}</a>
+									{/each}
+								</span>
+							{/each}
 						{:else}none{/if}
 					</dd>
 					<dt>Key</dt>
@@ -275,7 +282,8 @@
 	.wrap { overflow-wrap: anywhere; }
 	.copies { margin-top: 0.3rem; gap: 0.35rem; }
 	/* an Application on this Host, its dot in its tile's color */
-	.apps { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+	.apps { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; }
+	.apps + .apps { margin-top: 0.35rem; }
 	.appchip { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.05rem 0.5rem 0.05rem 0.45rem; border: 1px solid var(--border);
 		border-radius: 999px; color: var(--text); font-size: 0.8rem; text-decoration: none; transition: border-color 0.2s; }
 	.appchip::before { content: ''; width: 0.45rem; height: 0.45rem; border-radius: 50%; background: var(--c); order: -1; }

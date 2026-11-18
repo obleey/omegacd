@@ -1213,6 +1213,111 @@ func (*DeleteCredentialResponse) Descriptor() ([]byte, []int) {
 	return file_omegacd_source_v1_source_proto_rawDescGZIP(), []int{20}
 }
 
+type StatusRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StatusRequest) Reset() {
+	*x = StatusRequest{}
+	mi := &file_omegacd_source_v1_source_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StatusRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StatusRequest) ProtoMessage() {}
+
+func (x *StatusRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_omegacd_source_v1_source_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StatusRequest.ProtoReflect.Descriptor instead.
+func (*StatusRequest) Descriptor() ([]byte, []int) {
+	return file_omegacd_source_v1_source_proto_rawDescGZIP(), []int{21}
+}
+
+// Mirrors domain.SourceStatus.
+type StatusResponse struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Version        string                 `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"`
+	Repositories   int64                  `protobuf:"varint,2,opt,name=repositories,proto3" json:"repositories,omitempty"`
+	RepoCacheBytes int64                  `protobuf:"varint,3,opt,name=repo_cache_bytes,json=repoCacheBytes,proto3" json:"repo_cache_bytes,omitempty"`
+	BlobCacheBytes int64                  `protobuf:"varint,4,opt,name=blob_cache_bytes,json=blobCacheBytes,proto3" json:"blob_cache_bytes,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *StatusResponse) Reset() {
+	*x = StatusResponse{}
+	mi := &file_omegacd_source_v1_source_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StatusResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StatusResponse) ProtoMessage() {}
+
+func (x *StatusResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_omegacd_source_v1_source_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StatusResponse.ProtoReflect.Descriptor instead.
+func (*StatusResponse) Descriptor() ([]byte, []int) {
+	return file_omegacd_source_v1_source_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *StatusResponse) GetVersion() string {
+	if x != nil {
+		return x.Version
+	}
+	return ""
+}
+
+func (x *StatusResponse) GetRepositories() int64 {
+	if x != nil {
+		return x.Repositories
+	}
+	return 0
+}
+
+func (x *StatusResponse) GetRepoCacheBytes() int64 {
+	if x != nil {
+		return x.RepoCacheBytes
+	}
+	return 0
+}
+
+func (x *StatusResponse) GetBlobCacheBytes() int64 {
+	if x != nil {
+		return x.BlobCacheBytes
+	}
+	return 0
+}
+
 var File_omegacd_source_v1_source_proto protoreflect.FileDescriptor
 
 const file_omegacd_source_v1_source_proto_rawDesc = "" +
@@ -1301,7 +1406,13 @@ const file_omegacd_source_v1_source_proto_rawDesc = "" +
 	"\x17DeleteCredentialRequest\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\x03R\x02idJ\x04\b\x01\x10\x02R\n" +
 	"url_prefix\"\x1a\n" +
-	"\x18DeleteCredentialResponse2\xb8\x06\n" +
+	"\x18DeleteCredentialResponse\"\x0f\n" +
+	"\rStatusRequest\"\xa2\x01\n" +
+	"\x0eStatusResponse\x12\x18\n" +
+	"\aversion\x18\x01 \x01(\tR\aversion\x12\"\n" +
+	"\frepositories\x18\x02 \x01(\x03R\frepositories\x12(\n" +
+	"\x10repo_cache_bytes\x18\x03 \x01(\x03R\x0erepoCacheBytes\x12(\n" +
+	"\x10blob_cache_bytes\x18\x04 \x01(\x03R\x0eblobCacheBytes2\x87\a\n" +
 	"\rSourceService\x12P\n" +
 	"\aResolve\x12!.omegacd.source.v1.ResolveRequest\x1a\".omegacd.source.v1.ResolveResponse\x12Y\n" +
 	"\n" +
@@ -1312,7 +1423,8 @@ const file_omegacd_source_v1_source_proto_rawDesc = "" +
 	"\vCheckAccess\x12%.omegacd.source.v1.CheckAccessRequest\x1a&.omegacd.source.v1.CheckAccessResponse\x12h\n" +
 	"\x0fListCredentials\x12).omegacd.source.v1.ListCredentialsRequest\x1a*.omegacd.source.v1.ListCredentialsResponse\x12b\n" +
 	"\rPutCredential\x12'.omegacd.source.v1.PutCredentialRequest\x1a(.omegacd.source.v1.PutCredentialResponse\x12k\n" +
-	"\x10DeleteCredential\x12*.omegacd.source.v1.DeleteCredentialRequest\x1a+.omegacd.source.v1.DeleteCredentialResponseB=Z;github.com/obleey/omegacd/internal/proto/source/v1;sourcev1b\x06proto3"
+	"\x10DeleteCredential\x12*.omegacd.source.v1.DeleteCredentialRequest\x1a+.omegacd.source.v1.DeleteCredentialResponse\x12M\n" +
+	"\x06Status\x12 .omegacd.source.v1.StatusRequest\x1a!.omegacd.source.v1.StatusResponseB=Z;github.com/obleey/omegacd/internal/proto/source/v1;sourcev1b\x06proto3"
 
 var (
 	file_omegacd_source_v1_source_proto_rawDescOnce sync.Once
@@ -1326,7 +1438,7 @@ func file_omegacd_source_v1_source_proto_rawDescGZIP() []byte {
 	return file_omegacd_source_v1_source_proto_rawDescData
 }
 
-var file_omegacd_source_v1_source_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
+var file_omegacd_source_v1_source_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
 var file_omegacd_source_v1_source_proto_goTypes = []any{
 	(*ResolveRequest)(nil),           // 0: omegacd.source.v1.ResolveRequest
 	(*ResolveResponse)(nil),          // 1: omegacd.source.v1.ResolveResponse
@@ -1349,6 +1461,8 @@ var file_omegacd_source_v1_source_proto_goTypes = []any{
 	(*PutCredentialResponse)(nil),    // 18: omegacd.source.v1.PutCredentialResponse
 	(*DeleteCredentialRequest)(nil),  // 19: omegacd.source.v1.DeleteCredentialRequest
 	(*DeleteCredentialResponse)(nil), // 20: omegacd.source.v1.DeleteCredentialResponse
+	(*StatusRequest)(nil),            // 21: omegacd.source.v1.StatusRequest
+	(*StatusResponse)(nil),           // 22: omegacd.source.v1.StatusResponse
 }
 var file_omegacd_source_v1_source_proto_depIdxs = []int32{
 	6,  // 0: omegacd.source.v1.RenderResponse.files:type_name -> omegacd.source.v1.File
@@ -1365,17 +1479,19 @@ var file_omegacd_source_v1_source_proto_depIdxs = []int32{
 	15, // 11: omegacd.source.v1.SourceService.ListCredentials:input_type -> omegacd.source.v1.ListCredentialsRequest
 	17, // 12: omegacd.source.v1.SourceService.PutCredential:input_type -> omegacd.source.v1.PutCredentialRequest
 	19, // 13: omegacd.source.v1.SourceService.DeleteCredential:input_type -> omegacd.source.v1.DeleteCredentialRequest
-	1,  // 14: omegacd.source.v1.SourceService.Resolve:output_type -> omegacd.source.v1.ResolveResponse
-	3,  // 15: omegacd.source.v1.SourceService.Invalidate:output_type -> omegacd.source.v1.InvalidateResponse
-	5,  // 16: omegacd.source.v1.SourceService.Render:output_type -> omegacd.source.v1.RenderResponse
-	9,  // 17: omegacd.source.v1.SourceService.Blob:output_type -> omegacd.source.v1.BlobResponse
-	11, // 18: omegacd.source.v1.SourceService.Diff:output_type -> omegacd.source.v1.DiffResponse
-	13, // 19: omegacd.source.v1.SourceService.CheckAccess:output_type -> omegacd.source.v1.CheckAccessResponse
-	16, // 20: omegacd.source.v1.SourceService.ListCredentials:output_type -> omegacd.source.v1.ListCredentialsResponse
-	18, // 21: omegacd.source.v1.SourceService.PutCredential:output_type -> omegacd.source.v1.PutCredentialResponse
-	20, // 22: omegacd.source.v1.SourceService.DeleteCredential:output_type -> omegacd.source.v1.DeleteCredentialResponse
-	14, // [14:23] is the sub-list for method output_type
-	5,  // [5:14] is the sub-list for method input_type
+	21, // 14: omegacd.source.v1.SourceService.Status:input_type -> omegacd.source.v1.StatusRequest
+	1,  // 15: omegacd.source.v1.SourceService.Resolve:output_type -> omegacd.source.v1.ResolveResponse
+	3,  // 16: omegacd.source.v1.SourceService.Invalidate:output_type -> omegacd.source.v1.InvalidateResponse
+	5,  // 17: omegacd.source.v1.SourceService.Render:output_type -> omegacd.source.v1.RenderResponse
+	9,  // 18: omegacd.source.v1.SourceService.Blob:output_type -> omegacd.source.v1.BlobResponse
+	11, // 19: omegacd.source.v1.SourceService.Diff:output_type -> omegacd.source.v1.DiffResponse
+	13, // 20: omegacd.source.v1.SourceService.CheckAccess:output_type -> omegacd.source.v1.CheckAccessResponse
+	16, // 21: omegacd.source.v1.SourceService.ListCredentials:output_type -> omegacd.source.v1.ListCredentialsResponse
+	18, // 22: omegacd.source.v1.SourceService.PutCredential:output_type -> omegacd.source.v1.PutCredentialResponse
+	20, // 23: omegacd.source.v1.SourceService.DeleteCredential:output_type -> omegacd.source.v1.DeleteCredentialResponse
+	22, // 24: omegacd.source.v1.SourceService.Status:output_type -> omegacd.source.v1.StatusResponse
+	15, // [15:25] is the sub-list for method output_type
+	5,  // [5:15] is the sub-list for method input_type
 	5,  // [5:5] is the sub-list for extension type_name
 	5,  // [5:5] is the sub-list for extension extendee
 	0,  // [0:5] is the sub-list for field type_name
@@ -1392,7 +1508,7 @@ func file_omegacd_source_v1_source_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_omegacd_source_v1_source_proto_rawDesc), len(file_omegacd_source_v1_source_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   21,
+			NumMessages:   23,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

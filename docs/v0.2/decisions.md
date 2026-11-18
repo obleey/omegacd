@@ -654,3 +654,21 @@ Two things the docs say with it: the key list controls who can **read** a Host's
 them: anyone who can push to the repository can encrypt a new value with the Host's public key, so who may change
 production is decided in Git (branch protection, reviews). And `omegacd keygen` writes a person's key where `sops`
 looks for it (`~/.config/sops/age/keys.txt`) by default.
+
+## Source Server settings (before M5-05, 2026-11-18)
+
+- **Q202** Settings → Source Server, above the credentials: in-process or standalone at its address, reachable or why
+  not with how long it took, its version, the Repository cache (Repositories and size) and the blob cache's size;
+  Refresh reloads it. From `GET /api/settings/source` and the `Status` RPC (Q156).
+- **Q203** A Source Server of another version than the Control Plane's minor or one behind (Q41's rule) is warned in that
+  section, not refused: Syncs keep working while the calls succeed.
+- **Q204** The Control Plane sends the app and Sync Operation its context carries (`omegacd-app`, `omegacd-op` gRPC
+  metadata) with every call; the standalone Source Server puts them on its log lines (Q188). In-process the context
+  flows in as is. The e2e follows one Sync's `op=` through all three logs.
+- **Q205** Proof that the Control Plane stores no Repository secret: the e2e adds, rotates and deletes a credential
+  through a standalone Source Server and finds neither token in the Control Plane's data; and with Forgejo running,
+  the standalone Source Server reads a private Forgejo repository with a credential the Control Plane never holds.
+- **Q206** No cache button: Settings shows the caches' size, the Source Server manages them.
+- **Q207** A Host card lists its Applications grouped by the App of Apps that declares them, the standalone ones after:
+  the App of Apps is a pill like its children (its icon, its status dot, a link), heading its group; it deploys
+  nothing itself, the group says its children run there.

@@ -40,3 +40,16 @@ export const parseAllowlist = (text: string) => text.split(/[\s,]+/).filter(Bool
 export function renameBlocked(h: HostView): string | undefined {
 	if (h.apps.length) return `Used by ${h.apps.join(', ')}: rename it in their definitions after moving them`;
 }
+
+/** A Host's Applications grouped by the App of Apps that declares them, those groups first, then the standalone ones
+ * (no parent): "platform: blog counter …", "docs echo …". An App of Apps deploys nothing itself: it heads its group,
+ * it isn't listed as running on the Host. */
+export function groupByParent(apps: string[], parentOf: (app: string) => string | undefined): { parent?: string; apps: string[] }[] {
+	const groups = new Map<string | undefined, string[]>();
+	for (const a of apps) {
+		const p = parentOf(a);
+		groups.set(p, [...(groups.get(p) ?? []), a]);
+	}
+	const parents = [...groups.keys()].filter((p): p is string => !!p).sort();
+	return [...parents.map((p) => ({ parent: p, apps: groups.get(p)! })), ...(groups.has(undefined) ? [{ apps: groups.get(undefined)! }] : [])];
+}

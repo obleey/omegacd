@@ -54,6 +54,14 @@ type fakeSource struct {
 	domain.Source // unimplemented methods panic
 	creds         []domain.RepoCredential
 	err           error
+	status        domain.SourceStatus
+}
+
+func (s *fakeSource) Status(context.Context) (domain.SourceStatus, error) {
+	if s.err != nil {
+		return domain.SourceStatus{}, s.err
+	}
+	return s.status, nil
 }
 
 func (s *fakeSource) ListCredentials(context.Context) ([]domain.RepoCredential, error) {
@@ -1071,5 +1079,44 @@ func TestSourceServerUnavailable(t *testing.T) {
 	if b := e.expect("POST", "/api/apps/web/sync", "", 503); !strings.Contains(b, "Source Server unreachable") ||
 		!strings.Contains(e.log.String(), "status=503") || !strings.Contains(e.log.String(), "connection refused") {
 		t.Fatalf("%s\n%s", b, e.log.String())
+	}
+}
+
+// Q156, Q202, Q203: Settings → Source Server: in-process or standalone, reachable or why not, its version, warned when it
+// doesn't fit OmegaCD's, and its caches.
+func TestSourceStatusAPI(t *testing.T) {
+	e := newEnv(t, false)
+	e.expect("GET", "/api/settings/source", "", 401)
+	e.login()
+	e.src.status = domain.SourceStatus{Version: "v0.0.1", Repositories: 3, RepoCacheBytes: 2048, BlobCacheBytes: 512}
+	b := e.expect("GET", "/api/settings/source", "", 200)
+	for _, want := range []string{`"mode":"in-process"`, `"reachable":true`, `"version":"v0.0.1"`, `"repositories":3`, `"repoCacheBytes":2048`, `"blobCacheBytes":512`} {
+		if !strings.Contains(b, want) {
+			t.Fatalf("lacks %s: %s", want, b)
+		}
+	}
+	if strings.Contains(b, "warning") { // this test binary is a development build: any version fits
+		t.Fatalf("a development build warned: %s", b)
+	}
+
+	e = newEnvWith(t, false, func(c *Config) { c.SourceURL = "https://source:9090" })
+	e.login()
+	e.src.err = errors.New("connection refused")
+	b = e.expect("GET", "/api/settings/source", "", 200)
+	if !strings.Contains(b, `"mode":"standalone"`) || !strings.Contains(b, `"url":"https://source:9090"`) ||
+		!strings.Contains(b, `"reachable":false`) || !strings.Contains(b, `"error":"connection refused"`) {
+		t.Fatalf("unreachable: %s", b)
+	}
+	if !strings.Contains(e.log.String(), `level=WARN msg="source server status" component=api err="connection refused"`) &&
+		!strings.Contains(e.log.String(), `msg="source server status"`) {
+		t.Errorf("not logged:\n%s", e.log.String())
+	}
+
+	old := version.Version
+	t.Cleanup(func() { version.Version = old })
+	version.Version = "v0.3.0"
+	e.src.err, e.src.status = nil, domain.SourceStatus{Version: "v0.1.0"}
+	if b = e.expect("GET", "/api/settings/source", "", 200); !strings.Contains(b, `"warning":"Source Server v0.1.0 doesn't fit OmegaCD v0.3.0`) {
+		t.Fatalf("another version: %s", b)
 	}
 }

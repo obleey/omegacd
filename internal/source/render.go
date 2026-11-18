@@ -26,6 +26,7 @@ import (
 	"github.com/obleey/omegacd/internal/blob"
 	"github.com/obleey/omegacd/internal/domain"
 	"github.com/obleey/omegacd/internal/secretkey"
+	"github.com/obleey/omegacd/internal/version"
 	"github.com/obleey/omegacd/internal/workdir"
 )
 
@@ -34,6 +35,7 @@ var _ domain.Source = (*Server)(nil)
 // Server is the Source Server, in-process: Git (Resolve, Diff, CheckAccess, …) plus rendering.
 type Server struct {
 	*Git
+	dir     string
 	creds   *creds
 	blobs   *blob.Store
 	staging string
@@ -64,7 +66,7 @@ func NewServer(dir string) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{Git: New(filepath.Join(dir, "repos"), creds.all), creds: creds, blobs: blobs, staging: staging,
+	return &Server{Git: New(filepath.Join(dir, "repos"), creds.all), dir: dir, creds: creds, blobs: blobs, staging: staging,
 		rendered: map[string]*list.Element{}, recent: list.New(), maxRendered: 1000}, nil
 }
 
@@ -284,4 +286,41 @@ func plainSecrets(ctx context.Context, log *slog.Logger, a domain.Application, d
 		}
 	}
 	return warnings
+}
+
+// Status is the Source Server's version, its cached Repositories and the size of its caches, measured now (Q156).
+func (s *Server) Status(context.Context) (domain.SourceStatus, error) {
+	st := domain.SourceStatus{Version: version.String()}
+	repos, err := os.ReadDir(s.cacheDir)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) { // none cloned yet: none cached
+		return st, fmt.Errorf("source server status: %w", err)
+	}
+	st.Repositories = int64(len(repos))
+	if st.RepoCacheBytes, err = dirSize(s.cacheDir); err == nil {
+		st.BlobCacheBytes, err = dirSize(filepath.Join(s.dir, "blobs"))
+	}
+	if err != nil {
+		return st, fmt.Errorf("source server status: %w", err)
+	}
+	return st, nil
+}
+
+// dirSize adds up the regular files under dir; a missing dir is empty.
+func dirSize(dir string) (int64, error) {
+	var n int64
+	err := filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil // gone meanwhile: a collection removed it
+		}
+		if err != nil || !d.Type().IsRegular() {
+			return err
+		}
+		info, err := d.Info()
+		if errors.Is(err, fs.ErrNotExist) { // coverage: unreachable, a blob collected between the walk listing it and this; no test can time the race
+			return nil
+		}
+		n += info.Size()
+		return err
+	})
+	return n, err
 }

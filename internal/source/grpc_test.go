@@ -33,7 +33,8 @@ func standalone(t *testing.T, s domain.Source, log ...*slog.Logger) (string, str
 	if err != nil {
 		t.Fatal(err)
 	}
-	g := grpc.NewServer(grpc.Creds(credentials.NewTLS(cfg)))
+	g := grpc.NewServer(grpc.Creds(credentials.NewTLS(cfg)),
+		grpc.ChainUnaryInterceptor(ReceiveTrail), grpc.ChainStreamInterceptor(ReceiveTrailStream))
 	Serve(g, s, append(log, logging.Discard)[0])
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

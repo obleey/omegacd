@@ -574,6 +574,17 @@ type Source interface {
 	// SaveCredential creates (ID 0) or updates c; empty secret fields keep the old value.
 	SaveCredential(ctx context.Context, c RepoCredential) (RepoCredential, error)
 	DeleteCredential(ctx context.Context, id int64) error
+
+	// Status is the Source Server's version and its caches (Q156); an older Source Server's version is empty.
+	Status(ctx context.Context) (SourceStatus, error)
+}
+
+// SourceStatus is what the Source Server says about itself, for Settings (Q156).
+type SourceStatus struct {
+	Version        string `json:"version"`
+	Repositories   int64  `json:"repositories"`
+	RepoCacheBytes int64  `json:"repoCacheBytes"`
+	BlobCacheBytes int64  `json:"blobCacheBytes"`
 }
 
 type RenderSpec struct {

@@ -31,6 +31,7 @@ type Config struct {
 	Controller    domain.Controller
 	Store         domain.Store
 	Source        domain.Source // holds the Repository credentials; the Control Plane keeps none (Q40)
+	SourceURL     string        // a standalone Source Server's address; empty: in-process
 	WebhookSecret string
 	WebhookParse  func(provider string, h http.Header, body []byte, secret string) ([]string, error)
 	UI            fs.FS
@@ -86,6 +87,7 @@ func New(cfg Config) http.Handler {
 	mux.HandleFunc("POST /api/settings/registry-credentials", s.saveRegistryCred)
 	mux.HandleFunc("PUT /api/settings/registry-credentials/{id}", s.saveRegistryCred)
 	mux.HandleFunc("DELETE /api/settings/registry-credentials/{id}", s.deleteRegistryCred)
+	mux.HandleFunc("GET /api/settings/source", s.sourceStatus)
 	mux.HandleFunc("GET /api/settings/hosts", s.listHosts)
 	mux.HandleFunc("DELETE /api/settings/hosts/{name}", s.deleteHost)
 	mux.HandleFunc("POST /api/settings/hosts/{name}/invite", s.inviteHost)

@@ -80,3 +80,20 @@ func TestGroupRedacts(t *testing.T) {
 		t.Fatalf("log: %s", b.String())
 	}
 }
+
+// Value reads what With put in a context, the latest for a key; none for one it never put (Q188).
+func TestValue(t *testing.T) {
+	ctx := With(With(context.Background(), "app", "web", "op", 7), "op", 8)
+	if v, ok := Value(ctx, "op"); !ok || v != 8 {
+		t.Errorf("op: %v %v", v, ok)
+	}
+	if v, ok := Value(ctx, "app"); !ok || v != "web" {
+		t.Errorf("app: %v %v", v, ok)
+	}
+	if _, ok := Value(ctx, "host"); ok {
+		t.Error("a key never put")
+	}
+	if _, ok := Value(context.Background(), "app"); ok {
+		t.Error("an empty context")
+	}
+}
