@@ -389,13 +389,28 @@ func (r rig) waitIdle(t *testing.T, name string) {
 		r.c.mu.Lock()
 		s := r.c.apps[name]
 		busy := s != nil && s.syncing
+		var shown *domain.SyncOperation
+		if s != nil {
+			shown = s.view.LastOperation
+		}
 		r.c.mu.Unlock()
-		if !busy {
+		if s == nil || !busy && r.settled(name, shown) {
 			return
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("sync did not finish")
+}
+
+// settled is whether the Sync Operation the view shows is still what the store has: a Sync clears its syncing mark
+// before the reconcile that shows its outcome, so idle alone can read the view from before, its op still Running (a
+// flake, about one run in 20).
+func (r rig) settled(_ string, shown *domain.SyncOperation) bool {
+	if shown == nil {
+		return true
+	}
+	op, err := r.st.GetOp(context.Background(), shown.ID)
+	return err != nil || op.Phase == shown.Phase
 }
 
 // syncCount is how many Desired States the Agents were sent.
