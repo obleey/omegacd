@@ -92,6 +92,7 @@ func init() { // init breaks the cycle commands → run funcs → flags → comm
 		"app refresh":   {"app refresh NAME", (*CLI).appRefresh},
 		"app diff":      {"app diff NAME", (*CLI).appDiff},
 		"app history":   {"app history NAME", (*CLI).appHistory},
+		"app cancel":    {"app cancel NAME   (the Sync waiting for its offline Host: it won't run when the Host is back)", (*CLI).appCancel},
 		"app rollback":  {"app rollback NAME OP_ID [--wait] [--no-health] [--timeout 10m]", (*CLI).appRollback},
 		"app wait":      {"app wait NAME [--sync] [--health] [--timeout 10m]", (*CLI).appWait},
 		"app logs":      {"app logs NAME [CONTAINER_OR_SERVICE] [-f] [--tail N]", (*CLI).appLogs},
@@ -109,7 +110,7 @@ func init() { // init breaks the cycle commands → run funcs → flags → comm
 }
 
 var order = []string{"login", "logout", "version", "keygen", "source-certs", "import", "app list", "app get", "app create", "app delete", "app sync", "app refresh",
-	"app diff", "app history", "app rollback", "app wait", "app logs", "app export", "host list", "host add", "host approve", "host rotate", "host allow", "host unlock", "host rename", "host delete",
+	"app diff", "app history", "app cancel", "app rollback", "app wait", "app logs", "app export", "host list", "host add", "host approve", "host rotate", "host allow", "host unlock", "host rename", "host delete",
 	"host key show"}
 
 func (c *CLI) usage() {

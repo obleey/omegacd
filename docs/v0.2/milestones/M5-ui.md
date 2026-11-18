@@ -48,13 +48,15 @@ Applications link to them (Q178); containers' uptime counted live from the start
 **Done when:** a visual check of every screen shows them, and a UI test covers their logic.
 
 ### M5-04 · Offline apps and queued Syncs
-**Status:** todo
+**Status:** done (2026-11-18, PR #147)
 **Depends on:** M4-02
 
 Last known Live State, Health and Diff with "Host offline since …"; the Logs tab says logs come from the Agent (no logs
 are stored, Q155); queued Syncs shown as waiting for the Host, cancellable (Q38; `POST /api/apps/{name}/syncs/{id}/cancel`
 finishes one Superseded, "cancelled by admin", Q154).
 While the Host is offline, a container's uptime says "as of" the Agent's last report (Q179; the live count is M5-03's).
+The offline times as fields (Q184); the last known Health dimmed (Q185); cancel in the UI and `omegacd app cancel`
+(Q186); Resources and Logs offline (Q187).
 
 **Done when:** an offline Host's apps read clearly in the dashboard, tree and app page.
 
@@ -64,6 +66,8 @@ While the Host is offline, a container's uptime says "as of" the Agent's last re
 
 Settings → Source Server: in-process or standalone, reachable, version, cache size, from a new `Status` RPC
 (Q156). Repository credentials pass through to it; the access check in the app form asks it (Q40).
+
+The Source Server's log lines carry the app and Sync Operation of each call, from the Control Plane (Q188).
 
 **Done when:** credentials can be added, rotated and deleted without the Control Plane ever storing a secret.
 

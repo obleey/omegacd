@@ -979,6 +979,18 @@ func (s *fakeStore) SetOpPhase(_ context.Context, id int64, p domain.OpPhase, m 
 	s.ops[id-1].Phase, s.ops[id-1].Message = p, m
 	return nil
 }
+func (s *fakeStore) CancelWaitingOp(_ context.Context, app string, id int64, m string) error {
+	if err := s.broken("CancelWaitingOp"); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if id < 1 || int(id) > len(s.ops) || s.ops[id-1].App != app || s.ops[id-1].Phase != domain.OpWaiting {
+		return domain.ErrNotFound
+	}
+	s.ops[id-1].Phase, s.ops[id-1].Message, s.ops[id-1].FinishedAt = domain.OpSuperseded, m, time.Now()
+	return nil
+}
 func (s *fakeStore) SupersedeWaitingOps(_ context.Context, app string, by int64) error {
 	if err := s.broken("SupersedeWaitingOps"); err != nil {
 		return err
@@ -1094,6 +1106,71 @@ func TestSyncThroughAgent(t *testing.T) {
 	r.waitIdle(t, "web")
 	if op, _ := r.st.GetOp(ctx, id); op.Phase != domain.OpFailed || op.Message != "image not found" {
 		t.Fatalf("the Agent's failure: %+v", op)
+	}
+}
+
+// Q154, Q186: a Sync waiting for its offline Host is cancelled: it finishes Superseded and won't run when the Host is
+// back. Only a waiting one is, and only the app's own; a store that fails says so.
+func TestCancelWaitingSync(t *testing.T) {
+	r, ag := agentRig(t)
+	ctx := t.Context()
+	logs := logTo(r)
+	ag.err = fmt.Errorf("host edge: %w", agents.ErrOffline)
+	a := app("web")
+	a.Host = "edge"
+	r.c.CreateApp(ctx, a)
+	id, _ := r.c.Sync(ctx, "web", domain.SyncRequest{})
+	r.waitIdle(t, "web")
+	if err := r.c.CancelSync(ctx, "other", id); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("another app's: %v", err)
+	}
+	events, stop := r.c.Subscribe()
+	defer stop()
+	if err := r.c.CancelSync(ctx, "web", id); err != nil {
+		t.Fatal(err)
+	}
+	if e := <-events; e.Type != "op" || e.Data.(domain.SyncOperation).Phase != domain.OpSuperseded {
+		t.Fatalf("event %+v", e)
+	}
+	if op, _ := r.st.GetOp(ctx, id); op.Phase != domain.OpSuperseded || op.Message != "cancelled by admin" || op.FinishedAt.IsZero() {
+		t.Fatalf("cancelled: %+v", op)
+	}
+	if !strings.Contains(logs.String(), `msg="sync cancelled" app=web op=`) {
+		t.Errorf("logs:\n%s", logs.String())
+	}
+	if err := r.c.CancelSync(ctx, "web", id); !errors.Is(err, domain.ErrInvalid) || !strings.Contains(err.Error(), "no Sync Operation") {
+		t.Fatalf("again: %v", err)
+	}
+	r.st.breaks("CancelWaitingOp", errLocked)
+	if err := r.c.CancelSync(ctx, "web", id); !errors.Is(err, errLocked) {
+		t.Fatalf("store: %v", err)
+	}
+	r.st.breaks("CancelWaitingOp", nil)
+
+	// cancelled, but the op can't be read again for the event: logged, the cancel stands
+	id, _ = r.c.Sync(ctx, "web", domain.SyncRequest{})
+	r.waitIdle(t, "web")
+	r.st.breaks("GetOp", errLocked)
+	if err := r.c.CancelSync(ctx, "web", id); err != nil {
+		t.Fatal(err)
+	}
+	r.st.breaks("GetOp", nil)
+	if !strings.Contains(logs.String(), `level=ERROR msg="a cancelled sync not shown" app=web op=`) {
+		t.Errorf("logs:\n%s", logs.String())
+	}
+
+	// Q184: offline, a store that can't say since when leaves the time out, logged
+	ag.mu.Lock()
+	ag.offline = true
+	ag.mu.Unlock()
+	r.st.breaks("GetHost", errLocked)
+	a.Kind = domain.KindCompose // as created
+	if v := r.c.reconcile(ctx, a); !v.HostOffline || !v.HostOfflineSince.IsZero() {
+		t.Fatalf("offline: %+v", v)
+	}
+	r.st.breaks("GetHost", nil)
+	if !strings.Contains(logs.String(), `level=ERROR msg="since when a host is offline not shown" host=edge err="database is locked"`) {
+		t.Errorf("logs:\n%s", logs.String())
 	}
 }
 
@@ -1554,9 +1631,10 @@ func TestAgentViews(t *testing.T) {
 	ag.offline = true
 	ag.mu.Unlock()
 	v = r.c.reconcile(ctx, a)
-	if v.Health != domain.Healthy || !strings.Contains(v.SyncMessage, "Host edge offline since "+left.Local().Format(time.DateTime)) ||
-		!strings.Contains(v.SyncMessage, "last known state from "+reported.Local().Format(time.DateTime)) || strings.HasPrefix(v.SyncMessage, ";") {
-		t.Fatalf("offline: %s %q", v.Health, v.SyncMessage)
+	// Q184: since when and as of when, as times for the viewer to write; the last known Health kept (Q185)
+	if v.Health != domain.Healthy || !v.HostOffline || !v.HostOfflineSince.Equal(left) || !v.StateAt.Equal(reported) ||
+		strings.Contains(v.SyncMessage, "offline") {
+		t.Fatalf("offline: %s %v %v %v %q", v.Health, v.HostOffline, v.HostOfflineSince, v.StateAt, v.SyncMessage)
 	}
 	hosts, _ := r.c.ListHosts(ctx)
 	i := slices.IndexFunc(hosts, func(h domain.HostView) bool { return h.Name == "edge" })

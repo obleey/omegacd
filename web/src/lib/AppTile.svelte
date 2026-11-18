@@ -8,7 +8,8 @@
 	import { refreshApp, syncApp } from './actions.ts';
 	import RefreshNote from './RefreshNote.svelte';
 	import PolicyChips from './PolicyChips.svelte';
-	import { appBadges } from './badges.ts';
+	import { appBadges, isOffline, staleTitle } from './badges.ts';
+	import { when } from './display.svelte.ts';
 	import { engineLabel } from './hosts.ts';
 	import HostBadges from './HostBadges.svelte';
 	import { live } from './live.svelte.ts';
@@ -37,7 +38,7 @@
 	</header>
 	<div class="status">
 		<Badge status={shownSync(a)} label="Sync Status" />
-		<Badge status={a.health} label="Health Status" />
+		<span class:stale={isOffline(a, live.hosts[a.host ?? ''])} title={staleTitle(a, when, live.hosts[a.host ?? ''])}><Badge status={a.health} label="Health Status" /></span>
 		<PolicyChips {a} />
 		<HostBadges badges={appBadges(a, live.hosts[a.host ?? ''])} />
 		{#if a.kind === 'apps'}<span class="tag kids"><Icon name="apps" size={12} />{kids ?? 0} Child Application{kids === 1 ? '' : 's'}</span>{/if}
@@ -131,4 +132,5 @@
 	footer { display: flex; gap: 0.4rem; margin-top: auto; padding-top: 0.2rem; position: relative; z-index: 2; }
 	/* an App of Apps' children counted in its badge row: its details are as many rows as any tile's (Q180) */
 	.kids { display: inline-flex; align-items: center; gap: 0.25rem; }
+	.stale { opacity: 0.55; display: inline-flex; } /* last known, its Host offline (Q185) */
 </style>

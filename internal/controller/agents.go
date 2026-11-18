@@ -382,16 +382,17 @@ func (c *Controller) AgentStatusChanged(ctx context.Context, app string) {
 	c.reconcileWith(ctx, a, false)
 }
 
-// offline says since when an Application's Host is offline and how old what is shown of it is (Q38).
-func (c *Controller) offline(ctx context.Context, a domain.Application) string {
-	msg := "Host " + a.Host + " offline"
-	if h, err := c.cfg.Store.GetHost(ctx, a.Host); err == nil && h.Agent != nil && !h.Agent.LeftAt.IsZero() {
-		msg += " since " + h.Agent.LeftAt.Local().Format(time.DateTime)
+// offlineSince is when a Host's Agent left (Q38, Q184); zero when not known (it never connected, or the store failed,
+// logged).
+func (c *Controller) offlineSince(ctx context.Context, host string) time.Time {
+	h, err := c.cfg.Store.GetHost(ctx, host)
+	if err != nil && !errors.Is(err, domain.ErrNotFound) {
+		c.cfg.Log.ErrorContext(ctx, "since when a host is offline not shown", "host", host, "err", err)
 	}
-	if st, err := c.cfg.Store.AgentStatus(ctx, a.Name); err == nil {
-		msg += "; last known state from " + st.At.Local().Format(time.DateTime)
+	if err != nil || h.Agent == nil {
+		return time.Time{}
 	}
-	return msg
+	return h.Agent.LeftAt
 }
 
 // agentLive is what runs for an Application on an Agent's Host, as its Agent last reported (M4-02): the same view,

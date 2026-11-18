@@ -125,6 +125,16 @@ func (c *CLI) printApp(v domain.AppView) {
 	if v.NotInGit {
 		lines = append(lines, [2]string{"Note", "no longer declared by " + v.Parent})
 	}
+	if v.HostOffline { // in this computer's time (Q184)
+		note := "Host " + v.Host + " offline"
+		if !v.HostOfflineSince.IsZero() {
+			note += " since " + v.HostOfflineSince.Local().Format(time.DateTime)
+		}
+		if !v.StateAt.IsZero() {
+			note += "; last known state from " + v.StateAt.Local().Format(time.DateTime)
+		}
+		lines = append(lines, [2]string{"Offline", note})
+	}
 	if op := v.LastOperation; op != nil {
 		lines = append(lines, [2]string{"Last operation", fmt.Sprintf("#%d %s (%s, %s): %s",
 			op.ID, c.paint(statusColor(string(op.Phase)), string(op.Phase)), op.Trigger, ago(cmpTime(op.FinishedAt, op.StartedAt)), op.Message)})
@@ -309,6 +319,31 @@ func (c *CLI) appSync(ctx context.Context, args []string) error {
 		body = domain.SyncRequest{Prune: prune}
 	}
 	return c.startOp(ctx, cl, pos[0], "sync", body, w)
+}
+
+func (c *CLI) appCancel(ctx context.Context, args []string) error {
+	var o opts
+	pos, err := parse(c.flags("app cancel", &o), args, 1, 1)
+	if err != nil {
+		return err
+	}
+	cl, err := c.client(o)
+	if err != nil {
+		return err
+	}
+	var ops []domain.SyncOperation
+	if err := cl.do(ctx, "GET", appPath(pos[0], "history"), nil, &ops); err != nil {
+		return err
+	}
+	i := slices.IndexFunc(ops, func(op domain.SyncOperation) bool { return op.Phase == domain.OpWaiting })
+	if i < 0 {
+		return fmt.Errorf("no Sync of %s waits for its Host", pos[0])
+	}
+	if err := cl.do(ctx, "POST", appPath(pos[0], fmt.Sprintf("syncs/%d/cancel", ops[i].ID)), nil, nil); err != nil {
+		return err
+	}
+	fmt.Fprintf(c.Stdout, "Sync Operation #%d of %s cancelled: it won't run when the Host is back\n", ops[i].ID, pos[0])
+	return nil
 }
 
 func (c *CLI) appRollback(ctx context.Context, args []string) error {

@@ -408,6 +408,11 @@ type AppView struct {
 	ReconciledAt  time.Time      `json:"reconciledAt,omitzero"`
 	PrunePending  []string       `json:"prunePending,omitempty"` // stopped undeclared services, and undeclared "network <name>" / "volume <name>"
 	Hosts         []string       `json:"hosts,omitempty"`        // App of Apps: the Hosts its Child Applications deploy to, sorted
+	// its Host's Agent offline (Q38, Q184): since when, and when what is shown of it was reported (also while online),
+	// for the UI and the CLI to write in the viewer's time
+	HostOffline      bool      `json:"hostOffline,omitempty"`
+	HostOfflineSince time.Time `json:"hostOfflineSince,omitzero"`
+	StateAt          time.Time `json:"stateAt,omitzero"`
 }
 
 type DiffView struct {
@@ -454,6 +459,9 @@ type Store interface {
 	FinishOp(ctx context.Context, id int64, phase OpPhase, message string) error
 	// SetOpPhase sets an unfinished op's phase and message (Waiting, or Running again).
 	SetOpPhase(ctx context.Context, id int64, phase OpPhase, message string) error
+	// CancelWaitingOp finishes app's op id Superseded with message, only while it waits for its Host: ErrNotFound
+	// otherwise (another app's, run or finished meanwhile).
+	CancelWaitingOp(ctx context.Context, app string, id int64, message string) error
 	// SupersedeWaitingOps finishes the app's Waiting ops as Superseded by op by (Q81).
 	SupersedeWaitingOps(ctx context.Context, app string, by int64) error
 	GetOp(ctx context.Context, id int64) (SyncOperation, error)
@@ -676,6 +684,9 @@ type Controller interface {
 	Subscribe() (<-chan Event, func())
 
 	ListHosts(ctx context.Context) ([]HostView, error)
+	// CancelSync cancels a Sync Operation waiting for its Host (Q154): it finishes Superseded, "cancelled by admin";
+	// ErrInvalid for one not waiting.
+	CancelSync(ctx context.Context, app string, id int64) error
 	// DeleteHost refuses (ErrInvalid) while Applications use the Host.
 	DeleteHost(ctx context.Context, name string) error
 	// RenameHost refuses (ErrInvalid) while Applications use the Host (Q53, Q162).

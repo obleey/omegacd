@@ -12,7 +12,8 @@
 	import Empty from '#lib/Empty.svelte';
 	import { refreshApp, syncApp } from '#lib/actions.ts';
 	import PolicyChips from '#lib/PolicyChips.svelte';
-	import { appBadges, triggerLabel } from '#lib/badges.ts';
+	import { appBadges, isOffline, staleTitle, triggerLabel } from '#lib/badges.ts';
+	import { when } from '#lib/display.svelte.ts';
 	import HostBadges from '#lib/HostBadges.svelte';
 	import { engineLabel } from '#lib/hosts.ts';
 	import { isSyncing, meta, ms, shownSync } from '#lib/status.ts';
@@ -273,7 +274,7 @@
 								<Badge status={shownSync(a)} label="Sync Status" />
 								<div class="pol"><PolicyChips {a} /></div>
 							</td>
-							<td><Badge status={a.health} label="Health Status" /></td>
+							<td><span class:stale={isOffline(a, live.hosts[a.host ?? ''])} title={staleTitle(a, when, live.hosts[a.host ?? ''])}><Badge status={a.health} label="Health Status" /></span></td>
 							<td class="small">
 								{#if op}
 									<Badge status={op.phase} size="sm" label="Last Sync Operation" />
@@ -345,4 +346,5 @@
 		.slabel { flex-basis: 100%; }
 		.head h1 { font-size: 1.35rem; }
 	}
+	.stale { opacity: 0.55; display: inline-flex; }
 </style>

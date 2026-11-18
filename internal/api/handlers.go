@@ -95,6 +95,15 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request) {
 	respond(w, http.StatusAccepted, map[string]int64{"opID": id}, err)
 }
 
+// cancelSync cancels a Sync waiting for its Host (Q154).
+func (s *server) cancelSync(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err == nil {
+		err = s.Controller.CancelSync(r.Context(), r.PathValue("name"), id)
+	}
+	respond(w, http.StatusNoContent, nil, err)
+}
+
 func (s *server) refreshApp(w http.ResponseWriter, r *http.Request) {
 	v, err := s.Controller.Refresh(r.Context(), r.PathValue("name"))
 	respond(w, http.StatusOK, v, err)

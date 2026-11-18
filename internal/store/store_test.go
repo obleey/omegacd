@@ -855,6 +855,13 @@ func TestSupersedeAndEmptyAllowlist(t *testing.T) {
 	if op, _ := s.GetOp(ctx, newer); op.Phase != domain.OpWaiting {
 		t.Fatalf("newer: %+v", op)
 	}
+	// Q154: one waiting is cancelled, only by its own app and only while it waits
+	wantErr(t, s.CancelWaitingOp(ctx, "other", newer, "cancelled by admin"), domain.ErrNotFound)
+	must(t, s.CancelWaitingOp(ctx, "web", newer, "cancelled by admin"))
+	if op, _ := s.GetOp(ctx, newer); op.Phase != domain.OpSuperseded || op.Message != "cancelled by admin" || op.FinishedAt.IsZero() {
+		t.Fatalf("cancelled: %+v", op)
+	}
+	wantErr(t, s.CancelWaitingOp(ctx, "web", newer, "cancelled by admin"), domain.ErrNotFound)
 	_, err = s.CreateInvite(ctx, "edge", time.Now().Add(time.Hour))
 	must(t, err)
 	must(t, s.SetAllowIPs(ctx, "edge", []string{"10.0.0.0/8"}))

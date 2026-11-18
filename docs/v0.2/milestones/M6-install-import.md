@@ -35,6 +35,11 @@ a single read-only file, which must exist first. Mount a key folder instead (wri
 
 `deploy/agent.yaml` is a tab of the UI's Add Host dialog, with the invite filled in (M5-01, Q151).
 
+Found running the Agent in a container (2026-11-18): it finds its own container by its hostname to check the work
+dir's path parity, so with host networking (which lets it reach a Control Plane on the same machine over
+`http://127.0.0.1`) it can't, and stops. Find the container without the hostname (its id in `/proc/self/mountinfo`
+or the cgroup path), or set `hostname:` to `container_name:` in `deploy/agent.yaml`.
+
 **Done when:** `docker compose up -d` brings each up, as a non-root user; the Agent refuses a mount without path parity.
 
 ### M6-03 · systemd units
@@ -73,6 +78,9 @@ comes from the Control Plane. Same report and files as today; the SSH path is re
 from issue #9 here (copy referenced files into the app, refuse paths inside other tools' storage).
 A Sync of an App of Apps holds back a child with `adopt: true` never synced, until its first manual Sync (Q167).
 
+The import encrypts for the Host's key plus the people's keys allowed for it, and refuses a Host-only result without
+`--host-only` (Q194, Q201; the key list is M6-08's: until it exists, `--recipient` adds them).
+
 **Done when:** today's importer tests pass through a fake Agent, and an integration test imports from a real Agent.
 
 ### M6-06 · Reverse proxy documentation
@@ -109,7 +117,18 @@ files editable and recoverable when a Host is lost), and `omegacd secrets rekey`
 changed. Built per secret source (Q29): later sources (KeePass, 1Password, Ansible Vault, OpenBao, …) bring their own
 `init` (a reference format, not keys); `import` uses the same code.
 
-**Done when:** a repository prepared with it deploys a SOPS secret to that Host; rekeying after a Host Key rotation
+Editing secrets (Q189–Q201): Settings → Encryption keys (people's public age keys, each for all Hosts or chosen ones;
+`omegacd secrets key add`; readable by any login, changed by the admin), and every rule OmegaCD writes or copies gets
+the Host's key plus the keys allowed for it (the Host card, `secrets init` with one rule per Application path, the
+import). `secrets init` and `import` refuse a Host-only rule without `--host-only`; the Host card warns. `secrets
+rekey` rekeys every file it can and lists the ones it can't open. An Application warns when its files are encrypted
+for an outdated set of keys. The Master Key is never a recipient. `omegacd keygen` writes a person's key to
+`~/.config/sops/age/keys.txt` by default. The docs say the key list governs reading, not changing (that's Git's
+branch protection), and to change secret values when someone leaves.
+
+**Done when:** a repository prepared with it deploys a SOPS secret to that Host, and the people's keys allowed for it open
+and edit it; a Host-only rule is refused without `--host-only`; a file encrypted for an outdated set of keys shows its
+warning; rekeying after a Host Key rotation
 keeps it deployable and editable with the user's key; tested end to end; and the helper's interface has a second
 (dummy) source.
 
