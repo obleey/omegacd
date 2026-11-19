@@ -114,10 +114,13 @@ A Child Application is rolled back as any Application, as in Argo CD (Q171): an 
 Auto-Sync off. While it is rolled back, a Sync of its App of Apps neither syncs it nor turns its Auto-Sync back on;
 a manual Sync of the child ends it. Its page says it is rolled back and why its App of Apps skips it; the README's
 "Rollback is owned by Git" goes. With Q167 (M6-05): a child with `adopt: true` never synced is held back the same way,
-so both are tested together (Q172).
+so both are tested together (Q172). Its App of Apps shows it rolled back too (Q208); a manual Sync ends it with
+Auto-Sync off until the next Sync of its App of Apps applies Git's settings (Q209); removed from Git it is pruned or
+marked not in Git like any child (Q210).
 
-**Done when:** a child is rolled back from the UI and the CLI, a Sync of its App of Apps leaves it rolled back, a
-manual Sync of the child ends it, and an e2e drives it through an Agent.
+**Done when:** a child is rolled back from the UI and the CLI, a Sync of its App of Apps leaves it rolled back and
+shows it, a manual Sync of the child ends it, a rolled-back child removed from Git is pruned, and an e2e drives it
+through an Agent.
 
 ### M5-10 · pnpm for the web UI
 **Status:** todo

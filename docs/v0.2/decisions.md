@@ -672,3 +672,16 @@ looks for it (`~/.config/sops/age/keys.txt`) by default.
 - **Q207** A Host card lists its Applications grouped by the App of Apps that declares them, the standalone ones after:
   the App of Apps is a pill like its children (its icon, its status dot, a link), heading its group; it deploys
   nothing itself, the group says its children run there.
+
+## Rollback of a Child Application (before M5-09, 2026-11-19)
+
+- **Q208** An App of Apps shows a rolled-back child: a "Rolled back" badge on the child in its children list, and on
+  the App of Apps' page how many children are rolled back and that its Syncs skip them. A parent that looks Synced
+  while it skips a child would hide that Git is not what runs. Worked out in the UI from the children's `rolledBack`
+  (Q173), no API change.
+- **Q209** A manual Sync of a rolled-back child ends the rollback as for any Application: the flag goes, Auto-Sync
+  stays off. The next Sync of its App of Apps applies the child's settings from Git again, `autoSync` included; until
+  then nothing syncs it automatically.
+- **Q210** A rolled-back child removed from Git is treated like any other: with Prune on its App of Apps it is deleted,
+  without it is marked not in Git (as `main` already does). Removing it from Git is the later, deliberate act, as
+  in Q81. M5-09 tests it.
