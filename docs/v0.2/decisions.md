@@ -722,3 +722,13 @@ First written as Q208–Q210 on `main`; renumbered Q220–Q222, as M5-06 to M5-0
 - **Q218** The Agent no longer reads decrypted files for their key names (`Decrypted.Keys`, unused since Q208).
 - **Q219** Unit: SOPS with another key's file, and a second source's own reason, read the same way; e2e: the message
   in `app sync --wait` and the API's history, with no secret.
+
+## Rollback of a Child Application, building it (before M5-09, 2026-11-20)
+
+- **Q223** Q167 (a child adopting a running stack waits for its first manual Sync) is built in M5-09 with Q171: the
+  same check decides which children a Sync of an App of Apps leaves alone. M6-05 no longer carries it.
+- **Q224** A "Rolled back" badge wherever a rolled-back Application shows (tile, row, children, its page), its tooltip
+  the Revision and the way out; for a child, that its App of Apps skips it until you Sync it. "Rolled back on the Host"
+  stays its own (Q174).
+- **Q225** A rolled-back child's banner says its App of Apps leaves it alone and that a Sync of it ends the rollback,
+  after which its App of Apps applies Git's settings again; standalone Applications keep "turn Auto-Sync back on".

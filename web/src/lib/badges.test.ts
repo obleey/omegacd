@@ -30,7 +30,7 @@ test("an Application adds rolled back on the Host and a queued Sync to its Host'
 	const rolled = app({ rolledBack: true, lastOperation: { trigger: 'host-rollback', phase: 'Succeeded' } as AppView['lastOperation'] });
 	assert.deepEqual(texts(appBadges(rolled, h)), ['Rolled back on the Host']); // the engine is text by the Host's name (Q181)
 	const ui = app({ rolledBack: true, lastOperation: { trigger: 'rollback', phase: 'Succeeded' } as AppView['lastOperation'] });
-	assert.deepEqual(texts(appBadges(ui, h)), []); // a Rollback through OmegaCD isn't the Host's
+	assert.deepEqual(texts(appBadges(ui, h)), ['Rolled back']); // through OmegaCD: not the Host's (Q224)
 	assert.deepEqual(texts(appBadges(app({}), host({ agent, status: { name: 'edge', connected: false } }))), ['Host offline']);
 	const queued = app({ lastOperation: { trigger: 'manual', phase: 'Waiting' } as AppView['lastOperation'] });
 	assert.deepEqual(texts(appBadges(queued, undefined)), ['Sync queued']);
@@ -62,4 +62,14 @@ test("offline as the live Hosts say, before the app's view is recomputed", () =>
 	assert.equal(isOffline(app({}), host({ fingerprint: undefined, status: { name: 'edge', connected: false } })), false); // only invited
 	assert.equal(offlineNote(app({ stateAt: 'T0' }), when, gone), 'Host edge offline since T9; last known state from T0');
 	assert.equal(staleTitle(app({}), when, gone), 'Host edge offline');
+});
+
+test('a rolled-back Application says so; a child, that its App of Apps skips it (Q224)', () => {
+	const op = { trigger: 'rollback', phase: 'Succeeded', revision: 'a1b2c3d4e5' } as AppView['lastOperation'];
+	const [b] = appBadges(app({ rolledBack: true, lastOperation: op }), undefined);
+	assert.equal(b.text, 'Rolled back');
+	assert.equal(b.title, 'Rolled back to a1b2c3d: Auto-Sync off; a Sync to the target Revision ends it');
+	const [k] = appBadges(app({ rolledBack: true, parent: 'platform', lastOperation: op }), undefined);
+	assert.equal(k.title, 'Rolled back to a1b2c3d: Auto-Sync off; its App of Apps platform skips it until you Sync it');
+	assert.equal(appBadges(app({ rolledBack: true }), undefined)[0].title, 'Rolled back: Auto-Sync off; a Sync to the target Revision ends it');
 });

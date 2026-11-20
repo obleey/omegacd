@@ -8,7 +8,6 @@
 	import { when } from '../display.svelte.ts';
 	import { triggerLabel } from '../badges.ts';
 
-	// onrollback is omitted for Child Applications: their Revision is pinned in Git, not rolled back here.
 	let {
 		ops,
 		onrollback,

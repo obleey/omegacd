@@ -76,7 +76,6 @@ Docker.
 `omegacd import --host NAME` asks that Host's Agent to read its running Compose stacks; the Host Key's public key
 comes from the Control Plane. Same report and files as today; the SSH path is removed (Q47). Fix the `../` handling
 from issue #9 here (copy referenced files into the app, refuse paths inside other tools' storage).
-A Sync of an App of Apps holds back a child with `adopt: true` never synced, until its first manual Sync (Q167).
 
 The import encrypts for the Host's key plus the people's keys allowed for it, and refuses a Host-only result without
 `--host-only` (Q194, Q201; the key list is M6-08's: until it exists, `--recipient` adds them).
