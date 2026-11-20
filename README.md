@@ -61,7 +61,7 @@ It stays small: one binary — OmegaCD, and on each Host the same binary as its 
 
 ## Install
 
-OmegaCD (the Control Plane) needs an [age](https://github.com/FiloSottile/age) key, the Master Key: it seals the credentials OmegaCD stores, so **back it up** with the data directory. OmegaCD deploys nothing itself: every machine that runs Applications, the one OmegaCD runs on included, is a [Host](#hosts) with an Agent.
+OmegaCD (the Control Plane) makes an [age](https://github.com/FiloSottile/age) key at its first start, the Master Key: it seals the registry credentials OmegaCD stores, so **back it up** apart from the data directory. OmegaCD deploys nothing itself: every machine that runs Applications, the one OmegaCD runs on included, is a [Host](#hosts) with an Agent.
 
 **Quick install** — on a Linux server with Docker, or into a Kubernetes cluster with `kubectl`:
 
@@ -73,24 +73,21 @@ curl -fsSL https://raw.githubusercontent.com/obleey/omegacd/main/deploy/install.
 
 ### Option 1: Docker Compose (recommended)
 
-Download [`deploy/compose.yaml`](deploy/compose.yaml). It mounts a data volume, the age key and `known_hosts` — no Docker socket: OmegaCD deploys through Agents. Every setting has a default you can override with environment variables or a `.env` file next to it: `OMEGACD_IMAGE` (pin a release), `OMEGACD_PORT`, `OMEGACD_DATA` (a folder instead of the volume), `OMEGACD_AGE_KEY`, `OMEGACD_KNOWN_HOSTS`.
+Download [`deploy/compose.yaml`](deploy/compose.yaml): OmegaCD and its [Source Server](#standalone-source-server) as two services, both as the image's `omegacd` user (uid 10001), never root, and no Docker socket: OmegaCD deploys through Agents. Their mTLS certificates are made at the first start and kept; the Master Key too, in the `omegacd-keys` volume. Every setting has a default you can override with environment variables or a `.env` file next to it: `OMEGACD_IMAGE` (pin a release), `OMEGACD_PORT`, `OMEGACD_DATA` (a folder owned by uid 10001 instead of the volume).
 
 ```sh
 curl -fsSLO https://raw.githubusercontent.com/obleey/omegacd/main/deploy/compose.yaml
-```
-
-```sh
-age-keygen -o age.key && chmod 600 age.key   # the Master Key: seals the credentials OmegaCD stores
-touch known_hosts                             # add Git servers with ssh-keyscan when you use Git over SSH
 docker compose up -d
 docker compose logs omegacd | grep "initial admin password"
 ```
+
+Back up the Master Key (`age.key` in the `omegacd-keys` volume) and the Source Server's `source.key` (in `source-data`) apart from [`omegacd backup`](#backup-and-recovery)'s files: without them, registry and Git credentials have to be entered again.
 
 Open http://localhost:8080, log in as `admin` with the password from the log, and set a new password (required on first login). Put OmegaCD behind a TLS-terminating reverse proxy before exposing it.
 
 Then [add a Host](#hosts) — this machine too, if Applications should run on it.
 
-**Upgrade:** bump the image tag (or `docker compose pull` for `latest`) and run `docker compose up -d`. Data lives in the `omegacd-data` volume.
+**Upgrade:** bump the image tag (or `docker compose pull` for `latest`) and run `docker compose up -d`. Data lives in the `omegacd-data` and `source-data` volumes.
 
 **From v0.1:** there is no migration. v0.2 refuses a v0.1 database with a message and leaves it untouched: export each Application's definition with v0.1's `omegacd app export`, start v0.2 with a new data directory, enroll an Agent on each Host and create the Applications again (naming their `host:`); running stacks are taken over by name.
 
@@ -418,9 +415,10 @@ OMEGACD_AGENT_CONTROL_PLANE=https://omegacd.example.com OMEGACD_AGENT_INVITE=ome
 omegacd host approve web-1 SHA256:…          # after comparing the fingerprint the Agent printed with host list's
 ```
 
-In the UI it is **Hosts → Add Host**: name the Host, copy the command that runs its Agent (with `omegacd` installed, or
-in a container: `docker run` of OmegaCD's image), and watch it connect; compare the fingerprint it shows with the one
-the Agent printed, and **Approve**. Agents connect over https only: open OmegaCD at the address they reach it at.
+In the UI it is **Hosts → Add Host**: name the Host, copy the commands that run its Agent (in a container with
+[`deploy/agent.yaml`](#the-agent-in-a-container), or the command line with `omegacd` installed), and watch it connect; compare the fingerprint it shows with the one
+the Agent printed, and **Approve**. **Cancel** removes the Host with its invite (and the key of an Agent that enrolled
+meanwhile); **Close** leaves it waiting for its Agent. Agents connect over https only: open OmegaCD at the address they reach it at.
 Each Host then has a card, live: online or last seen, its Agent's version (flagged **outdated** when older than
 OmegaCD), engine and rootless, OS/arch, its Applications (each a link, with a dot in its status color, grouped by the App of Apps that declares them), its key's fingerprint and its Host Key with its `.sops.yaml`
 rule to copy; and **Rotate key**, **Allowlist…** (showing the address its Agent last connected from), **Rename…**
@@ -441,6 +439,26 @@ History, or `omegacd app cancel NAME`. Logs come only from the Agent: OmegaCD st
 (`17.11.2026 18:42`) or US (`11/17/2026 6:42 PM`).
 
 Applications with `host: web-1` then deploy through it; a Sync to it while it's offline waits for it, and its Applications show their last known state. `omegacd agent --help` lists its settings (its work dir, state dir, engine). The machine OmegaCD runs on is a Host like any other: give it an Agent too, and OmegaCD can deploy its own Compose project as an Application — an Agent only refuses the project it runs in itself.
+
+### The Agent in a container
+
+[`deploy/agent.yaml`](deploy/agent.yaml) runs the Agent as the image's `omegacd` user in the engine socket's group,
+never root, on host networking, so an Agent beside its OmegaCD reaches it at `http://127.0.0.1:8080`. Next to it, a
+`.env` (Add Host fills it in):
+
+```sh
+OMEGACD_AGENT_CONTROL_PLANE=https://omegacd.example.com
+OMEGACD_AGENT_INVITE=omegacd-invite-…               # ignored once the Agent is enrolled
+OMEGACD_DOCKER_GID=$(stat -c %g /var/run/docker.sock)
+```
+
+`docker compose up -d`, then approve its fingerprint. Its work dir (`/run/omegacd`, in RAM) is mounted at the same path
+on both sides, as the engine resolves the Applications' bind mounts on the Host: the Agent refuses another path, and
+takes the folder back when Docker made it as root after a reboot. Its keys are in the `omegacd-agent` volume: back up
+`signing.key` and `host.key`. With **rootless Docker or Podman** the engine's root in a container is your own user on
+the Host, so the Agent runs as that: `OMEGACD_AGENT_USER=0:0`, `OMEGACD_DOCKER_GID=0`, your socket in
+`OMEGACD_DOCKER_SOCK` (`/run/user/1000/docker.sock`, Podman's `/run/user/1000/podman/podman.sock`) and a work dir under
+it in `OMEGACD_AGENT_WORKDIR` (`/run/user/1000/omegacd`). Anywhere else the Agent refuses to run as root.
 
 ## Secrets
 
@@ -723,7 +741,7 @@ make e2e                # end-to-end: throwaway OmegaCDs driven through the CLI 
 make stop               # stop a locally running omegacd (only the process listening on :8080)
 make run                # build and run with data in ./data
 make docker             # build the container image
-make up / make down     # run that image with deploy/compose.yaml, same data as make run
+make up / make down     # run that image with deploy/compose.yaml (its own volumes)
 ```
 
 | Path | |

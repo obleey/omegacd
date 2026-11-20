@@ -13,6 +13,7 @@ func TestConfigDefaults(t *testing.T) {
 	for name, tc := range map[string]struct {
 		env              map[string]string
 		euid             int
+		rootless         bool
 		state, work, err string
 	}{
 		"user session": {
@@ -43,6 +44,9 @@ func TestConfigDefaults(t *testing.T) {
 		},
 		"root refused": {
 			env: map[string]string{"HOME": "/root"}, euid: 0, err: "OMEGACD_AGENT_ALLOW_ROOT=true",
+		},
+		"root in a rootless engine's container (Q240)": {
+			env: map[string]string{"HOME": "/root"}, rootless: true, state: "/root/.local/share/omegacd-agent", work: "/run/omegacd",
 		},
 		"root allowed": {
 			env:   map[string]string{"HOME": "/root", "OMEGACD_AGENT_ALLOW_ROOT": "true"},
@@ -82,7 +86,7 @@ func TestConfigDefaults(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			c, err := LoadConfig(env(tc.env), tc.euid)
+			c, err := LoadConfig(env(tc.env), tc.euid, tc.rootless)
 			if tc.err != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.err) {
 					t.Fatalf("err = %v, want one mentioning %q", err, tc.err)
@@ -98,7 +102,7 @@ func TestConfigDefaults(t *testing.T) {
 
 func TestConfigSettings(t *testing.T) {
 	c, err := LoadConfig(env(map[string]string{"HOME": "/h", "OMEGACD_AGENT_CONTROL_PLANE": "https://cp.example.com",
-		"OMEGACD_AGENT_INVITE": " inv-123 ", "DOCKER_HOST": "unix:///run/user/1000/docker.sock", "OMEGACD_AGENT_CACHE_REVISIONS": "25"}), 1000)
+		"OMEGACD_AGENT_INVITE": " inv-123 ", "DOCKER_HOST": "unix:///run/user/1000/docker.sock", "OMEGACD_AGENT_CACHE_REVISIONS": "25"}), 1000, false)
 	if err != nil || c.SecretGroup != -1 || c.ControlPlane != "https://cp.example.com" || c.Invite != "inv-123" ||
 		c.DockerHost != "unix:///run/user/1000/docker.sock" || c.CacheRevisions != 25 {
 		t.Fatalf("got %+v, %v", c, err)
@@ -110,7 +114,7 @@ func TestUsageDocumentsEverySetting(t *testing.T) {
 	var buf bytes.Buffer
 	Usage(&buf)
 	read := map[string]bool{}
-	LoadConfig(func(k string) string { read[k] = true; return map[string]string{"HOME": "/h"}[k] }, 1000)
+	LoadConfig(func(k string) string { read[k] = true; return map[string]string{"HOME": "/h"}[k] }, 1000, false)
 	for k := range read {
 		if (strings.HasPrefix(k, "OMEGACD_") || strings.HasPrefix(k, "DOCKER_")) && !strings.Contains(buf.String(), k) {
 			t.Errorf("%s is read but not in --help", k)
@@ -123,7 +127,7 @@ func TestUsageDocumentsEverySetting(t *testing.T) {
 
 func TestConfigSecretGroup(t *testing.T) {
 	for v, want := range map[string]int{"1234": 1234, " 0 ": 0} {
-		c, err := LoadConfig(env(map[string]string{"HOME": "/h", "OMEGACD_AGENT_SECRET_GROUP": v}), 1000)
+		c, err := LoadConfig(env(map[string]string{"HOME": "/h", "OMEGACD_AGENT_SECRET_GROUP": v}), 1000, false)
 		if err != nil || c.SecretGroup != want {
 			t.Errorf("%q: %d, %v; want %d", v, c.SecretGroup, err, want)
 		}
@@ -131,12 +135,12 @@ func TestConfigSecretGroup(t *testing.T) {
 }
 
 func TestConfigWorkDirAllow(t *testing.T) {
-	c, err := LoadConfig(env(map[string]string{"HOME": "/h", "OMEGACD_AGENT_WORKDIR_ALLOW": " /srv/apps/ ,, /opt/data"}), 1000)
+	c, err := LoadConfig(env(map[string]string{"HOME": "/h", "OMEGACD_AGENT_WORKDIR_ALLOW": " /srv/apps/ ,, /opt/data"}), 1000, false)
 	if err != nil || !slices.Equal(c.WorkDirAllow, []string{"/srv/apps", "/opt/data"}) {
 		t.Fatalf("got %q, %v", c.WorkDirAllow, err)
 	}
 	for _, bad := range []string{"srv/apps", "/srv,data", "/"} {
-		if _, err := LoadConfig(env(map[string]string{"HOME": "/h", "OMEGACD_AGENT_WORKDIR_ALLOW": bad}), 1000); err == nil ||
+		if _, err := LoadConfig(env(map[string]string{"HOME": "/h", "OMEGACD_AGENT_WORKDIR_ALLOW": bad}), 1000, false); err == nil ||
 			!strings.Contains(err.Error(), "OMEGACD_AGENT_WORKDIR_ALLOW") {
 			t.Errorf("%q accepted: %v", bad, err)
 		}

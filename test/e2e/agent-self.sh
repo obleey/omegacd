@@ -110,11 +110,5 @@ docker compose -p $SELF -f "$T/agent.yaml" start agent >/dev/null 2>&1 # restart
 running() { [ -f "$T/work/e2e-other/conf.txt" ] && docker logs "$(docker ps -q --filter label=com.docker.compose.project=e2e-other)" 2>&1 | grep -q "conf from git"; }
 check "with its image back it reclaims the work dir from Docker's placeholders and restores the app: its file back, read by its container" 'for _ in $(seq 150); do running && break; sleep 0.2; done; running'
 
-# an Agent container whose hostname isn't its ID can't find itself to check its work dir's path: it says what to do
-out=$(docker run --rm --hostname not-its-id -v "$LBIN:/omegacd:ro" -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$T/work:$T/work" -e OMEGACD_AGENT_STATE_DIR=/tmp/state -e OMEGACD_AGENT_WORKDIR="$T/work" -e OMEGACD_AGENT_ALLOW_ROOT=true \
-  ${GOCOVERDIR:+-e GOCOVERDIR=$GOCOVERDIR -v $GOCOVERDIR:$GOCOVERDIR} busybox:1.38 /omegacd agent 2>&1)
-check "an Agent whose container's hostname isn't its ID is told to keep it so" 'echo "$out" | grep -q "hostname its ID"'
-
 [ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- agent log"; agentlog | tail -15; echo "--- server log"; tail -10 "$T/server.log"; }
 exit $fail

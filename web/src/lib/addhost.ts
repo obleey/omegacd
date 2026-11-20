@@ -1,5 +1,5 @@
-// Add Host's commands (Q151, Q159, Q160): what enrolls a Host's Agent with its invite, before M6's installers add
-// their own (install.sh, deploy/agent.yaml, systemd).
+// Add Host's commands (Q151, Q159, Q160): what enrolls a Host's Agent with its invite; M6's installers add theirs
+// (deploy/agent.yaml here; install.sh and systemd to come).
 
 /** The image tag of this Control Plane's version: v0.2.0 → 0.2.0; a development build (no release tag) → latest. */
 export function imageTag(version: string): string {
@@ -12,19 +12,23 @@ export function agentCommand(url: string, invite: string): string {
 	return `OMEGACD_AGENT_CONTROL_PLANE=${url} OMEGACD_AGENT_INVITE=${invite} omegacd agent`;
 }
 
-/** The Agent in a container (Q159): the engine's socket, the work dir at the same path on both sides (Q21), its keys in
- * a named volume; root, as root in a container holding the socket is root on the Host already. */
-export function dockerRun(url: string, invite: string, version: string): string {
+/** The Agent in a container with deploy/agent.yaml (M6-02, Q238): the file of this version, and a .env with the
+ * address, the invite and the engine socket's group, which only the Host knows. Never root (Q236); a rootless engine
+ * takes the lines the file's comment gives (Q240). */
+export function composeAgent(url: string, invite: string, version: string): string {
+	const tag = imageTag(version);
+	const ref = tag === 'latest' ? 'main' : `v${tag}`;
 	return [
-		'docker run -d --name omegacd-agent --restart unless-stopped',
-		'  -v /var/run/docker.sock:/var/run/docker.sock',
-		'  -v /run/omegacd:/run/omegacd',
-		'  -v omegacd-agent:/var/lib/omegacd-agent -e OMEGACD_AGENT_STATE_DIR=/var/lib/omegacd-agent',
-		'  -e OMEGACD_AGENT_ALLOW_ROOT=true',
-		`  -e OMEGACD_AGENT_CONTROL_PLANE=${url}`,
-		`  -e OMEGACD_AGENT_INVITE=${invite}`,
-		`  ghcr.io/obleey/omegacd:${imageTag(version)} agent`
-	].join(' \\\n');
+		'mkdir -p omegacd-agent && cd omegacd-agent',
+		`curl -fsSLO https://raw.githubusercontent.com/obleey/omegacd/${ref}/deploy/agent.yaml`,
+		'cat > .env <<EOF',
+		`OMEGACD_IMAGE=ghcr.io/obleey/omegacd:${tag}`,
+		`OMEGACD_AGENT_CONTROL_PLANE=${url}`,
+		`OMEGACD_AGENT_INVITE=${invite}`,
+		'OMEGACD_DOCKER_GID=$(stat -c %g /var/run/docker.sock)',
+		'EOF',
+		'docker compose up -d'
+	].join('\n');
 }
 
 /** Why an Agent would refuse url (Q95, Q160): it connects over https only, except to its own machine; "" when fine. */

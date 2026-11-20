@@ -316,11 +316,11 @@ func TestConfigSecretGroupName(t *testing.T) {
 	}
 	base := map[string]string{"HOME": "/home/x"}
 	base["OMEGACD_AGENT_SECRET_GROUP"] = g.Name
-	if c, err := LoadConfig(env(base), 1000); err != nil || c.SecretGroup != os.Getgid() {
+	if c, err := LoadConfig(env(base), 1000, false); err != nil || c.SecretGroup != os.Getgid() {
 		t.Errorf("by name: %d, %v", c.SecretGroup, err)
 	}
 	base["OMEGACD_AGENT_SECRET_GROUP"] = "-5"
-	if _, err := LoadConfig(env(base), 1000); err == nil || !strings.Contains(err.Error(), "want a group name or gid") {
+	if _, err := LoadConfig(env(base), 1000, false); err == nil || !strings.Contains(err.Error(), "want a group name or gid") {
 		t.Errorf("a negative gid: %v", err)
 	}
 }

@@ -3,6 +3,8 @@
 Getting a Control Plane and Agents running anywhere, and moving existing stacks in.
 See [architecture](../architecture.md#install-q10-q21-q26-q33-q35-q51).
 
+Order (Q229): M6-02, M6-03, M6-09, M6-01, M6-04, M6-06, M6-08, M6-05.
+
 ### M6-01 · install.sh: full and agent modes
 **Status:** todo
 **Depends on:** M4-04, M3-02
@@ -18,13 +20,21 @@ found by the test servers; the docs say so.
 
 Its agent-mode one-liner is a tab of the UI's Add Host dialog, with the invite filled in (M5-01, Q151).
 
+Agent mode installs the `.deb` (M6-09) where apt is there, the system unit with a docker-group user or, on a rootless
+engine, the package's user unit with lingering; the container (`deploy/agent.yaml`) when asked or without apt (Q232).
+Full mode keeps compose and kubernetes, and drops v0.1's `age-keygen` step, `known_hosts` file and "Master Key for
+.sops.yaml" line; it ends with "open the UI and add a Host" (Q233). It installs the version it was released with: the
+release workflow attaches it to each GitHub Release with the version filled in, and tests point it at local builds
+(Q234).
+
 **Done when:** both modes are tested on a clean machine, rootful and rootless.
 
 ### M6-02 · Compose files
-**Status:** todo
+**Status:** done (2026-11-20, PR #154)
 **Depends on:** M4-04
 
-`deploy/compose.yaml` (full: Control Plane + optional standalone Source Server service) and `deploy/agent.yaml`
+`deploy/compose.yaml` (full: Control Plane + a standalone Source Server service by default, its mTLS certificates made
+at first start by a one-shot `omegacd source-certs` into a shared volume, Q231) and `deploy/agent.yaml`
 (socket, state volume, work dir at the same path both sides, rootless variant with the user socket) (Q21). The image
 runs as a non-root user; only the Agent's service gets the Docker socket, in its group (`group_add`); the Control
 Plane's gets none (Q104).
@@ -34,6 +44,11 @@ a single read-only file, which must exist first. Mount a key folder instead (wri
 `age-keygen` step either.
 
 `deploy/agent.yaml` is a tab of the UI's Add Host dialog, with the invite filled in (M5-01, Q151).
+
+Settled before the ticket (Q235–Q240): the Agent finds its container by `/proc/self/mountinfo`; the image's user is
+`omegacd` (10001); `deploy/agent.yaml` uses host networking and `group_add` from a `.env`, its rootless variant runs as
+container root (the user on the host), which the Agent accepts only in a container on a rootless engine; a work dir it
+can't write is given to it through Docker at start; e2e `deploy-compose.sh`.
 
 Found running the Agent in a container (2026-11-18): it finds its own container by its hostname to check the work
 dir's path parity, so with host networking (which lets it reach a Control Plane on the same machine over
@@ -58,6 +73,10 @@ For a Podman Host the Agent's user gets `events_logger = "file"` (Self-Heal read
 The systemd install (rootless and docker group) is a tab of the UI's Add Host dialog, with the invite filled in
 (M5-01, Q151).
 
+From M6-02 (Q241): native rootless Docker for the test user on the test servers (omegacd-testinfra's Ansible), which
+the rootless user unit's test needs, and with it `deploy-compose.sh`'s rootless Docker variant of `deploy/agent.yaml`
+(M6-02 proves the rootless variant on Podman only).
+
 **Done when:** both survive a reboot with apps restored offline, including services with a restart policy on rootful
 Docker.
 
@@ -73,12 +92,13 @@ Docker.
 **Status:** todo
 **Depends on:** M4-01
 
-`omegacd import --host NAME` asks that Host's Agent to read its running Compose stacks; the Host Key's public key
-comes from the Control Plane. Same report and files as today; the SSH path is removed (Q47). Fix the `../` handling
+`omegacd import --host NAME` asks that Host's Agent to import its running Compose stacks: the Agent runs the importer
+and returns the finished files, every secret already encrypted, so the Control Plane relays no plaintext secret; the
+CLI sends the recipients and the names already in the checkout, and writes the files (Q230). Same report and files as today; the SSH path is removed (Q47). Fix the `../` handling
 from issue #9 here (copy referenced files into the app, refuse paths inside other tools' storage).
 
 The import encrypts for the Host's key plus the people's keys allowed for it, and refuses a Host-only result without
-`--host-only` (Q194, Q201; the key list is M6-08's: until it exists, `--recipient` adds them).
+`--host-only` (Q194, Q201; the key list is M6-08's, done before this ticket, Q229).
 
 **Done when:** today's importer tests pass through a fake Agent, and an integration test imports from a real Agent.
 

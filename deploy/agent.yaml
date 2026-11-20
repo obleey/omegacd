@@ -1,0 +1,36 @@
+# OmegaCD's Agent in a container (Q21), never root on the Host (Q236). Next to this file, a .env with:
+#   OMEGACD_AGENT_CONTROL_PLANE=https://omegacd.example.com   # http://127.0.0.1:8080 for one on this machine (Q238)
+#   OMEGACD_AGENT_INVITE=omegacd-invite-…                       # from Add Host; ignored once the Agent is enrolled
+#   OMEGACD_DOCKER_GID=…                                        # the socket's group: stat -c %g /var/run/docker.sock
+# With rootless Docker or Podman, the engine's root in a container is your own user on the Host, so the Agent runs as
+# that (Q240), with your socket and a work dir under your runtime dir:
+#   OMEGACD_AGENT_USER=0:0
+#   OMEGACD_DOCKER_GID=0
+#   OMEGACD_DOCKER_SOCK=/run/user/1000/docker.sock               # Podman: /run/user/1000/podman/podman.sock
+#   OMEGACD_AGENT_WORKDIR=/run/user/1000/omegacd
+# Then docker compose up -d, and approve the fingerprint in the UI (docker compose logs agent prints it too).
+name: omegacd-agent
+
+services:
+  agent:
+    image: ${OMEGACD_IMAGE:-ghcr.io/obleey/omegacd:latest}
+    command: ["agent"]
+    user: ${OMEGACD_AGENT_USER:-omegacd}
+    group_add:
+      - "${OMEGACD_DOCKER_GID:?set OMEGACD_DOCKER_GID to the socket's group: stat -c %g /var/run/docker.sock}"
+    network_mode: host # reaches a Control Plane on this machine over loopback (Q238)
+    environment:
+      OMEGACD_AGENT_CONTROL_PLANE: ${OMEGACD_AGENT_CONTROL_PLANE:?set OMEGACD_AGENT_CONTROL_PLANE to the Control Plane's URL}
+      OMEGACD_AGENT_INVITE: ${OMEGACD_AGENT_INVITE:-}
+      OMEGACD_AGENT_STATE_DIR: /var/lib/omegacd-agent
+      OMEGACD_AGENT_WORKDIR: ${OMEGACD_AGENT_WORKDIR:-/run/omegacd}
+      OMEGACD_LOG_LEVEL: ${OMEGACD_LOG_LEVEL:-info}
+    volumes:
+      - ${OMEGACD_DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+      - omegacd-agent:/var/lib/omegacd-agent # its keys: back up signing.key and host.key (Q127)
+      # the work dir at the same path on both sides: the engine resolves the Applications' bind mounts on the Host
+      - ${OMEGACD_AGENT_WORKDIR:-/run/omegacd}:${OMEGACD_AGENT_WORKDIR:-/run/omegacd}
+    restart: unless-stopped
+
+volumes:
+  omegacd-agent:

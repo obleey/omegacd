@@ -75,8 +75,9 @@ func loopback(host string) bool {
 	return err == nil && a.IsLoopback()
 }
 
-// LoadConfig reads the settings from getenv for a process running as euid.
-func LoadConfig(getenv func(string) string, euid int) (Config, error) {
+// LoadConfig reads the settings from getenv for a process running as euid; rootlessContainer is whether it runs in a
+// rootless engine's container, whose root is the unprivileged user on the host (Q240).
+func LoadConfig(getenv func(string) string, euid int, rootlessContainer bool) (Config, error) {
 	c := Config{
 		ControlPlane: strings.TrimSpace(getenv("OMEGACD_AGENT_CONTROL_PLANE")),
 		CAFile:       strings.TrimSpace(getenv("OMEGACD_AGENT_CA_FILE")),
@@ -84,7 +85,7 @@ func LoadConfig(getenv func(string) string, euid int) (Config, error) {
 		DockerHost:   getenv("DOCKER_HOST"),
 		AllowRoot:    getenv("OMEGACD_AGENT_ALLOW_ROOT") == "true",
 	}
-	if euid == 0 && !c.AllowRoot {
+	if euid == 0 && !c.AllowRoot && !rootlessContainer {
 		return c, fmt.Errorf("refusing to run as root: run the Agent as a user in the docker group, or with rootless Docker or Podman " +
 			"(set OMEGACD_AGENT_ALLOW_ROOT=true to run as root anyway)")
 	}

@@ -741,3 +741,57 @@ First written as Q208–Q210 on `main`; renumbered Q220–Q222, as M5-06 to M5-0
 - **Q227** pnpm comes from nix's common package list, beside `nodejs`, on every machine.
 - **Q228** M5-10 skips the Linux gate: no Go code changes and the built UI is the same (identical but for SvelteKit's
   build stamp); the PR shows the comparison, the image built locally, and the UI's check and tests under pnpm.
+
+## Install and import: design check (before M6, 2026-11-20)
+
+- **Q229** M6 is worked in the order its tickets build on each other: M6-02 (compose files), M6-03 (systemd units),
+  M6-09 (.deb), M6-01 (`install.sh`, which installs what those three make), M6-04 (Kubernetes), M6-06 (reverse
+  proxies), M6-08 (secrets helper and the key list), M6-05 (import, which encrypts for that list). Ticket numbers stay.
+- **Q230** The import runs on the Agent: the CLI sends the recipients (the Host's key and the people's keys allowed
+  for it, Q194) and the Application names already in the checkout; the Agent reads the stacks, runs the importer and
+  returns the finished files with every secret already SOPS-encrypted; the Control Plane relays only that, never a
+  plaintext secret (its trust boundary). The CLI writes the files into the checkout: the overwrite check, `--force`
+  and `--dry-run` stay its own.
+- **Q231** `deploy/compose.yaml` runs the Source Server standalone by default, as Kubernetes does: two services, the
+  mTLS certificates made at first start by a one-shot `omegacd source-certs` into a shared volume, no manual step.
+  In-process stays for `omegacd server` alone and for development.
+- **Q232** `install.sh agent` installs the `.deb` where apt is there (the system unit with a docker-group user; the
+  package's user unit with lingering when it finds a rootless engine), and the container (`deploy/agent.yaml`) when
+  asked or without apt; always with recommended packages (M6-01's Debian note).
+- **Q233** `install.sh full` keeps both targets, compose and kubernetes (the context always confirmed), and drops
+  v0.1's leftovers: no `age-keygen` step (the Control Plane makes its Master Key, Q115), no `known_hosts` file (Git
+  over SSH only, optional, Q106), no "Master Key for .sops.yaml" line (never a recipient, Q192); it ends with the
+  next step: open the UI and add a Host.
+- **Q234** `install.sh` installs the version it was released with: the release workflow attaches it to each GitHub
+  Release with that version filled in, and the README's one-liner fetches it from the release (pre-releases, such as
+  M7-04's `v0.2.0-rc.N`, too); there is no `latest` image before v0.2.0. Tests point it at local builds (a binary, a
+  `.deb`, an image), so no M6 ticket needs a release.
+
+## Compose files (before M6-02, 2026-11-20)
+
+- **Q235** A containerised Agent finds its own container by the ID in `/proc/self/mountinfo` (Docker and Podman
+  mount its `hostname` and `hosts` files from a path holding it), so host networking works; the hostname stays the
+  fallback. The path-parity check, the Q59 reclaim and the Agent's own container all use it.
+- **Q236** The image runs as a fixed user `omegacd` (uid and gid 10001) and `/data` is its own, so a new named volume
+  inherits that. `deploy/compose.yaml` mounts no socket; `deploy/agent.yaml` runs as `omegacd` with
+  `group_add: ["${DOCKER_GID}"]` from a `.env` beside it. Its rootless variant: Q240.
+- **Q237** A containerised Agent whose work dir isn't writable (`/run` is emptied at boot, and Docker recreates a
+  missing bind source owned by root) gives the folder to its own user at start, through Docker, with a short-lived
+  container of its own image, as the Q59 reclaim does: no `mkdir` or `chown` for the operator, after a reboot either.
+- **Q238** `deploy/agent.yaml` uses host networking, so an Agent beside its Control Plane reaches it at
+  `http://127.0.0.1:8080` (loopback, Q95); a remote one takes its `https://` URL. Add Host's tab shows the file with
+  the invite and URL filled in, and `stat -c %g /var/run/docker.sock` for the GID a browser can't know.
+- **Q239** An e2e, `deploy-compose.sh`, builds the image with coverage, brings up `deploy/compose.yaml` (Control
+  Plane and standalone Source Server, both non-root) and `deploy/agent.yaml` against it, enrolls, deploys an
+  Application with a bind-mounted file, and checks the refusal of a work dir mounted at another path; on the Linux test
+  servers too, rootful and rootless Docker and rootless Podman.
+- **Q240** A rootless engine's container root is the unprivileged user on the host (a container uid 1000 maps to a
+  subordinate uid that can't open the user's socket), so the rootless variant of `deploy/agent.yaml` runs as `0:0`:
+  the Agent accepts euid 0 without `OMEGACD_AGENT_ALLOW_ROOT` when it is in a container and its engine reports
+  rootless; everywhere else root is still refused. One file: the rootless variant is `.env` values (user `0:0`, the
+  user's socket, a work dir under `/run/user/<uid>`). Corrects Q236's first answer, `user: "${UID}:${GID}"`.
+- **Q241** (while building M6-02) The test servers have rootless Docker only inside a dind container, whose
+  RootlessKit network keeps an Agent container from the Control Plane's loopback; so M6-02 proves the rootless variant
+  of `deploy/agent.yaml` on the servers' native rootless Podman (the Agent's check is the engine's rootless flag, the
+  same for both), and rootless Docker comes with M6-03: native rootless Docker for the test user on the servers
+  (omegacd-testinfra), which its rootless user unit needs anyway, and `deploy-compose.sh`'s rootless Docker variant.

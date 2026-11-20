@@ -242,7 +242,11 @@ func runAgent(log *slog.Logger) error {
 	if err := useDockerHost(log, os.Getenv, isSocket); err != nil {
 		return err
 	}
-	cfg, err := agent.LoadConfig(os.Getenv, os.Geteuid())
+	rootless := os.Geteuid() == 0 && agent.RootlessContainer(context.Background(), log)
+	if rootless {
+		log.Info("running as root in a rootless engine's container: that is the unprivileged user on the host (Q240)")
+	}
+	cfg, err := agent.LoadConfig(os.Getenv, os.Geteuid(), rootless)
 	if err != nil {
 		return err
 	}
@@ -260,6 +264,9 @@ func runAgent(log *slog.Logger) error {
 			if err := agent.CheckPathParity(ctx, root); err != nil {
 				return err
 			}
+		}
+		if err := agent.OwnWorkDir(ctx, cfg.WorkDir, log.With("component", "agent")); err != nil {
+			return fmt.Errorf("work dir %s: %w", cfg.WorkDir, err)
 		}
 	}
 	db, err := agent.OpenDB(filepath.Join(cfg.StateDir, "agent.db"))
