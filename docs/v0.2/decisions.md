@@ -710,3 +710,15 @@ First written as Q208–Q210 on `main`; renumbered Q220–Q222, as M5-06 to M5-0
 - **Q213** `omegacd app create --work-dir PATH`, matching `workDir:` in a definition and the form.
 - **Q214** Changing an Application's work dir is allowed: the next Sync deploys into the new folder, the old one and its
   data stay (the Agent moves nothing); the form warns to move them by hand first.
+
+## "This Host can't decrypt it" (before M5-08, 2026-11-20)
+
+- **Q215** A secret source's reason is the failed Sync Operation's message, the field the UI, History and
+  `app sync --wait` already show; a later source reports its own reason there too. For SOPS: which file, the keys
+  it's encrypted for, this Host's key, and the fix (add the key to the file's rule in `.sops.yaml`, `sops updatekeys`).
+- **Q216** This Host's key is in full, to paste; the file's keys are shortened (`age1abc…7x2c`), to recognize. Public
+  keys and a file name only: never a secret.
+- **Q217** No new retry rule: Auto-Sync's backoff gives up on that Revision; the next commit gets a fresh try.
+- **Q218** The Agent no longer reads decrypted files for their key names (`Decrypted.Keys`, unused since Q208).
+- **Q219** Unit: SOPS with another key's file, and a second source's own reason, read the same way; e2e: the message
+  in `app sync --wait` and the API's history, with no secret.

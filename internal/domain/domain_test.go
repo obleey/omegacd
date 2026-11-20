@@ -38,3 +38,17 @@ func TestComposeFilesIn(t *testing.T) {
 		t.Errorf("dir named compose.yaml: got %v", got)
 	}
 }
+
+// Q215, Q216: from an Agent, the file, its keys shortened, this Host's key in full and the fix; without one, the keys.
+func TestWrongKeyError(t *testing.T) {
+	e := &WrongKeyError{File: "app.sops.env", Recipients: []string{"age1abcdefghijklmnopqrstuvwxyz7x2c", "age1short"}}
+	if got := e.Error(); got != "app.sops.env is encrypted for age1abcdefghijklmnopqrstuvwxyz7x2c, age1short" {
+		t.Errorf("without a Host key: %s", got)
+	}
+	e.HostKey = "age1thishost"
+	want := "app.sops.env can't be decrypted on this Host: it's encrypted for age1abcd…7x2c, age1short, not for this Host's key " +
+		"age1thishost. Add that key to the file's rule in .sops.yaml and run sops updatekeys on it"
+	if got := e.Error(); got != want {
+		t.Errorf("from an Agent:\n%s\nwant\n%s", got, want)
+	}
+}

@@ -384,6 +384,10 @@ how fast, its version (warned when it doesn't fit OmegaCD's) and the size of its
 standalone Source Server's log lines carry the Application and Sync Operation of each call (`app=… op=…`), so one
 Sync reads through the Control Plane's, the Source Server's and the Agent's logs.
 
+A file this Host can't decrypt fails the Sync with what to do: "app.sops.env can't be decrypted on this Host: it's
+encrypted for age1abc…7x2c, not for this Host's key age1… Add that key to the file's rule in .sops.yaml and run sops
+updatekeys on it", on the Application's page, in History and in `omegacd app sync --wait`.
+
 A decrypted file (an env file from `app.sops.env`, say) shows its key names only, `API_TOKEN=••••`: OmegaCD reads
 them from the encrypted file in Git, where SOPS leaves names readable. Its values are decrypted only on the Host and
 never sent anywhere.
