@@ -1,19 +1,17 @@
 package agent
 
 import (
-	"bufio"
-	"bytes"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"filippo.io/age"
 
 	"github.com/obleey/omegacd/internal/crypto"
+	"github.com/obleey/omegacd/internal/domain"
 	"github.com/obleey/omegacd/internal/secrets"
 )
 
@@ -25,11 +23,10 @@ type SecretSource interface {
 	Decrypt(dir string) ([]Decrypted, error)
 }
 
-// Decrypted is a file a SecretSource wrote: its path relative to the app folder and, for .env files, the names of
-// its keys, which the UI shows with masked values.
+// Decrypted is a file a SecretSource wrote: its path relative to the app folder. Nothing of its content is read again:
+// the UI shows a file's key names from its encrypted source in Git (Q208, Q218).
 type Decrypted struct {
 	Path string
-	Keys []string
 }
 
 // Secrets decrypts with every source, then gives the files the mode Q58 asks for.
@@ -75,30 +72,12 @@ func (s SOPS) Decrypt(dir string) ([]Decrypted, error) {
 	var out []Decrypted
 	for _, p := range written {
 		rel, _ := filepath.Rel(dir, p)
-		d := Decrypted{Path: filepath.ToSlash(rel)}
-		if strings.HasSuffix(p, ".env") {
-			d.Keys = envKeys(p)
-		}
-		out = append(out, d)
+		out = append(out, Decrypted{Path: filepath.ToSlash(rel)})
+	}
+	if wk := (*domain.WrongKeyError)(nil); errors.As(err, &wk) {
+		wk.HostKey = s.HostKey.Recipient().String() // its message names this Host's key in full, with the fix (Q215)
 	}
 	return out, err
-}
-
-// envKeys is the variable names in a .env file; values are never read out of it.
-func envKeys(path string) []string {
-	b, err := os.ReadFile(path)
-	if err != nil { // coverage: unreachable, the file was just written by the decryption that names it
-		return nil
-	}
-	var keys []string
-	sc := bufio.NewScanner(bytes.NewReader(b))
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if k, _, ok := strings.Cut(strings.TrimPrefix(line, "export "), "="); ok && !strings.HasPrefix(line, "#") {
-			keys = append(keys, strings.TrimSpace(k))
-		}
-	}
-	return keys
 }
 
 // HostKey loads the Agent's age Host Key from stateDir, creating it at the first start (Q4). It never leaves the

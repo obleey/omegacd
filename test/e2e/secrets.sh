@@ -79,6 +79,21 @@ check "it was recreated for it" '[ "$(ctr)" != "$first" ]'
 check "still no *.sops.* copies" '[ -z "$(ls -A "$W" | grep "\.sops\.")" ]'
 check "app is Synced again" '"$BIN" app get e2e-sec -o json | grep -q "\"Synced\""'
 
+# M5-08: a file encrypted for another key than this Host's fails the Sync, saying which file, the key it's for, this
+# Host's key in full and the fix; the message holds no secret (Q215, Q216, Q219)
+age-keygen -o "$T/other.key" 2>/dev/null
+OTHER=$(grep -o 'age1[a-z0-9]*' "$T/other.key" | head -1)
+printf 'STRAY=%s\n' "$(openssl rand -hex 8)" > "$REPO/apps/box/stray.sops.env"
+(cd "$REPO" && sops --encrypt --age "$OTHER" --in-place apps/box/stray.sops.env) && gitc add -A && gitc commit -qm "a file for another key"
+"$BIN" app refresh e2e-sec >/dev/null 2>&1
+out=$("$BIN" app sync e2e-sec --wait --timeout 2m 2>&1); rc=$?
+check "app sync --wait fails, naming the file and this Host's key in full, with the fix" \
+  '[ $rc -ne 0 ] && echo "$out" | grep -q "stray.sops.env can.t be decrypted on this Host: it.s encrypted for ${OTHER:0:8}…" && echo "$out" | grep -q "not for this Host.s key $HK" && echo "$out" | grep -q "run sops updatekeys on it"'
+check "and the failed Sync Operation says the same in the API" '"$BIN" app history e2e-sec -o json | python3 -c "
+import json,sys; op=json.load(sys.stdin)[0]; assert op[\"phase\"]==\"Failed\" and \"be decrypted on this Host\" in op[\"message\"] and sys.argv[1] in op[\"message\"], op" "$HK"'
+check "the message holds no secret" '! "$BIN" app history e2e-sec -o json | grep -qF -e "$(grep AGE-SECRET-KEY "$T/other.key")" -e AGE-SECRET-KEY'
+gitc rm -q apps/box/stray.sops.env && gitc commit -qm "remove it"
+
 "$BIN" app delete e2e-sec --yes >/dev/null 2>&1
 check "delete removes its folder, decrypted files and all" '[ ! -e "$W" ]'
 

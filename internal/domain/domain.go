@@ -318,10 +318,24 @@ type HostKey struct {
 type WrongKeyError struct {
 	File       string   // relative to the decrypted dir
 	Recipients []string // the keys File is encrypted for
+	HostKey    string   // this Host's public key, when the Agent decrypting knows it (Q215)
 }
 
+// Error says which file, the keys it's encrypted for (shortened: to recognize) and, from an Agent, this Host's key in
+// full with the fix (Q215, Q216). Public keys and a file name only: never a secret.
 func (e *WrongKeyError) Error() string {
-	return e.File + " is encrypted for " + strings.Join(e.Recipients, ", ")
+	if e.HostKey == "" {
+		return e.File + " is encrypted for " + strings.Join(e.Recipients, ", ")
+	}
+	var short []string
+	for _, r := range e.Recipients {
+		if len(r) > 16 {
+			r = r[:8] + "…" + r[len(r)-4:]
+		}
+		short = append(short, r)
+	}
+	return e.File + " can't be decrypted on this Host: it's encrypted for " + strings.Join(short, ", ") +
+		", not for this Host's key " + e.HostKey + ". Add that key to the file's rule in .sops.yaml and run sops updatekeys on it"
 }
 
 type RegistryCredential struct {

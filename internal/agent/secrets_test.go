@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -50,7 +51,7 @@ func TestDecryptOnlyIntoTheAppFolder(t *testing.T) {
 		t.Fatal(err)
 	}
 	slices.SortFunc(ds, func(a, b Decrypted) int { return strings.Compare(a.Path, b.Path) })
-	if len(ds) != 2 || ds[0].Path != ".env" || !slices.Equal(ds[0].Keys, []string{"DB_PASSWORD", "DB_USER"}) || ds[1].Path != "tls/server.pem" {
+	if len(ds) != 2 || ds[0].Path != ".env" || ds[1].Path != "tls/server.pem" {
 		t.Fatalf("decrypted %+v", ds)
 	}
 	for _, d := range ds {
@@ -95,8 +96,35 @@ func TestDecryptWithTheWrongKey(t *testing.T) {
 	key, _ := HostKey(t.TempDir())
 	other, _ := HostKey(t.TempDir())
 	dir := appWithSecrets(t, key)
-	if _, err := NewSecrets(-1, SOPS{HostKey: other}).Decrypt(dir); err == nil {
+	_, err := NewSecrets(-1, SOPS{HostKey: other}).Decrypt(dir)
+	if err == nil {
 		t.Fatal("decrypted with another Host's key")
+	}
+	// Q215, Q216: which file, the key it's for shortened, this Host's in full, the fix; no secret
+	encFor := key.Recipient().String()
+	for _, want := range []string{"can't be decrypted on this Host: it's encrypted for " + encFor[:8] + "…" + encFor[len(encFor)-4:],
+		"not for this Host's key " + other.Recipient().String(), "Add that key to the file's rule in .sops.yaml and run sops updatekeys on it"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("lacks %q: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "AGE-SECRET-KEY") || strings.Contains(err.Error(), encFor) {
+		t.Errorf("a private key, or the file's key in full: %v", err)
+	}
+}
+
+// Q215, Q219: another source's reason reaches the Sync's message the same way, through the same error.
+type refusing struct{}
+
+func (refusing) Decrypt(string) ([]Decrypted, error) {
+	return nil, errors.New("vault: no access to entry db/password")
+}
+
+func TestASecondSourcesReason(t *testing.T) {
+	key, _ := HostKey(t.TempDir())
+	dir := appWithSecrets(t, key)
+	if _, err := NewSecrets(-1, SOPS{HostKey: key}, refusing{}).Decrypt(dir); err == nil || err.Error() != "vault: no access to entry db/password" {
+		t.Fatalf("%v", err)
 	}
 }
 
