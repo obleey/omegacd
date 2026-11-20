@@ -42,6 +42,7 @@ export const statusMeta: Record<string, [Tone, IconName, boolean?]> = {
 	Podman: ['overlay', 'container'],
 	'Host offline': ['red', 'x-circle'],
 	'Rolled back on Host': ['yellow', 'undo'],
+	'Rolled back': ['yellow', 'undo'],
 	Queued: ['yellow', 'clock'],
 	// container state
 	running: ['green', 'check-circle'],

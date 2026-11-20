@@ -45,6 +45,8 @@
 	let name = $derived(page.params.name ?? '');
 	let app = $derived(live.apps[name] as AppView | undefined);
 	let isApps = $derived(app?.kind === 'apps');
+	// its rolled-back children, which its Syncs leave alone (Q171, Q220)
+	let rolledKids = $derived(isApps ? Object.values(live.apps).filter((a) => a.parent === app?.name && a.rolledBack).length : 0);
 	// An App of Apps has no containers: its first tab lists Child Applications and there are no Logs.
 	let tabs = $derived<[Tab, string][]>(
 		isApps
@@ -305,10 +307,23 @@
 			</span>
 		</p>
 	{/if}
+	{#if isApps && rolledKids}
+		<p class="banner" role="status">
+			<Icon name="undo" size={16} />
+			<span>{rolledKids} Child Application{rolledKids === 1 ? ' is' : 's are'} rolled back: this App of Apps' Syncs skip
+				{rolledKids === 1 ? 'it until it is synced' : 'them until each is synced'}.</span>
+		</p>
+	{/if}
 	{#if app.rolledBack}
 		<p class="banner" role="status">
 			<Icon name="undo" size={16} />
-			<span>Auto-Sync was turned off by a Rollback. Turn it back on in Sync Policy to follow the target Revision again.</span>
+			{#if app.parent}
+				<!-- its settings come from Git: the way out is a Sync of it (Q221, Q225) -->
+				<span>Rolled back: its App of Apps <a href="/apps/{enc(app.parent)}">{app.parent}</a> leaves it alone. Sync it to end the
+					rollback; the next Sync of {app.parent} then applies its settings from Git again.</span>
+			{:else}
+				<span>Auto-Sync was turned off by a Rollback. Turn it back on in Sync Policy to follow the target Revision again.</span>
+			{/if}
 		</p>
 	{/if}
 	{#if error}<p class="error" role="alert"><Icon name="alert" size={16} />{error}</p>{/if}
@@ -365,12 +380,10 @@
 					{ops}
 					{web}
 					oncancel={(o) => cancelSync(o.id)}
-					onrollback={app.parent
-						? undefined
-						: (o) => {
-								rbOp = o;
-								rbOpen = true;
-							}}
+					onrollback={(o) => {
+						rbOp = o;
+						rbOpen = true;
+					}}
 				/>
 			{:else if isApps}
 				<p class="muted">An App of Apps has no containers.</p>

@@ -112,7 +112,7 @@ names gone (Q218), the tests (Q219).
 never contains a secret, and a test with the dummy second source (M2-05) shows its reason the same way.
 
 ### M5-09 · Rollback of a Child Application
-**Status:** todo
+**Status:** done (2026-11-20, PR #152)
 **Depends on:** M5-02
 
 A Child Application is rolled back as any Application, as in Argo CD (Q171): an older Revision from its history, its
@@ -122,6 +122,8 @@ a manual Sync of the child ends it. Its page says it is rolled back and why its 
 so both are tested together (Q172). Its App of Apps shows it rolled back too (Q220); a manual Sync ends it with
 Auto-Sync off until the next Sync of its App of Apps applies Git's settings (Q221); removed from Git it is pruned or
 marked not in Git like any child (Q222).
+
+Q167 built here too (Q223); a "Rolled back" badge everywhere (Q224); a child's banner (Q225).
 
 **Done when:** a child is rolled back from the UI and the CLI, a Sync of its App of Apps leaves it rolled back and
 shows it, a manual Sync of the child ends it, a rolled-back child removed from Git is pruned, and an e2e drives it

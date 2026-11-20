@@ -514,6 +514,10 @@ func (c *Controller) syncPendingChildren(ctx context.Context, parent string) {
 		if ch.NotInGit {
 			continue
 		}
+		if why := c.heldBack(ctx, ch); why != "" {
+			c.cfg.Log.DebugContext(ctx, "child application not synced with its App of Apps", "app", ch.Name, "parent", parent, "why", why)
+			continue
+		}
 		v := c.reconcile(ctx, ch)
 		failed := v.LastOperation != nil && v.LastOperation.Phase == domain.OpFailed
 		if (v.SyncStatus == domain.Synced && !failed) || v.TargetSHA == "" {
@@ -527,6 +531,24 @@ func (c *Controller) syncPendingChildren(ctx context.Context, parent string) {
 			c.cfg.Log.Error("sync child application", "app", ch.Name, "parent", parent, "err", err)
 		}
 	}
+}
+
+// heldBack is why a Sync of its App of Apps leaves a child alone, or "": rolled back, until a manual Sync of it ends
+// that (Q171); adopting a running stack and never synced, until a manual Sync after its Diff is checked (Q167).
+func (c *Controller) heldBack(ctx context.Context, ch domain.Application) string {
+	if ch.RolledBack {
+		return "rolled back: a manual Sync of it ends that"
+	}
+	if !ch.Adopt {
+		return ""
+	}
+	if _, err := c.cfg.Store.LastSucceededOp(ctx, ch.Name); errors.Is(err, domain.ErrNotFound) {
+		return "adopts a running stack and was never synced: its first Sync is a manual one, after its Diff"
+	} else if err != nil {
+		c.cfg.Log.ErrorContext(ctx, "whether a child application was ever synced", "app", ch.Name, "err", err)
+		return "its Sync Operations can't be read"
+	}
+	return ""
 }
 
 // apply renders the Revision and sends it to the Application's Agent, or, for an App of Apps, syncs its children.
@@ -831,10 +853,6 @@ func (c *Controller) Rollback(ctx context.Context, name string, opID int64) (int
 	op, err := c.cfg.Store.GetOp(ctx, opID)
 	if err != nil {
 		return 0, err
-	}
-	if a.Parent != "" {
-		return 0, fmt.Errorf("%w: Child Application %s is managed by App of Apps %s; pin targetRevision in Git (or roll back %s) instead",
-			domain.ErrInvalid, name, a.Parent, a.Parent)
 	}
 	if op.App != name || op.Phase != domain.OpSucceeded {
 		return 0, fmt.Errorf("%w: can only roll back to a succeeded sync of this application", domain.ErrInvalid)
@@ -1157,6 +1175,9 @@ func (c *Controller) syncChildren(ctx context.Context, parent domain.Application
 			if err = c.checkHost(ctx, d.Host); err == nil {
 				if err = checkUpdate(old, &d); err == nil {
 					err = c.checkWorkDir(ctx, d)
+				}
+				if old.RolledBack { // Q171: stays rolled back, Auto-Sync off, until a manual Sync of it; Git's other settings apply
+					d.AutoSync, d.RolledBack = false, true
 				}
 			}
 		}

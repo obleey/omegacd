@@ -155,12 +155,6 @@ func TestChildIsOwnedByGit(t *testing.T) {
 	if err := r.c.DeleteApp(ctx, "web", true, false); !errors.Is(err, domain.ErrInvalid) {
 		t.Fatalf("delete child: %v", err)
 	}
-	ops, _ := r.st.ListOps(ctx, "web")
-	_, err := r.c.Rollback(ctx, "web", ops[0].ID)
-	if !errors.Is(err, domain.ErrInvalid) || !strings.Contains(err.Error(), "Child Application web is managed by App of Apps root; pin targetRevision in Git (or roll back root) instead") {
-		t.Fatalf("rollback child: %v", err)
-	}
-
 	r.g.define("bbbbbbbb", "")
 	r.mustSync(t, "root")
 	if err := r.c.DeleteApp(ctx, "web", true, false); err != nil {

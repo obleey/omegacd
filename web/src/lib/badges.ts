@@ -27,6 +27,12 @@ export function appBadges(app: AppView, host?: HostView): HostBadge[] {
 	const op = app.lastOperation;
 	if (app.rolledBack && op?.trigger === 'host-rollback')
 		out.push({ status: 'Rolled back on Host', text: 'Rolled back on the Host', title: 'Rolled back on the Host with omegacd agent rollback: Auto-Sync is off until a Sync' });
+	else if (app.rolledBack)
+		out.push({
+			status: 'Rolled back',
+			text: 'Rolled back',
+			title: `Rolled back${op?.revision ? ` to ${op.revision.slice(0, 7)}` : ''}: Auto-Sync off; ${app.parent ? `its App of Apps ${app.parent} skips it until you Sync it` : 'a Sync to the target Revision ends it'}`
+		}); // Q224
 	if (op?.phase === 'Waiting')
 		out.push({ status: 'Queued', text: 'Sync queued', title: `A Sync waits for Host ${app.host}: it runs when its Agent connects` });
 	return out;
