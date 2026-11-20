@@ -1,10 +1,11 @@
 # Build stages run natively on the build machine and cross-compile for the target platform.
 FROM --platform=$BUILDPLATFORM node:26-alpine AS web
 WORKDIR /src/web
-COPY web/package.json web/package-lock.json ./
-RUN npm ci
+COPY web/package.json web/pnpm-lock.yaml ./
+# Node 26 ships no corepack: install the pnpm package.json's packageManager pins (Q226)
+RUN npm install -g "$(node -p 'require("./package.json").packageManager')" && pnpm install --frozen-lockfile
 COPY web/ ./
-RUN npm run build
+RUN pnpm run build
 
 FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS go
 ARG VERSION=""

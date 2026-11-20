@@ -10,7 +10,7 @@ on:
       - go.mod
       - go.sum
       - web/package.json
-      - web/package-lock.json
+      - web/pnpm-lock.yaml
       - .github/workflows/image.yml
   pull_request:
     paths:
@@ -19,7 +19,7 @@ on:
       - go.mod
       - go.sum
       - web/package.json
-      - web/package-lock.json
+      - web/pnpm-lock.yaml
       - .github/workflows/image.yml
   workflow_dispatch:
 

@@ -732,3 +732,12 @@ First written as Q208–Q210 on `main`; renumbered Q220–Q222, as M5-06 to M5-0
   stays its own (Q174).
 - **Q225** A rolled-back child's banner says its App of Apps leaves it alone and that a Sync of it ends the rollback,
   after which its App of Apps applies Git's settings again; standalone Applications keep "turn Auto-Sync back on".
+
+## pnpm for the web UI (before M5-10, 2026-11-20)
+
+- **Q226** Node 26 ships no corepack, so pnpm's version is pinned once, in `web/package.json`'s `packageManager`
+  (`pnpm@12.21.0`): CI and the release workflow install it with `pnpm/action-setup` (pinned by SHA), the Dockerfile
+  with `npm install -g` of that same field, and a local pnpm switches itself to it. Replaces "a pinned corepack" (Q183).
+- **Q227** pnpm comes from nix's common package list, beside `nodejs`, on every machine.
+- **Q228** M5-10 skips the Linux gate: no Go code changes and the built UI is the same (identical but for SvelteKit's
+  build stamp); the PR shows the comparison, the image built locally, and the UI's check and tests under pnpm.
