@@ -23,6 +23,7 @@ export interface Application {
 	parent?: string; // the App of Apps that owns this Child Application
 	notInGit: boolean; // a Child Application its parent no longer declares
 	createdAt?: string;
+	workDir?: string; // absolute root for its folder on the Host (Q57); none: the Host's work dir
 }
 
 export interface SyncOperation {
@@ -163,6 +164,8 @@ export interface AgentInfo {
 	engineVersion?: string;
 	rootless?: boolean;
 	address?: string; // it connected from (Q165)
+	workDir?: string; // the Host's work dir, and the further roots an Application may name (Q157); none from an older Agent
+	workDirAllow?: string[];
 	seenAt: string;
 	leftAt?: string; // when its connection ended; none while connected
 	refused?: string; // why the Control Plane refused it, e.g. an outdated version

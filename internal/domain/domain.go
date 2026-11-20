@@ -202,17 +202,20 @@ type Host struct {
 
 // AgentInfo is an Agent's Hello, as last received.
 type AgentInfo struct {
-	Version       string    `json:"version"`
-	Protocol      uint32    `json:"protocol"`
-	Hostname      string    `json:"hostname,omitempty"`
-	OS            string    `json:"os,omitempty"`
-	Arch          string    `json:"arch,omitempty"`
-	Engine        string    `json:"engine,omitempty"` // docker or podman
-	EngineVersion string    `json:"engineVersion,omitempty"`
-	Rootless      bool      `json:"rootless,omitempty"`
-	Address       string    `json:"address,omitempty"` // it connected from, as the hub saw it (Q165)
-	SeenAt        time.Time `json:"seenAt"`
-	LeftAt        time.Time `json:"leftAt,omitzero"` // when its connection ended; zero while it's connected
+	Version       string `json:"version"`
+	Protocol      uint32 `json:"protocol"`
+	Hostname      string `json:"hostname,omitempty"`
+	OS            string `json:"os,omitempty"`
+	Arch          string `json:"arch,omitempty"`
+	Engine        string `json:"engine,omitempty"` // docker or podman
+	EngineVersion string `json:"engineVersion,omitempty"`
+	Rootless      bool   `json:"rootless,omitempty"`
+	Address       string `json:"address,omitempty"` // it connected from, as the hub saw it (Q165)
+	// the Host's work dir and the further roots an Application may name as its own (Q157); empty from an older Agent
+	WorkDir      string    `json:"workDir,omitempty"`
+	WorkDirAllow []string  `json:"workDirAllow,omitempty"`
+	SeenAt       time.Time `json:"seenAt"`
+	LeftAt       time.Time `json:"leftAt,omitzero"` // when its connection ended; zero while it's connected
 	// Refused says why the Control Plane refused it, such as an outdated version; empty when it was served
 	Refused string `json:"refused,omitempty"`
 	// Outdated is a served Agent older than the Control Plane (Q41, Q163); never a development build

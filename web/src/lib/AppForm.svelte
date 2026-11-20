@@ -5,6 +5,8 @@
 	import Icon from './Icon.svelte';
 	import Dialog from './Dialog.svelte';
 	import { ms } from './status.ts';
+	import { live } from './live.svelte.ts';
+	import { workDirLabel, workDirProblem } from './hosts.ts';
 
 	let {
 		initial,
@@ -40,6 +42,11 @@
 	let adopt = $state(init?.adopt ?? false);
 	let kind = $state(init?.kind || 'compose');
 	let host = $state(init?.host || '');
+	let workDir = $state(init?.workDir ?? '');
+	// what the Host's Agent allows (Q57, Q211): checked as you type, in its words; changed later, its old folder stays (Q214)
+	let hostAgent = $derived(live.hosts[host]?.agent);
+	let workDirError = $derived(workDirProblem(workDir, name.trim(), host, hostAgent));
+	let workDirMoved = $derived(editing && (init?.workDir ?? '') !== workDir.trim());
 	let hosts = $state<string[]>(init?.host ? [init.host] : []);
 	onMount(() => {
 		get<HostView[]>('/settings/hosts')
@@ -135,6 +142,7 @@
 
 	async function submit(e: SubmitEvent) {
 		e.preventDefault();
+		if (workDirError) return; // shown under the field: its Host's Agent would refuse it
 		error = '';
 		if (blocked && askAccess !== repoURL.trim()) {
 			askAccess = repoURL.trim();
@@ -159,6 +167,7 @@
 				composeFiles: kind === 'apps' ? [] : list(composeFiles),
 				profiles: kind === 'apps' ? [] : list(profiles),
 				host,
+				workDir: kind === 'compose' ? workDir.trim() : '',
 				autoSync,
 				selfHeal,
 				prune,
@@ -278,6 +287,19 @@ prune: false</pre>
 		<span class="hint">
 			{editing ? 'To move the Application to another Host, delete and recreate it.' : 'The Host whose Agent deploys it. Add Hosts with omegacd host add.'}
 		</span>
+	</div>
+	<div class="field">
+		<label for="f-workdir">Work dir</label>
+		<input id="f-workdir" bind:value={workDir} placeholder={hostAgent?.workDir ? `${hostAgent.workDir} (the Host's)` : "the Host's work dir"} autocomplete="off"
+			aria-invalid={!!workDirError} aria-describedby="f-workdir-hint" />
+		{#if workDirError}
+			<span class="askroot" id="f-workdir-hint" role="alert"><Icon name="alert" size={14} />{workDirError}</span>
+		{:else if workDirMoved}
+			<span class="askroot" id="f-workdir-hint" role="alert"><Icon name="alert" size={14} />The next Sync deploys into the new folder; files and data under {init?.workDir || "the Host's work dir"} stay there: move them by hand first.</span>
+		{:else}
+			<span class="hint" id="f-workdir-hint">Optional: the root for its folder on the Host.
+				{hostAgent?.workDir ? `Allowed there: ${workDirLabel(hostAgent)}.` : "Its Agent hasn't reported its roots yet: it decides at the Sync."}</span>
+		{/if}
 	</div>
 	{/if}
 	<div class="grid2">

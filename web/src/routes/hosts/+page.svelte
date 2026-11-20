@@ -9,7 +9,7 @@
 	import { when } from '#lib/display.svelte.ts';
 	import Empty from '#lib/Empty.svelte';
 	import { shortKey, sopsYaml } from '#lib/hostkeys.ts';
-	import { groupByParent, hostState, hostTone, lastSeen, parseAllowlist, renameBlocked } from '#lib/hosts.ts';
+	import { groupByParent, hostState, hostTone, lastSeen, parseAllowlist, renameBlocked, workDirLabel } from '#lib/hosts.ts';
 	import { hostBadges } from '#lib/badges.ts';
 	import HostBadges from '#lib/HostBadges.svelte';
 	import Icon from '#lib/Icon.svelte';
@@ -164,6 +164,8 @@
 				<dl>
 					<dt>Agent</dt>
 					<dd>{h.agent?.version ?? '—'}</dd>
+					<dt>Work dir</dt>
+					<dd class="wrap">{workDirLabel(h.agent)}</dd>
 					<dt>OS/arch</dt>
 					<dd>{h.agent?.os ? `${h.agent.os}/${h.agent.arch}` : '—'}</dd>
 					<dt>Applications</dt>

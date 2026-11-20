@@ -518,8 +518,11 @@ type Hello struct {
 	Os              string                 `protobuf:"bytes,6,opt,name=os,proto3" json:"os,omitempty"`
 	Arch            string                 `protobuf:"bytes,7,opt,name=arch,proto3" json:"arch,omitempty"`
 	Hostname        string                 `protobuf:"bytes,8,opt,name=hostname,proto3" json:"hostname,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// the Host's work dir and the further roots an Application may name as its own (Q57, Q157, Q211)
+	WorkDir       string   `protobuf:"bytes,9,opt,name=work_dir,json=workDir,proto3" json:"work_dir,omitempty"`
+	WorkDirAllow  []string `protobuf:"bytes,10,rep,name=work_dir_allow,json=workDirAllow,proto3" json:"work_dir_allow,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Hello) Reset() {
@@ -606,6 +609,20 @@ func (x *Hello) GetHostname() string {
 		return x.Hostname
 	}
 	return ""
+}
+
+func (x *Hello) GetWorkDir() string {
+	if x != nil {
+		return x.WorkDir
+	}
+	return ""
+}
+
+func (x *Hello) GetWorkDirAllow() []string {
+	if x != nil {
+		return x.WorkDirAllow
+	}
+	return nil
 }
 
 type Challenge struct {
@@ -2338,7 +2355,7 @@ const file_omegacd_agent_v1_agent_proto_rawDesc = "" +
 	"\fdiff_request\x18\" \x01(\v2\x1d.omegacd.agent.v1.DiffRequestH\x00R\vdiffRequest\x12?\n" +
 	"\vdiff_result\x18# \x01(\v2\x1c.omegacd.agent.v1.DiffResultH\x00R\n" +
 	"diffResultB\x06\n" +
-	"\x04body\"\xf2\x01\n" +
+	"\x04body\"\xb3\x02\n" +
 	"\x05Hello\x12#\n" +
 	"\ragent_version\x18\x01 \x01(\tR\fagentVersion\x12)\n" +
 	"\x10protocol_version\x18\x02 \x01(\rR\x0fprotocolVersion\x12\x16\n" +
@@ -2347,7 +2364,10 @@ const file_omegacd_agent_v1_agent_proto_rawDesc = "" +
 	"\brootless\x18\x05 \x01(\bR\brootless\x12\x0e\n" +
 	"\x02os\x18\x06 \x01(\tR\x02os\x12\x12\n" +
 	"\x04arch\x18\a \x01(\tR\x04arch\x12\x1a\n" +
-	"\bhostname\x18\b \x01(\tR\bhostname\"!\n" +
+	"\bhostname\x18\b \x01(\tR\bhostname\x12\x19\n" +
+	"\bwork_dir\x18\t \x01(\tR\aworkDir\x12$\n" +
+	"\x0ework_dir_allow\x18\n" +
+	" \x03(\tR\fworkDirAllow\"!\n" +
 	"\tChallenge\x12\x14\n" +
 	"\x05nonce\x18\x01 \x01(\fR\x05nonce\"P\n" +
 	"\x11ChallengeResponse\x12\x1d\n" +

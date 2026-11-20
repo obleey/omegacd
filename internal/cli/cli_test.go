@@ -357,6 +357,11 @@ func TestCreateFromFile(t *testing.T) {
 	if r := run(t, srv, nil, "", "app", "create", "c", "--repo", "x", "--prune", "--prune-volumes"); r.code != 0 || len(f.bodies) != 1 || !strings.Contains(f.bodies[0], `"pruneVolumes":true`) {
 		t.Fatalf("--prune --prune-volumes: %+v %v", r, f.bodies)
 	}
+	f.bodies = nil // Q213: its own work dir, as workDir: in a definition and the form
+	if r := run(t, srv, nil, "", "app", "create", "c", "--repo", "x", "--host", "edge", "--work-dir", "/srv/apps"); r.code != 0 ||
+		len(f.bodies) != 1 || !strings.Contains(f.bodies[0], `"workDir":"/srv/apps"`) {
+		t.Fatalf("--work-dir: %+v %v", r, f.bodies)
+	}
 }
 
 func TestSyncPrune(t *testing.T) {

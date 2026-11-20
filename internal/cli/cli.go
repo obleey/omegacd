@@ -86,7 +86,7 @@ func init() { // init breaks the cycle commands → run funcs → flags → comm
 		"import":        {"import --host NAME [STACK]... [--recipient age1…] [--apps-dir apps] [--definitions platform/apps.yaml] [--dry-run] [--force]\n    (run on the Host, in your repository checkout: writes the Compose stacks running on this machine into it as Applications for Host NAME)", (*CLI).importStacks},
 		"app list":      {"app list", (*CLI).appList},
 		"app get":       {"app get NAME", (*CLI).appGet},
-		"app create":    {"app create NAME --repo URL [--path P] [--revision R] [--file F]... [--profile P]... [--host H] [--kind apps] [--auto-sync] [--self-heal] [--prune [--prune-volumes]] [--adopt]\n  app create -f app.yaml", (*CLI).appCreate},
+		"app create":    {"app create NAME --repo URL [--path P] [--revision R] [--file F]... [--profile P]... [--host H] [--kind apps] [--auto-sync] [--self-heal] [--prune [--prune-volumes]] [--adopt] [--work-dir PATH]\n  app create -f app.yaml", (*CLI).appCreate},
 		"app delete":    {"app delete NAME [--cascade=false | --volumes | --forget] [--yes]", (*CLI).appDelete},
 		"app sync":      {"app sync NAME [--prune] [--wait] [--no-health] [--timeout 10m]", (*CLI).appSync},
 		"app refresh":   {"app refresh NAME", (*CLI).appRefresh},

@@ -163,3 +163,11 @@ func onlyDirs(dir string, names []string) bool {
 	}
 	return true
 }
+
+// Allowed is whether root is one of roots or under one (Q57): where an Agent may put an Application's folder. The
+// Agent enforces it; the Control Plane checks it first against the roots the Agent reported (Q211).
+func Allowed(root string, roots []string) bool {
+	return slices.ContainsFunc(roots, func(r string) bool {
+		return root == r || strings.HasPrefix(root, r+string(filepath.Separator))
+	})
+}

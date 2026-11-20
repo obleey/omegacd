@@ -85,12 +85,14 @@ again with this ticket.
 **Done when:** no code path can send a decrypted value from Agent to Control Plane (test).
 
 ### M5-07 · Work dir in the Application form
-**Status:** todo
+**Status:** done (2026-11-20, PR #150)
 **Depends on:** M2-09, M4-01
 
 An optional **Work dir** field in the Application form and detail (Q57): empty shows the Host's work dir as the
 placeholder; a path the Host's Agent doesn't allow shows the Agent's message and the setting to change. The Agent's
 Hello carries its work dir and allowed roots (Q157).
+Checked when saving, in the Agent's words (Q211); where it shows (Q212); `app create --work-dir` (Q213); a changed work
+dir leaves the old folder, with a warning (Q214).
 
 **Done when:** UI tests cover empty, allowed and refused, and an e2e creates an Application with its own work dir.
 

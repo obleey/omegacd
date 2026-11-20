@@ -21,6 +21,7 @@ import (
 	"github.com/obleey/omegacd/internal/domain"
 	"github.com/obleey/omegacd/internal/logging"
 	agentv1 "github.com/obleey/omegacd/internal/proto/agent/v1"
+	"github.com/obleey/omegacd/internal/workdir"
 )
 
 const (
@@ -626,6 +627,9 @@ func (c *Controller) checkNew(ctx context.Context, a *domain.Application) error 
 		if err := c.checkHost(ctx, a.Host); err != nil {
 			return err
 		}
+		if err := c.checkWorkDir(ctx, *a); err != nil {
+			return err
+		}
 	}
 	a.CreatedAt = time.Now()
 	a.RolledBack = false
@@ -648,6 +652,9 @@ func (c *Controller) UpdateApp(ctx context.Context, a domain.Application) (domai
 		return domain.AppView{}, fmt.Errorf("%w: the kind of an Application cannot be changed", domain.ErrInvalid)
 	}
 	if err := checkUpdate(old, &a); err != nil {
+		return domain.AppView{}, err
+	}
+	if err := c.checkWorkDir(ctx, a); err != nil {
 		return domain.AppView{}, err
 	}
 	if err := c.saveUpdate(ctx, a); err != nil {
@@ -1046,6 +1053,29 @@ func (c *Controller) checkHost(ctx context.Context, name string) error {
 	return err
 }
 
+// checkWorkDir refuses a work dir outside the roots its Host's Agent reported (Q57, Q211), with the Agent's own
+// words, at saving rather than at the first Sync. Roots not reported yet (never connected, an older Agent): the Agent
+// decides at the Sync, as it always does.
+func (c *Controller) checkWorkDir(ctx context.Context, a domain.Application) error {
+	if a.WorkDir == "" {
+		return nil
+	}
+	h, err := c.cfg.Store.GetHost(ctx, a.Host)
+	if err != nil && !errors.Is(err, domain.ErrNotFound) {
+		return err
+	}
+	if h.Agent == nil || h.Agent.WorkDir == "" {
+		c.cfg.Log.DebugContext(ctx, "work dir not checked: its Host's roots aren't known yet", "app", a.Name, "host", a.Host)
+		return nil
+	}
+	if !workdir.Allowed(a.WorkDir, append([]string{h.Agent.WorkDir}, h.Agent.WorkDirAllow...)) {
+		return fmt.Errorf("%w: work dir %s of %s is not under a root Host %s's Agent allows (its own %s, and "+
+			"OMEGACD_AGENT_WORKDIR_ALLOW: %s): add it there, or change the Application's workDir", domain.ErrInvalid,
+			a.WorkDir, a.Name, a.Host, h.Agent.WorkDir, cmp.Or(strings.Join(h.Agent.WorkDirAllow, ","), "none"))
+	}
+	return nil
+}
+
 // ---- App of Apps ----
 
 func (c *Controller) children(ctx context.Context, parent string) ([]domain.Application, error) {
@@ -1125,7 +1155,9 @@ func (c *Controller) syncChildren(ctx context.Context, parent domain.Application
 			err = c.checkNew(ctx, &d)
 		} else if err = normalize(&d); err == nil {
 			if err = c.checkHost(ctx, d.Host); err == nil {
-				err = checkUpdate(old, &d)
+				if err = checkUpdate(old, &d); err == nil {
+					err = c.checkWorkDir(ctx, d)
+				}
 			}
 		}
 		if err != nil {

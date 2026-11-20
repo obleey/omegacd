@@ -195,3 +195,18 @@ func TestWriteFailures(t *testing.T) {
 		t.Errorf("pruning an unreadable folder: %v", err)
 	}
 }
+
+// Q57: a root is allowed when it is one of the roots or under one; a sibling sharing a prefix isn't.
+func TestAllowed(t *testing.T) {
+	roots := []string{"/run/omegacd", "/srv/apps"}
+	for root, want := range map[string]bool{
+		"/run/omegacd": true, "/srv/apps/shop": true, "/srv/apps2": false, "/etc": false, "/srv": false,
+	} {
+		if got := Allowed(root, roots); got != want {
+			t.Errorf("Allowed(%s) = %v", root, got)
+		}
+	}
+	if Allowed("/run/omegacd", nil) {
+		t.Error("no roots allow nothing")
+	}
+}

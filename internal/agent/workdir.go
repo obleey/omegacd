@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -48,7 +47,7 @@ func (w *WorkDir) allowed(a App) error {
 	if !filepath.IsAbs(root) || filepath.Clean(root) != root {
 		return fmt.Errorf("%w: work dir %q of %s: want an absolute, clean path", domain.ErrInvalid, root, a.Name)
 	}
-	if !slices.ContainsFunc(append([]string{w.Root}, w.Allow...), func(r string) bool { return insideOrAt(r, root) }) {
+	if !workdir.Allowed(root, append([]string{w.Root}, w.Allow...)) {
 		return fmt.Errorf("%w: work dir %s of %s is not under a root this Agent allows (its own %s, and "+
 			"OMEGACD_AGENT_WORKDIR_ALLOW: %s): add it there, or change the Application's workDir",
 			domain.ErrInvalid, root, a.Name, w.Root, cmp.Or(strings.Join(w.Allow, ","), "none"))
@@ -67,10 +66,6 @@ func (w *WorkDir) allowed(a App) error {
 			root, a.Name, err, name, group, root)
 	}
 	return nil
-}
-
-func insideOrAt(root, path string) bool {
-	return path == root || strings.HasPrefix(path, root+string(filepath.Separator))
 }
 
 // Write makes a's folder hold exactly r's files, from the cache, in place (single-file bind mounts keep their
