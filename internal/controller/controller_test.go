@@ -488,6 +488,39 @@ func TestWorkDirIsNormalized(t *testing.T) {
 	}
 }
 
+// Q211: a work dir outside the roots its Host's Agent reported is refused when saving, with the Agent's words: on create,
+// on an edit and in an App of Apps' child; one under them is kept; roots not reported yet leave it to the Agent.
+func TestWorkDirCheckedAgainstTheHost(t *testing.T) {
+	r := newRig(t)
+	ctx := t.Context()
+	logs := logTo(r)
+	if _, err := r.c.CreateApp(ctx, domain.Application{Name: "early", RepoURL: "x", Host: "edge", WorkDir: "/opt/x"}); err != nil {
+		t.Fatalf("roots not known yet: %v", err)
+	}
+	if !strings.Contains(logs.String(), `msg="work dir not checked: its Host's roots aren't known yet" app=early host=edge`) {
+		t.Errorf("logs:\n%s", logs.String())
+	}
+	r.st.mu.Lock()
+	h := r.st.hosts["edge"]
+	h.Agent = &domain.AgentInfo{Version: "v0.2.0", WorkDir: "/run/omegacd", WorkDirAllow: []string{"/srv/apps"}}
+	r.st.hosts["edge"] = h
+	r.st.mu.Unlock()
+	if _, err := r.c.CreateApp(ctx, domain.Application{Name: "inside", RepoURL: "x", Host: "edge", WorkDir: "/srv/apps/shop"}); err != nil {
+		t.Fatalf("under an allowed root: %v", err)
+	}
+	_, err := r.c.CreateApp(ctx, domain.Application{Name: "outside", RepoURL: "x", Host: "edge", WorkDir: "/etc/x"})
+	if !errors.Is(err, domain.ErrInvalid) || !strings.Contains(err.Error(), "work dir /etc/x of outside is not under a root Host edge's Agent allows (its own /run/omegacd, and OMEGACD_AGENT_WORKDIR_ALLOW: /srv/apps)") {
+		t.Fatalf("outside: %v", err)
+	}
+	if _, err := r.c.UpdateApp(ctx, domain.Application{Name: "inside", RepoURL: "x", Host: "edge", WorkDir: "/tmp"}); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatalf("an edit outside: %v", err)
+	}
+	r.st.breaks("GetHost", errLocked)
+	if _, err := r.c.UpdateApp(ctx, domain.Application{Name: "inside", RepoURL: "x", Host: "edge", WorkDir: "/srv/apps/b"}); !errors.Is(err, errLocked) {
+		t.Fatalf("a store that fails: %v", err)
+	}
+}
+
 func TestManualSyncThenSyncedThenNewRevisionAndDrift(t *testing.T) {
 	r := newRig(t)
 	ctx := t.Context()

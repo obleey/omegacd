@@ -118,7 +118,7 @@ func (c *CLI) printApp(v domain.AppView) {
 	lines := [][2]string{
 		{"Name", v.Name}, {"Kind", v.Kind}, {"Parent", v.Parent}, {"Repository", v.RepoURL}, {"Path", v.Path},
 		{"Target revision", v.TargetRevision}, {"Compose files", cmp.Or(strings.Join(v.ComposeFiles, ", "), "auto ("+strings.Join(domain.DefaultComposeFiles, ", ")+")")},
-		{"Profiles", strings.Join(v.Profiles, ", ")}, {hostsLabel(v), hostsOf(v, ", ")}, {"Sync policy", strings.Join(policy, ", ")},
+		{"Profiles", strings.Join(v.Profiles, ", ")}, {hostsLabel(v), hostsOf(v, ", ")}, {"Work dir", v.WorkDir}, {"Sync policy", strings.Join(policy, ", ")},
 		{"Sync status", sync}, {"Health", c.paint(statusColor(string(v.Health)), string(v.Health))},
 		{"Target SHA", shortSHA(v.TargetSHA)}, {"Deployed SHA", shortSHA(v.DeployedSHA)},
 	}
@@ -165,6 +165,7 @@ func (c *CLI) appCreate(ctx context.Context, args []string) error {
 	fs.BoolVar(&a.Prune, "prune", false, "remove containers and networks no longer declared")
 	fs.BoolVar(&a.PruneVolumes, "prune-volumes", false, "with --prune, also delete volumes no longer declared (their data is lost)")
 	fs.BoolVar(&a.Adopt, "adopt", false, "take over an existing unmanaged Compose project")
+	fs.StringVar(&a.WorkDir, "work-dir", "", "absolute root for its folder on the Host, under one its Agent allows (default the Host's work dir)")
 	pos, err := parse(fs, args, 0, 1)
 	if err != nil {
 		return err

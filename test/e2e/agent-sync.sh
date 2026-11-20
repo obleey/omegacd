@@ -13,8 +13,10 @@ check() { if eval "$2"; then echo "PASS  $1"; else echo "FAIL  $1"; fail=1; fi; 
 gitc() { git -C "$REPO" -c user.name=e2e -c user.email=e2e@local "$@"; }
 PIDS=()
 cleanup() {
-  docker rm -f $(docker ps -aq --filter label=com.docker.compose.project=$APP) >/dev/null 2>&1
-  docker network rm ${APP}_default >/dev/null 2>&1
+  for p in $APP e2e-ownwd; do
+    docker rm -f $(docker ps -aq --filter label=com.docker.compose.project=$p) >/dev/null 2>&1
+    docker network rm ${p}_default >/dev/null 2>&1
+  done
   kill ${PIDS[@]+"${PIDS[@]}"} 2>/dev/null; wait 2>/dev/null; [ -n "${KEEP:-}" ] || rm -rf "$T"
 }
 trap cleanup EXIT
@@ -138,6 +140,23 @@ import json,sys; v=json.load(sys.stdin); assert v[\"rolledBack\"] and not v[\"au
 kill $AGENT; wait $AGENT 2>/dev/null; : > "$T/agent.log"; agent
 waitfor "$T/agent.log" "connected to the Control Plane, approved"; sleep 3
 check "exactly once: another connection doesn't report it again" '[ "$(rollbacks)" = $((BEFORE + 1)) ]'
+
+# M5-07: an Application's own work dir (Q57, Q211): the Agent reports its roots, a work dir outside them is refused at
+# create with its words, one under an allowed root deploys there
+OWN=$(python3 -c 'import os,sys; print(os.path.normpath(sys.argv[1]))' "$T/own") # as the Agent cleans it: TMPDIR may end in /
+mkdir -p "$OWN"
+kill $AGENT; wait $AGENT 2>/dev/null; : > "$T/agent.log"; agent OMEGACD_AGENT_WORKDIR_ALLOW="$OWN"
+waitfor "$T/agent.log" "connected to the Control Plane, approved"
+check "the Agent reports its work dir and the roots it allows (Q157)" '"$BIN" host list -o json | python3 -c "
+import json,sys; a=[h for h in json.load(sys.stdin) if h[\"name\"]==\"edge\"][0][\"agent\"]
+assert a[\"workDir\"] and a[\"workDirAllow\"]==[sys.argv[1]], a" "$OWN"'
+out=$("$BIN" app create e2e-strayed --repo "$REPO" --path web --host edge --work-dir /etc/omegacd-e2e 2>&1); rc=$?
+check "a work dir outside them is refused at create, in the Agent's words (Q211)" \
+  '[ $rc -ne 0 ] && echo "$out" | grep -q "is not under a root Host edge.s Agent allows" && ! "$BIN" app get e2e-strayed >/dev/null 2>&1'
+"$BIN" app create e2e-ownwd --repo "$REPO" --path web --host edge --work-dir "$OWN/apps" >/dev/null
+"$BIN" app sync e2e-ownwd --wait --no-health --timeout 2m >/dev/null 2>&1
+check "one under an allowed root deploys there (Q57, Q213)" '[ -f "$OWN/apps/e2e-ownwd/compose.yaml" ] && "$BIN" app get e2e-ownwd | grep -q "^Work dir: *$OWN/apps$"'
+"$BIN" app delete e2e-ownwd --yes >/dev/null 2>&1
 
 out=$(env -i PATH="$PATH" ${GOCOVERDIR:+GOCOVERDIR=$GOCOVERDIR} HOME="$T/other" OMEGACD_AGENT_CONTROL_PLANE=http://cp.example.com "$BIN" agent 2>&1); rc=$?
 check "an Agent refuses plain http to another machine (Q95)" '[ $rc -ne 0 ] && echo "$out" | grep -q "https only"'

@@ -110,6 +110,8 @@ type Connection struct {
 	KeyPath      string              // where Key is kept: a rotation writes the new one next to it, then replaces it
 	AgeRecipient string              // of the Host Key, registered at enrollment
 	Engine       EngineInfo          // reported in Hello; empty when none was reachable at start
+	WorkDir      string              // reported in Hello: the Host's work dir (Q157)
+	WorkDirAllow []string            // and the further roots an Application may name (OMEGACD_AGENT_WORKDIR_ALLOW)
 	HTTPClient   *http.Client        // trusts OMEGACD_AGENT_CA_FILE's CAs; nil: the system's (Q95)
 	HostKey      *age.X25519Identity // decrypts the registry credentials the Control Plane sends (Q86)
 }
@@ -150,7 +152,8 @@ func (ag *Agent) serve(ctx context.Context, conn *wire.Conn, c *Connection) erro
 			host, _ := os.Hostname()
 			out := []*agentv1.Envelope{{Body: &agentv1.Envelope_Hello{Hello: &agentv1.Hello{AgentVersion: version.String(),
 				ProtocolVersion: ProtocolVersion, Os: runtime.GOOS, Arch: runtime.GOARCH, Hostname: host,
-				Engine: c.Engine.Name, EngineVersion: c.Engine.Version, Rootless: c.Engine.Rootless}}}}
+				Engine: c.Engine.Name, EngineVersion: c.Engine.Version, Rootless: c.Engine.Rootless,
+				WorkDir: c.WorkDir, WorkDirAllow: c.WorkDirAllow}}}}
 			if c.Invite != "" {
 				out = append(out, &agentv1.Envelope{Body: &agentv1.Envelope_Enroll{Enroll: &agentv1.Enroll{
 					Invite: c.Invite, AgeRecipient: c.AgeRecipient}}})

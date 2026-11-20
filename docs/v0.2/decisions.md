@@ -698,3 +698,15 @@ First written as Q208–Q210 on `main`; renumbered Q220–Q222, as M5-06 to M5-0
 - **Q222** A rolled-back child removed from Git is treated like any other: with Prune on its App of Apps it is deleted,
   without it is marked not in Git (as `main` already does). Removing it from Git is the later, deliberate act, as
   in Q81. M5-09 tests it.
+
+## Work dir in the Application form (before M5-07, 2026-11-20)
+
+- **Q211** The Agent's Hello carries its work dir and the further roots it allows (Q157); the Control Plane checks an
+  Application's `workDir` against them when saving (create, edit, an App of Apps' child) and refuses with the Agent's
+  own words; the form shows it as you type. Roots not reported yet (never connected, an older Agent): accepted, the
+  Agent decides at the Sync. The Agent always enforces it; both use `workdir.Allowed`.
+- **Q212** The form's Work dir field has the Host's work dir as its placeholder and its allowed roots as the hint; an
+  Application's page and a Host card show the work dir and the roots.
+- **Q213** `omegacd app create --work-dir PATH`, matching `workDir:` in a definition and the form.
+- **Q214** Changing an Application's work dir is allowed: the next Sync deploys into the new folder, the old one and its
+  data stay (the Agent moves nothing); the form warns to move them by hand first.

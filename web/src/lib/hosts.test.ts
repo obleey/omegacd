@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { HostView } from './api.ts';
-import { engineLabel, groupByParent, hostState, hostTone, lastSeen, parseAllowlist, renameBlocked } from './hosts.ts';
+import { engineLabel, groupByParent, workDirLabel, workDirProblem, hostState, hostTone, lastSeen, parseAllowlist, renameBlocked } from './hosts.ts';
 
 const host = (h: Partial<HostView>): HostView =>
 	({ name: 'web', createdAt: '', approved: false, status: { name: 'web', connected: false }, apps: [], ...h }) as HostView;
@@ -60,4 +60,24 @@ test("a Host's Applications grouped by their App of Apps, standalone ones last",
 	]);
 	assert.deepEqual(groupByParent(['docs'], () => undefined), [{ apps: ['docs'] }]);
 	assert.deepEqual(groupByParent([], () => undefined), []);
+});
+
+test("an Application's work dir against the roots its Host's Agent reported", () => {
+	const a = { ...agent, workDir: '/run/omegacd', workDirAllow: ['/srv/apps'] };
+	assert.equal(workDirProblem('', 'web', 'edge', a), ''); // the Host's own
+	assert.equal(workDirProblem('/srv/apps/shop/', 'web', 'edge', a), '');
+	assert.equal(workDirProblem('/run/omegacd', 'web', 'edge', a), '');
+	assert.match(workDirProblem('/srv/apps2', 'web', 'edge', a), /not under a root Host edge's Agent allows \(its own \/run\/omegacd, and OMEGACD_AGENT_WORKDIR_ALLOW: \/srv\/apps\)/);
+	assert.equal(workDirProblem('srv/apps', 'web', 'edge', a), 'An absolute path, not /.');
+	assert.equal(workDirProblem('/', 'web', 'edge', a), 'An absolute path, not /.');
+	assert.equal(workDirProblem('/srv/../etc', 'web', 'edge', a), 'An absolute path, not /.');
+	assert.equal(workDirProblem('/etc', 'web', 'edge', agent), ''); // not reported yet: the Agent decides
+	assert.match(workDirProblem('/etc', '', 'edge', { ...agent, workDir: '/run/omegacd' }), /this Application.*OMEGACD_AGENT_WORKDIR_ALLOW: none/);
+});
+
+test("a Host's work dir and its allowed roots", () => {
+	assert.equal(workDirLabel({ ...agent, workDir: '/run/omegacd', workDirAllow: ['/srv/apps', '/data'] }), '/run/omegacd (also /srv/apps, /data)');
+	assert.equal(workDirLabel({ ...agent, workDir: '/run/omegacd' }), '/run/omegacd');
+	assert.equal(workDirLabel(agent), '—');
+	assert.equal(workDirLabel(undefined), '—');
 });

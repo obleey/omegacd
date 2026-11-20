@@ -50,6 +50,9 @@ message Hello {
   string os = 6;
   string arch = 7;
   string hostname = 8;
+  // the Host's work dir and the further roots an Application may name as its own (Q57, Q157, Q211)
+  string work_dir = 9;
+  repeated string work_dir_allow = 10;
 }
 
 message Challenge {

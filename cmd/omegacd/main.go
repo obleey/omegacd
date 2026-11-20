@@ -336,6 +336,7 @@ func runAgent(log *slog.Logger) error {
 			}
 		}
 		go ag.Connect(ctx, agent.Connection{HTTPClient: client, URL: cfg.ControlPlane, Invite: cfg.Invite, Key: signingKey,
+			WorkDir: cfg.WorkDir, WorkDirAllow: cfg.WorkDirAllow,
 			KeyPath: filepath.Join(cfg.StateDir, "signing.key"), Engine: detected,
 			AgeRecipient: hostKey.Recipient().String(), HostKey: hostKey})
 	}

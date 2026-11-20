@@ -53,3 +53,22 @@ export function groupByParent(apps: string[], parentOf: (app: string) => string 
 	const parents = [...groups.keys()].filter((p): p is string => !!p).sort();
 	return [...parents.map((p) => ({ parent: p, apps: groups.get(p)! })), ...(groups.has(undefined) ? [{ apps: groups.get(undefined)! }] : [])];
 }
+
+/** A Host's work dir and the further roots its Agent allows: "/run/omegacd (also /srv/apps)" (Q57, Q212). */
+export function workDirLabel(a?: AgentInfo): string {
+	if (!a?.workDir) return '—';
+	return a.workDirAllow?.length ? `${a.workDir} (also ${a.workDirAllow.join(', ')})` : a.workDir;
+}
+
+/** Why an Application's work dir can't be used on its Host, in the Agent's own words, or '' when it can or the Host
+ * hasn't reported its roots yet (its Agent then decides at the Sync, Q211). */
+export function workDirProblem(path: string, app: string, host: string, a?: AgentInfo): string {
+	let p = path.trim();
+	if (!p) return '';
+	if (!p.startsWith('/') || p.split('/').includes('..') || p.replace(/\/+$/, '') === '') return 'An absolute path, not /.';
+	p = p.replace(/\/+$/, '').replace(/\/{2,}/g, '/');
+	if (!a?.workDir) return '';
+	const roots = [a.workDir, ...(a.workDirAllow ?? [])];
+	if (roots.some((r) => p === r || p.startsWith(r + '/'))) return '';
+	return `Work dir ${p} of ${app || 'this Application'} is not under a root Host ${host}'s Agent allows (its own ${a.workDir}, and OMEGACD_AGENT_WORKDIR_ALLOW: ${a.workDirAllow?.join(',') || 'none'}): add it there, or change the Application's workDir.`;
+}

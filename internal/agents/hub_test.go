@@ -489,7 +489,7 @@ func TestVersionHandshake(t *testing.T) {
 		{"v0.4.0", "Agent v0.4.0 is newer than this Control Plane (v0.3.1): upgrade the Control Plane to v0.4 or later first", false},
 	} {
 		hello := &agentv1.Hello{AgentVersion: tc.version, ProtocolVersion: 1, Hostname: "web-1", Os: "linux", Arch: "arm64",
-			Engine: "podman", EngineVersion: "5.4.2", Rootless: true}
+			Engine: "podman", EngineVersion: "5.4.2", Rootless: true, WorkDir: "/run/omegacd", WorkDirAllow: []string{"/srv/apps"}}
 		c, e := agentV(t, url, key, "", nil, hello)
 		if tc.refused == "" && !e.GetEnrollmentStatus().GetApproved() {
 			t.Fatalf("%s: got %v", tc.version, e)
@@ -503,7 +503,7 @@ func TestVersionHandshake(t *testing.T) {
 		if a == nil || a.Version != tc.version || a.Hostname != "web-1" || a.OS != "linux" || a.Arch != "arm64" ||
 			a.Engine != "podman" || a.EngineVersion != "5.4.2" || !a.Rootless || a.Protocol != 1 || a.SeenAt.IsZero() ||
 			!strings.Contains(a.Refused, tc.refused) || (tc.refused == "") != (a.Refused == "") || a.Outdated != tc.outdated ||
-			a.Address != "127.0.0.1" {
+			a.Address != "127.0.0.1" || a.WorkDir != "/run/omegacd" || len(a.WorkDirAllow) != 1 || a.WorkDirAllow[0] != "/srv/apps" {
 			t.Fatalf("%s: recorded %+v", tc.version, a)
 		}
 	}

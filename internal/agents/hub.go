@@ -356,7 +356,7 @@ func (h *Hub) checkVersion(ctx context.Context, host, addr string, hello *agentv
 	err := compatible(h.version, hello.AgentVersion)
 	info := domain.AgentInfo{Version: hello.AgentVersion, Protocol: hello.ProtocolVersion, Hostname: hello.Hostname,
 		OS: hello.Os, Arch: hello.Arch, Engine: hello.Engine, EngineVersion: hello.EngineVersion, Rootless: hello.Rootless,
-		Address: addr, SeenAt: h.now(), Outdated: err == nil && outdated(h.version, hello.AgentVersion)}
+		Address: addr, WorkDir: hello.WorkDir, WorkDirAllow: hello.WorkDirAllow, SeenAt: h.now(), Outdated: err == nil && outdated(h.version, hello.AgentVersion)}
 	if err != nil {
 		info.Refused = err.Error()
 	}
