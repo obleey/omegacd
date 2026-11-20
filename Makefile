@@ -7,7 +7,7 @@ build: web
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/omegacd ./cmd/omegacd
 
 web:
-	cd web && npm ci && npm run build
+	cd web && pnpm install --frozen-lockfile && pnpm run build
 
 # Generated code is committed; CI checks that this leaves it unchanged.
 BUF := go run github.com/bufbuild/buf/cmd/buf@v1.75.0

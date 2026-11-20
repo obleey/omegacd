@@ -130,12 +130,13 @@ shows it, a manual Sync of the child ends it, a rolled-back child removed from G
 through an Agent.
 
 ### M5-10 · pnpm for the web UI
-**Status:** todo
+**Status:** done (2026-11-20, PR #153)
 **Depends on:** M5-03
 
 The web UI moves from npm to pnpm (Q183): `pnpm-lock.yaml` replaces `package-lock.json` (the same versions, imported
-with `pnpm import`), pnpm comes from nix (`~/nix-config/common/packages.nix`) and from a pinned `corepack` in CI and
-the Dockerfile, and the Makefile, `.github/workflows/ci.yml`, `release.yml`, CLAUDE.md and TESTING.md say `pnpm`.
+with `pnpm import`), pnpm comes from nix (`~/nix-config/common/packages.nix`, Q227) and, as Node 26 ships no corepack,
+its version is pinned once in `package.json`'s `packageManager`, which `pnpm/action-setup` and the Dockerfile read
+(Q226), and the Makefile, `.github/workflows/ci.yml`, `release.yml`, CLAUDE.md and TESTING.md say `pnpm`.
 
 **Done when:** `make build`, CI, the image build and the release workflow use pnpm, no `package-lock.json` is left,
 and the built UI is the same.
