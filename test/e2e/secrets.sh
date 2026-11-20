@@ -62,9 +62,12 @@ import json,sys; cs=json.load(sys.stdin)[\"containers\"]
 assert cs and all(c.get(\"startedAt\", \"\")[:4] > \"2000\" for c in cs), cs"'
 check "Resources marks app.env as secret" 'echo "$R" | python3 -c "import json,sys; r=[x for x in json.load(sys.stdin)[\"resources\"] if x[\"name\"]==\"app.env\"]; sys.exit(0 if r and r[0].get(\"secret\") else 1)"'
 D=$(api "resource?kind=env_file&name=app.env")
-# through an Agent the Control Plane never has the decrypted file: nothing of it is shown (M5-06 adds its key names, masked)
-check "its content is not shown" '! echo "$D" | grep -q first-token'
+# its key names from the encrypted file in Git, never a value: the Control Plane never has the decrypted file (Q208, Q210)
+check "it reads as its key names, API_TOKEN=••••, masked" 'echo "$D" | python3 -c "
+import json,sys; d=json.load(sys.stdin); assert d[\"content\"]==\"API_TOKEN=••••\\n\" and d[\"masked\"] and \"app.sops.env\" in d[\"info\"][\"from\"], d"'
+check "and .env as DB_PASSWORD=••••" 'api "resource?kind=env_file&name=.env" | grep -q "DB_PASSWORD=••••"'
 check "no secret anywhere in the API" '! echo "$R$D$(api diff)" | grep -q "first-"'
+check "nor in the Control Plane's data, which the Agent's reports fill (Q210)" '! grep -rqF -e first-db-pw -e first-token "$T/data"'
 
 first=$(ctr)
 enc 'API_TOKEN=second-token' "$REPO/apps/box/app.sops.env"; gitc commit -qam "rotate token"

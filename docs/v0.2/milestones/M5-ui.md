@@ -73,11 +73,12 @@ cache button (Q206); a Host card's Applications grouped by their App of Apps (Q2
 
 **Done when:** credentials can be added, rotated and deleted without the Control Plane ever storing a secret.
 
-### M5-06 · Decrypted files from Agent-reported key names
-**Status:** todo
+### M5-06 · Secret files by their key names
+**Status:** done (2026-11-18, PR #149)
 **Depends on:** M2-05, M4-02
 
-The file viewer shows `KEY=••••` from the key names the Agent reports; content of secret files is never shown.
+The file viewer shows `KEY=••••` from the key names in the encrypted file in Git, which SOPS leaves readable (Q208,
+Q209); the Agent reports nothing about secret files, and their content is never shown.
 From M4-04: `test/e2e/secrets.sh` checks only that a decrypted file's content isn't shown; it checks `API_TOKEN=••••`
 again with this ticket.
 
@@ -114,9 +115,9 @@ A Child Application is rolled back as any Application, as in Argo CD (Q171): an 
 Auto-Sync off. While it is rolled back, a Sync of its App of Apps neither syncs it nor turns its Auto-Sync back on;
 a manual Sync of the child ends it. Its page says it is rolled back and why its App of Apps skips it; the README's
 "Rollback is owned by Git" goes. With Q167 (M6-05): a child with `adopt: true` never synced is held back the same way,
-so both are tested together (Q172). Its App of Apps shows it rolled back too (Q208); a manual Sync ends it with
-Auto-Sync off until the next Sync of its App of Apps applies Git's settings (Q209); removed from Git it is pruned or
-marked not in Git like any child (Q210).
+so both are tested together (Q172). Its App of Apps shows it rolled back too (Q220); a manual Sync ends it with
+Auto-Sync off until the next Sync of its App of Apps applies Git's settings (Q221); removed from Git it is pruned or
+marked not in Git like any child (Q222).
 
 **Done when:** a child is rolled back from the UI and the CLI, a Sync of its App of Apps leaves it rolled back and
 shows it, a manual Sync of the child ends it, a rolled-back child removed from Git is pruned, and an e2e drives it

@@ -673,15 +673,28 @@ looks for it (`~/.config/sops/age/keys.txt`) by default.
   the App of Apps is a pill like its children (its icon, its status dot, a link), heading its group; it deploys
   nothing itself, the group says its children run there.
 
+## Secret files by their key names (before M5-06, 2026-11-18)
+
+- **Q208** A decrypted file shows its key names, `KEY=••••`, read by the Control Plane from its encrypted source in Git
+  (`app.sops.env` for `app.env`): SOPS encrypts values only, so the names are readable without decrypting anything.
+  The Agent reports nothing about secret files, so no code path can carry a decrypted value from it (the ticket's
+  "from the key names the Agent reports" is dropped).
+- **Q209** dotenv and INI read `KEY=••••` in file order; YAML and JSON `db.password: ••••`, nested keys as paths and
+  list items by index; SOPS's own metadata is never shown; a binary SOPS file shows "none: an encrypted binary file".
+- **Q210** No value in any call: a unit test shows a file encrypted with known values as its key names only, neither
+  value nor ciphertext in the view; the e2e checks `API_TOKEN=••••` in the API and that no secret value is in the API,
+  the Control Plane's data or its logs.
 ## Rollback of a Child Application (before M5-09, 2026-11-19)
 
-- **Q208** An App of Apps shows a rolled-back child: a "Rolled back" badge on the child in its children list, and on
+First written as Q208–Q210 on `main`; renumbered Q220–Q222, as M5-06 to M5-08 had taken Q208–Q219 on their branches.
+
+- **Q220** An App of Apps shows a rolled-back child: a "Rolled back" badge on the child in its children list, and on
   the App of Apps' page how many children are rolled back and that its Syncs skip them. A parent that looks Synced
   while it skips a child would hide that Git is not what runs. Worked out in the UI from the children's `rolledBack`
   (Q173), no API change.
-- **Q209** A manual Sync of a rolled-back child ends the rollback as for any Application: the flag goes, Auto-Sync
+- **Q221** A manual Sync of a rolled-back child ends the rollback as for any Application: the flag goes, Auto-Sync
   stays off. The next Sync of its App of Apps applies the child's settings from Git again, `autoSync` included; until
   then nothing syncs it automatically.
-- **Q210** A rolled-back child removed from Git is treated like any other: with Prune on its App of Apps it is deleted,
+- **Q222** A rolled-back child removed from Git is treated like any other: with Prune on its App of Apps it is deleted,
   without it is marked not in Git (as `main` already does). Removing it from Git is the later, deliberate act, as
   in Q81. M5-09 tests it.

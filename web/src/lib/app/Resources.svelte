@@ -225,7 +225,7 @@
 			</table>
 		{/if}
 		{#if detail.masked}
-			<p class="banner small">Decrypted from SOPS: only the keys are shown, every value is hidden.</p>
+			<p class="banner small"><Icon name="lock" size={13} /> Its key names, read from the encrypted file in Git: the values are decrypted only on the Host.</p>
 		{:else if detail.secret}
 			<p class="banner small"><Icon name="lock" size={13} /> Content is never shown for secrets.</p>
 		{:else if detail.info?.type === 'directory'}

@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -107,6 +108,49 @@ func Encrypt(plain []byte, name string, recipients []string) ([]byte, error) {
 		return nil, fmt.Errorf("encrypt %s: %w", name, err)
 	}
 	return store.EmitEncryptedFile(tree)
+}
+
+// Keys lists the key names of an encrypted SOPS file, never a value (Q208): SOPS encrypts values only, so the names
+// are readable in Git and nothing is decrypted. Nested keys read as paths ("db.host"), list items by index
+// ("hosts.0"); comments are left out. A binary file has no keys: none.
+func Keys(encrypted []byte, name string) ([]string, error) {
+	format := formatFor(strings.Replace(name, ".sops.", ".", 1))
+	if format == formats.Binary {
+		return nil, nil
+	}
+	tree, err := common.StoreForFormat(format, config.NewStoresConfig()).LoadEncryptedFile(encrypted)
+	if err != nil {
+		return nil, fmt.Errorf("read the keys of %s: %w", name, err)
+	}
+	var keys []string
+	var walk func(path string, v any)
+	walk = func(path string, v any) {
+		switch v := v.(type) {
+		case sops.TreeBranch:
+			for _, it := range v {
+				if _, comment := it.Key.(sops.Comment); !comment {
+					walk(joinKey(path, fmt.Sprint(it.Key)), it.Value)
+				}
+			}
+		case []any:
+			for i, x := range v {
+				walk(joinKey(path, strconv.Itoa(i)), x)
+			}
+		default:
+			keys = append(keys, path)
+		}
+	}
+	for _, b := range tree.Branches {
+		walk("", b)
+	}
+	return keys, nil
+}
+
+func joinKey(path, key string) string {
+	if path == "" {
+		return key
+	}
+	return path + "." + key
 }
 
 // decryptData is decrypt.DataWithFormat with our key service instead of the environment-reading local one.

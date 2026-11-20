@@ -368,3 +368,38 @@ func TestDecryptDirFailures(t *testing.T) {
 		t.Errorf("an unreadable file: %v", err)
 	}
 }
+
+// Q208: an encrypted file's key names, read without decrypting it: comments left out, nested keys as paths, list
+// items by index; a binary file has none; a file that isn't SOPS fails, saying which.
+func TestKeys(t *testing.T) {
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := rand.Text()
+	for name, tc := range map[string]struct {
+		plain string
+		want  []string
+	}{
+		"a.sops.env":  {"# note\nTOKEN=" + secret + "\nB=2\n", []string{"TOKEN", "B"}},
+		"a.sops.yaml": {"db:\n  pin: " + secret + "\n  hosts: [x, y]\nmode: prod\n", []string{"db.pin", "db.hosts.0", "db.hosts.1", "mode"}},
+		"a.sops.json": {`{"api": {"key": "` + secret + `"}}`, []string{"api.key"}},
+		"a.sops.ini":  {"[db]\npin = " + secret + "\n", []string{"db.pin"}},
+		"a.sops.pem":  {"-----BEGIN KEY-----\n" + secret, nil},
+	} {
+		b, err := Encrypt([]byte(tc.plain), name, []string{id.Recipient().String()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := Keys(b, name)
+		if err != nil || !slices.Equal(got, tc.want) {
+			t.Errorf("%s: %q %v, want %q", name, got, err, tc.want)
+		}
+		if strings.Contains(strings.Join(got, " "), secret) {
+			t.Fatalf("%s: a value among the keys", name)
+		}
+	}
+	if _, err := Keys([]byte("not sops"), "x.sops.env"); err == nil || !strings.Contains(err.Error(), "read the keys of x.sops.env") {
+		t.Errorf("not SOPS: %v", err)
+	}
+}
