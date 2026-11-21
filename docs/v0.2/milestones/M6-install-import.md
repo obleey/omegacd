@@ -3,7 +3,7 @@
 Getting a Control Plane and Agents running anywhere, and moving existing stacks in.
 See [architecture](../architecture.md#install-q10-q21-q26-q33-q35-q51).
 
-Order (Q229): M6-02, M6-03, M6-09, M6-01, M6-04, M6-06, M6-08, M6-05.
+Order (Q229): M6-02, M6-03, M6-09, M6-01, M6-04, M6-06, M6-08, M6-05, then M6-10.
 
 ### M6-01 · install.sh: full and agent modes
 **Status:** todo
@@ -58,7 +58,7 @@ or the cgroup path), or set `hostname:` to `container_name:` in `deploy/agent.ya
 **Done when:** `docker compose up -d` brings each up, as a non-root user; the Agent refuses a mount without path parity.
 
 ### M6-03 · systemd units
-**Status:** todo
+**Status:** done (2026-11-21, PR #156)
 **Depends on:** M2-01
 
 A user unit for rootless (`~/.config/systemd/user/omegacd-agent.service`, lingering enabled) and a system unit with a
@@ -70,8 +70,17 @@ For a Podman Host the Agent's user gets `events_logger = "file"` (Self-Heal read
 `log_driver = "k8s-file"` (Podman can't follow journald logs with events in a file) in its `containers.conf.d`, with
 `log_size_max` set (k8s-file logs grow without limit otherwise; journald rotated them).
 
-The systemd install (rootless and docker group) is a tab of the UI's Add Host dialog, with the invite filled in
-(M5-01, Q151).
+No tab of its own in Add Host (Q247): M6-01's `install.sh` tab installs these units with the `.deb`; until then the
+README has the manual steps.
+
+Settled before it (Q242–Q251): the units in `packaging/` (`omegacd-agent` user in the docker group,
+`/etc/omegacd/agent.env`, `/usr/bin/omegacd`); the work dir a preserved `RuntimeDirectory`; a restore unit in the
+user's scope too, before rootless Docker and `podman-restart.service`; hardening without `PrivateTmp`/`ProtectHome`
+(path parity); Podman on the user unit with a `containers.conf.d` drop-in (`log_size_max` 10 MiB); an e2e simulating
+the reboot (system unit on rootful Docker, user unit on rootless Docker and Podman) and a real reboot in the gate; the
+Control Plane unit's v0.1 leftovers dropped.
+Found while building it (Q252): on rootless Docker the container Agent reaches its Control Plane by its `https://` URL
+only, as RootlessKit's host network has its own loopback; tested through a TLS front.
 
 From M6-02 (Q241): native rootless Docker for the test user on the test servers (omegacd-testinfra's Ansible), which
 the rootless user unit's test needs, and with it `deploy-compose.sh`'s rootless Docker variant of `deploy/agent.yaml`
@@ -85,6 +94,10 @@ Docker.
 **Depends on:** M1-05
 
 `deploy/kubernetes.yaml`: Control Plane + Source Server (separate pods, mTLS between), no Agent (Q33, Q104).
+
+From M6-03 (Q251): its README section and `deploy/kubernetes.yaml` still have v0.1's keys secret, an `age.key` made
+beforehand and a required `known_hosts` (`--from-file=age.key --from-file=known_hosts`); v0.2's Control Plane makes
+its Master Key (Q115) and `known_hosts` is optional (Git over SSH only, Q106).
 
 **Done when:** installs in OrbStack's Kubernetes and manages a remote Agent.
 
@@ -164,3 +177,19 @@ with the RHEL family and a signed apt/dnf repository (`apt upgrade`) later, both
 **Done when:** on the test servers (Ubuntu 24.04 and Debian 13, amd64 and arm64) the package installs, the Agent runs and survives a
 reboot with its apps restored, an upgrade to a newer package keeps the state and the apps running, and uninstalling
 leaves no unit, user or folder but the state the admin chose to keep.
+
+### M6-10 · Decrypted files as bind mounts
+**Status:** todo
+**Depends on:** M4-01
+
+A Sync refuses a relative bind mount whose source isn't in Git (`checkBindSources`, so data written there isn't lost
+on the next Sync). A decrypted file is never in Git, only its `.sops.` original: `./app.yaml:/etc/app.yaml:ro` from
+`app.sops.yaml` fails "mounts ./app.yaml, which is not in Git", though a Compose secret (`secrets: … file: ./app.yaml`)
+or an `env_file` of the same file passes. Accept a bind source whose `.sops.` original is in Git, as well as a plain
+file in Git, which mounts today and must go on doing so; anything else not in Git stays refused. The README's Secrets section shows the mount next to `env_file` and `secrets:`.
+
+Found while building M6-03, whose `systemd.sh` mounts its decrypted file as a Compose secret instead.
+
+**Done when:** an app mounting both a plain file from Git and a decrypted file as bind volumes deploys and its container
+reads both, they come back after `systemd.sh`'s simulated reboot, and a mount of a file neither in Git nor decrypted
+from one is still refused with the same message.

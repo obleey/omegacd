@@ -1,0 +1,38 @@
+# OmegaCD's Agent as a system service, for a Host with rootful Docker (Q10): a dedicated user in the docker group,
+# never root. Rootless Docker and Podman: packaging/user/. See README.md, "The Agent with systemd".
+[Unit]
+Description=OmegaCD Agent: deploys this Host's Applications
+Documentation=https://github.com/obleey/omegacd
+After=network-online.target docker.service omegacd-agent-restore.service
+Wants=network-online.target omegacd-agent-restore.service
+
+[Service]
+Type=simple
+User=omegacd-agent
+Group=omegacd-agent
+ExecStart=/usr/bin/omegacd agent
+Restart=on-failure
+RestartSec=5
+# OMEGACD_AGENT_CONTROL_PLANE and OMEGACD_AGENT_INVITE, and any other setting (omegacd agent --help)
+EnvironmentFile=/etc/omegacd/agent.env
+
+# its keys and cache: /var/lib/omegacd-agent (back up signing.key and host.key)
+StateDirectory=omegacd-agent
+StateDirectoryMode=0700
+# the work dir, in RAM: /run/omegacd. Kept when the unit stops, or the deployed files would go from under the running
+# containers at every restart (Q243); a reboot empties it, and omegacd-agent-restore.service fills it before Docker
+RuntimeDirectory=omegacd
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+
+# no PrivateTmp or ProtectHome: the Agent must see the paths Docker resolves bind mounts in (Q245)
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Runs the whole test suite (make test-all) on the Linux Hosts OmegaCD supports (Q61): Ubuntu 24.04 and Debian 13,
 # amd64 and arm64, each a Hetzner server with the same tests and engines; the gate before every push.
-#   test/linux.sh [--only "CMD"] [TARGET...]   (default: all at once; each one's log in $TMPDIR)
+#   test/linux.sh [--reboot] [--only "CMD"] [TARGET...]   (default: all at once; each one's log in $TMPDIR)
 # The servers come from ../omegacd-testinfra (OMEGACD_TESTINFRA): OpenTofu creates them, Ansible sets them up (Docker,
 # Compose, Podman, Go, sops, the test user omegacd); `make up`, `make ip` (after this Mac's address changed) and
 # `make down` there. This script copies the repository to each one (rsync, ~/omegacd) and runs the suite there.
 # --only runs CMD (in the repository) instead of the whole suite: to rerun the part that failed, on the target it
-# failed on, while fixing. Before a push, the whole suite on every target.
+# failed on, while fixing. Before a push, the whole suite on every target. The whole suite ends with a real reboot of
+# the server (the Agent's systemd units, Q249); --reboot adds it after CMD too (make gate).
 # A target that fails is stopped (and cleaned) at its first failure; the others go on. Each run cleans up before and
 # after itself: everything but Forgejo and the image cache.
 set -eu
@@ -22,13 +23,13 @@ asroot() { local t=$1; shift; ssh -F "$infra/ssh_config" -o ServerAliveInterval=
 
 # stop ends any test run on the target, one aborted or left over, and clears what tests leave in the engines: every
 # Compose project but Forgejo's, the remote-Host tests' docker:dind containers, the rootless engines (recreated fresh by
-# engines.sh), unused networks and volumes, the tests' temp dirs, the containers of the user's own Podman (before every
-# run, and after it, passed or failed). Kept: Forgejo and the image cache. The pkill patterns are bracketed so they don't match this command itself.
+# engines.sh), unused networks and volumes, the tests' temp dirs, the containers of the user's own Podman and rootless
+# Docker, the systemd test's units and user (before every run, and after it, passed or failed). Kept: Forgejo and the image cache. The pkill patterns are bracketed so they don't match this command itself.
 stop() {
   asroot "$1" bash -c '
-    pkill -x make; pkill -f "[t]est/e2e/run.sh"; pkill -f "^/usr/local/go/bin/[g]o (test|vet|build)"
+    pkill -x make; pkill -f "[t]est/e2e/run.sh"; pkill -f "[t]est/e2e/systemd.sh"; pkill -f "^/usr/local/go/bin/[g]o (test|vet|build)"
     pkill -f "[.]test -test[.]" # the compiled test binaries go test runs: they outlive go test itself
-    pkill -f "bin/[o]megacd-(arm64|amd64)"; sleep 1
+    pkill -f "bin/[o]megacd-(arm64|amd64)"; pkill -f "omegacd/bin/[o]megacd"; sleep 1
     for id in $(docker ps -aq --filter label=com.docker.compose.project); do
       [ "$(docker inspect -f "{{index .Config.Labels \"com.docker.compose.project\"}}" "$id")" = forgejo ] || docker rm -f "$id"
     done
@@ -38,7 +39,9 @@ stop() {
     docker volume ls -q | grep -v "^forgejo_" | xargs -r docker volume rm -f
     rm -rf /tmp/omegacd-engines /tmp/omegacd-e2e* /tmp/Test* /tmp/agent-it-*
     true' >/dev/null 2>&1
-  on "$1" bash -c 'export XDG_RUNTIME_DIR=/run/user/$(id -u); podman rm -af; podman volume prune -f; podman network prune -f; true' >/dev/null 2>&1
+  on "$1" bash -c 'export XDG_RUNTIME_DIR=/run/user/$(id -u); podman rm -af; podman volume prune -f; podman network prune -f
+    DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock docker ps -aq | xargs -r env DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock docker rm -f
+    ! grep -qs "REBOOT\" = clean" ~/omegacd/test/e2e/systemd.sh || OMEGACD_E2E_REBOOT=clean bash ~/omegacd/test/e2e/systemd.sh; true' >/dev/null 2>&1
 }
 
 run() {
@@ -54,13 +57,27 @@ run() {
   [ -n "$only" ] && cmd=$only
   echo "=== $t: $cmd"
   # a login shell: Go on the PATH; TMPDIR on the server's disk; the user's runtime dir for its rootless Podman
-  on "$t" bash -lc "export TMPDIR=/tmp XDG_RUNTIME_DIR=/run/user/\$(id -u) ENGINES='$engines'; cd ~/omegacd && $cmd"
+  on "$t" bash -lc "export TMPDIR=/tmp XDG_RUNTIME_DIR=/run/user/\$(id -u) ENGINES='$engines'; cd ~/omegacd && $cmd" || return 1
+  [ -z "$reboot" ] || reboot "$t"
 }
 
-only=""
+# After the suite, one real reboot (Q249): the system unit and the rootless Docker user unit, an app each, must come
+# back with their files before the engines start them, which only a boot shows (systemd.sh simulates it in the suite).
+reboot() {
+  local t=$1 e2e="export TMPDIR=/tmp XDG_RUNTIME_DIR=/run/user/\$(id -u); cd ~/omegacd && OMEGACD_E2E_REBOOT"
+  echo "=== $t: a real reboot"
+  on "$t" bash -lc "$e2e=setup bash test/e2e/systemd.sh" || return 1
+  asroot "$t" systemctl reboot || true # the connection drops
+  sleep 20
+  for _ in $(seq 60); do on "$t" true 2>/dev/null && break; sleep 5; done
+  on "$t" bash -lc "$e2e=check bash test/e2e/systemd.sh"
+}
+
+only="" reboot=1 # the whole suite ends with a real reboot; a command of --only doesn't, unless --reboot
 while [ $# -gt 0 ]; do
   case $1 in
-  --only) only=${2:?--only needs a command}; shift 2 ;;
+  --only) only=${2:?--only needs a command}; [ "$reboot" = forced ] || reboot=""; shift 2 ;;
+  --reboot) reboot=forced; shift ;;
   *) break ;;
   esac
 done

@@ -1,0 +1,25 @@
+# After a reboot Docker restarts containers with a restart policy before the Agent runs, and makes their missing bind
+# sources root-owned folders the Agent can't replace: so the Applications' files, decrypted from the Agent's cache, go
+# back into its RAM work dir first (Q59). Runs whenever Docker starts; Docker starts even if this fails.
+[Unit]
+Description=OmegaCD Agent: restore the Applications' files before Docker starts their containers
+Documentation=https://github.com/obleey/omegacd
+Before=docker.service
+ConditionPathExists=/var/lib/omegacd-agent/agent.db
+
+[Service]
+Type=oneshot
+User=omegacd-agent
+Group=omegacd-agent
+ExecStart=/usr/bin/omegacd agent restore --files
+EnvironmentFile=/etc/omegacd/agent.env
+StateDirectory=omegacd-agent
+StateDirectoryMode=0700
+RuntimeDirectory=omegacd
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+NoNewPrivileges=yes
+ProtectSystem=full
+
+[Install]
+WantedBy=docker.service

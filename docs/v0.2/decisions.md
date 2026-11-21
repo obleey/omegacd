@@ -500,7 +500,7 @@ is declared. Their details (syntax, UI, messages) are decided when each is built
 
 - **Q151** Add Host (M5-01) shows the commands that work before M6: the `omegacd agent` command line `host add`
   prints, and a `docker run` of the published image with the same settings. M6-01 (`install.sh`), M6-02
-  (`deploy/agent.yaml`) and M6-03 (systemd) each add their tab to the dialog.
+  (`deploy/agent.yaml`) and M6-03 (systemd) each add their tab to the dialog; M6-03 none after all (Q247).
 - **Q152** Hosts get a top-level page (cards, Add Host) next to Applications; Settings keeps credentials and API tokens.
 - **Q153** The event stream carries a `host` event with the Host's view whenever it changes (enrollment, approval,
   connect and leave, the Agent's Hello, lock, unlock, rotation, allowlist, delete); the UI keeps Hosts in its live
@@ -795,3 +795,53 @@ First written as Q208–Q210 on `main`; renumbered Q220–Q222, as M5-06 to M5-0
   of `deploy/agent.yaml` on the servers' native rootless Podman (the Agent's check is the engine's rootless flag, the
   same for both), and rootless Docker comes with M6-03: native rootless Docker for the test user on the servers
   (omegacd-testinfra), which its rootless user unit needs anyway, and `deploy-compose.sh`'s rootless Docker variant.
+
+## systemd units (before M6-03, 2026-11-21)
+
+- **Q242** The units live in `packaging/`: `omegacd-agent.service` and `omegacd-agent-restore.service` for the system,
+  the same two names under `packaging/user/` for a user. The system unit runs as a system user `omegacd-agent` in the
+  `docker` group, apart from the Control Plane's `omegacd` (the docker group is root's equal, which the Control Plane
+  needs not be), its settings in `/etc/omegacd/agent.env` (0640 root:omegacd-agent: the Control Plane's URL and the
+  invite); the user unit's in `~/.config/omegacd/agent.env`. `ExecStart=/usr/bin/omegacd agent`, where M6-09's `.deb`
+  puts it: one install path (Q232), and the README's manual steps put it there too.
+- **Q243** The work dir is the units' `RuntimeDirectory=omegacd` with `RuntimeDirectoryPreserve=yes`: systemd removes
+  a runtime directory when its unit stops, which would take the deployed files from under running containers at every
+  Agent restart or upgrade; a reboot still empties it (`/run` is a tmpfs), so plaintext stays in RAM (Q59).
+- **Q244** The user unit has its restore unit too, ordered `Before=docker.service podman-restart.service` in the
+  user's scope: rootless Docker's user `docker.service` (with lingering) and rootless Podman's `podman-restart.service`
+  restart containers at boot before the Agent runs, Q59's case. Each restore unit is `WantedBy=` its engine's units, so
+  it runs whenever the engine starts, not only at boot.
+- **Q245** The system unit is hardened as the Control Plane's (`NoNewPrivileges`, `ProtectSystem=full`, the kernel
+  protections, `RestrictSUIDSGID`, `LockPersonality`) but without `PrivateTmp` or `ProtectHome`: they would show the
+  Agent another `/tmp` or `/home` than the one Docker resolves bind mounts in, breaking path parity (Q21) for work dirs
+  allowed there (Q57).
+- **Q246** The system unit is for Docker (rootful Podman needs root, not a group); Podman Hosts use the user unit. For
+  them `packaging/containers.conf.d/omegacd-agent.conf` sets `events_logger = "file"`, `log_driver = "k8s-file"` and
+  `log_size_max` of 10 MiB; the README says where it goes until the `.deb` (M6-09) and `install.sh` (M6-01) install it.
+- **Q247** M6-03 adds no tab to Add Host (amends Q151 for it): without a package a systemd tab would be some fifteen
+  manual lines, which M6-01's `install.sh` tab replaces two tickets later, installing the `.deb` with these units. Until
+  then the README has the manual steps; Add Host keeps Docker Compose and the command line.
+- **Q248** An e2e, `systemd.sh`, installs the units from `packaging/` with the built binary, deploys an app with a
+  restart policy and a decrypted file it mounts, and reboots in simulation: the Agent and the engine stopped, the work
+  dir emptied, the engine started; the restore unit must run first, so the container comes back with its file, not a
+  root-owned folder; then the Agent reconnects. System unit on rootful Docker, user unit on the test user's native
+  rootless Docker and on rootless Podman. The system unit needs root: the test user has passwordless `sudo` on the
+  test servers (Ansible), as CI's runners have; macOS skips it, and on Linux under `test-all` a missing systemd or sudo
+  fails.
+- **Q249** And a real reboot in the gate: after the suite `test/linux.sh` sets up the system unit and a user unit with
+  an app each, reboots the server, waits for SSH and checks both apps run with their files: only a boot proves the
+  order against `docker.service` starting with the machine. Some two minutes a server; CI can't reboot and has Q248's
+  simulation.
+- **Q250** Native rootless Docker for the test user on the test servers (omegacd-testinfra, Q241): `rootlesskit`, and
+  `dockerd-rootless.sh` from Debian's `docker.io` or, on Ubuntu, whose package lacks it, moby's `contrib/` at the
+  installed Docker's tag; a user `docker.service` with lingering, on `/run/user/1000/docker.sock`. `deploy-compose.sh`
+  gains its rootless Docker variant there.
+- **Q251** "Binary + systemd" drops the Control Plane's v0.1 leftovers, as Q233 does for `install.sh`: the unit's
+  `OMEGACD_SSH_KNOWN_HOSTS` line (the default anyway; the file is optional, Git over SSH only, Q106), the README's
+  `known_hosts` step and its `v0.1.0` download.
+- **Q252** (while building M6-03) Rootless Docker's host network is RootlessKit's namespace, whose loopback isn't the
+  Host's: a container Agent there can't reach a Control Plane on the same machine at `http://127.0.0.1` (Q238 holds for
+  rootful Docker and Podman). It takes the Control Plane's `https://` URL, as a remote one does, and the Agent keeps
+  refusing plain http beyond loopback (Q95); beside its Control Plane on rootless Docker the user unit fits.
+  `deploy-compose.sh`'s rootless Docker variant connects through a TLS front on the server's own address, its private
+  CA in `OMEGACD_AGENT_CA_FILE`.
