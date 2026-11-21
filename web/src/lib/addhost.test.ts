@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { agentCommand, dockerRun, httpWarning, imageTag } from './addhost.ts';
+import { agentCommand, composeAgent, httpWarning, imageTag } from './addhost.ts';
 
 test('the image is this version, a development build the latest release', () => {
 	assert.equal(imageTag('v0.2.0'), '0.2.0');
@@ -15,16 +15,18 @@ test('the commands carry the address and the invite', () => {
 		agentCommand('https://cd.example.com', 'omegacd-invite-x'),
 		'OMEGACD_AGENT_CONTROL_PLANE=https://cd.example.com OMEGACD_AGENT_INVITE=omegacd-invite-x omegacd agent'
 	);
-	const run = dockerRun('https://cd.example.com', 'omegacd-invite-x', 'v0.2.0');
+	const c = composeAgent('https://cd.example.com', 'omegacd-invite-x', 'v0.2.0');
 	for (const want of [
-		'-v /run/omegacd:/run/omegacd',
-		'-v /var/run/docker.sock:/var/run/docker.sock',
-		'-e OMEGACD_AGENT_CONTROL_PLANE=https://cd.example.com',
-		'-e OMEGACD_AGENT_INVITE=omegacd-invite-x',
-		'ghcr.io/obleey/omegacd:0.2.0 agent'
+		'curl -fsSLO https://raw.githubusercontent.com/obleey/omegacd/v0.2.0/deploy/agent.yaml',
+		'OMEGACD_IMAGE=ghcr.io/obleey/omegacd:0.2.0',
+		'OMEGACD_AGENT_CONTROL_PLANE=https://cd.example.com',
+		'OMEGACD_AGENT_INVITE=omegacd-invite-x',
+		'OMEGACD_DOCKER_GID=$(stat -c %g /var/run/docker.sock)',
+		'docker compose up -d'
 	])
-		assert.ok(run.includes(want), want);
-	assert.ok(run.split('\n').slice(0, -1).every((l) => l.endsWith(' \\')), 'one command, continued on every line');
+		assert.ok(c.includes(want), want);
+	assert.ok(!c.includes('ALLOW_ROOT'), 'never root (Q236)');
+	assert.ok(composeAgent('http://127.0.0.1:8080', 'i', '(devel)').includes('/obleey/omegacd/main/deploy/agent.yaml'), 'a development build: main');
 });
 
 test('Agents connect over https, or plain http to their own machine', () => {

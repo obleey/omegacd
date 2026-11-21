@@ -9,11 +9,13 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
+	"golang.org/x/sys/unix"
 
 	"github.com/obleey/omegacd/internal/domain"
 	"github.com/obleey/omegacd/internal/logging"
@@ -119,6 +121,50 @@ func (w *WorkDir) Write(ctx context.Context, a App, r Revision) error {
 	return nil
 }
 
+// mountinfo lists this process's mounts; a variable for tests.
+var mountinfo = "/proc/self/mountinfo"
+
+// Docker and Podman mount a container's hostname and hosts files from a folder named by its ID
+// (…/containers/ID/hostname, …/overlay-containers/ID/userdata/hostname).
+var containerID = regexp.MustCompile(`/([0-9a-f]{64})/(?:userdata/)?(?:hostname|hosts|resolv\.conf) `)
+
+// self is the Agent's own container: its ID from its mounts, so it is found with host networking too, where the
+// hostname is the host's (Q235); else its hostname, which is its ID unless set otherwise.
+func self() string {
+	if b, err := os.ReadFile(mountinfo); err == nil {
+		if m := containerID.FindSubmatch(b); m != nil {
+			return string(m[1])
+		}
+	}
+	h, _ := os.Hostname()
+	return h
+}
+
+// OwnWorkDir gives the work dir root to the Agent's user when it can't write there: Docker made it, owned by root, for
+// the container's bind mount whose source was missing (a RAM work dir after a reboot). Only in a container, through
+// Docker with the Agent's own image, as reclaim does (Q237).
+func OwnWorkDir(ctx context.Context, root string, log *slog.Logger) error {
+	if !inContainer() || unix.Access(root, unix.W_OK) == nil {
+		return nil
+	}
+	log.InfoContext(ctx, "the work dir isn't the Agent's user's: giving it to that user through Docker", "workdir", root)
+	return helper(ctx, root, "", "own "+root, `chown "$1" "$2"`, owner(), root)
+}
+
+// RootlessContainer reports whether the Agent runs in a container of a rootless engine, whose root is the
+// unprivileged user on the host (Q240).
+func RootlessContainer(ctx context.Context, log *slog.Logger) bool {
+	if !inContainer() {
+		return false
+	}
+	e, err := DetectEngine(ctx)
+	if err != nil {
+		log.DebugContext(ctx, "in a container, its engine unreachable: not taken for rootless", "err", err)
+		return false
+	}
+	return e.Rootless
+}
+
 // inContainer reports whether the Agent runs in a container (Docker or Podman).
 func inContainer() bool {
 	for _, f := range []string{"/.dockerenv", "/run/.containerenv"} {
@@ -140,11 +186,10 @@ func CheckPathParity(ctx context.Context, workDir string) error {
 		return err
 	}
 	defer c.Close()
-	self, _ := os.Hostname() // a container's hostname is its ID unless set otherwise
-	insp, err := c.ContainerInspect(ctx, self, client.ContainerInspectOptions{})
+	me := self()
+	insp, err := c.ContainerInspect(ctx, me, client.ContainerInspectOptions{})
 	if err != nil {
-		return fmt.Errorf("checking the work dir's path on the host: can't inspect this container (%s): %w; "+
-			"keep the container's hostname its ID", self, err)
+		return fmt.Errorf("checking the work dir's path on the host: can't inspect this container (%s): %w", me, err)
 	}
 	return pathParity(workDir, insp.Container.Mounts)
 }

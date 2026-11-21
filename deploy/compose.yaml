@@ -1,20 +1,52 @@
-# OmegaCD's Control Plane, in a container. It deploys nothing itself: every Host, this machine included, runs an
-# Agent (README → Hosts). See the README's Install section.
-#   age-keygen -o age.key && chmod 600 age.key && touch known_hosts
+# OmegaCD's Control Plane with its Source Server standalone beside it (Q231), never as root (Q236). It deploys nothing
+# itself: every Host, this machine included, runs an Agent (deploy/agent.yaml; README → Hosts).
 #   docker compose up -d && docker compose logs omegacd | grep "initial admin password"
+# Back up the Master Key (age.key in the omegacd-keys volume) and the Source Server's source.key (source-data) apart
+# from omegacd backup's files: losing them means entering the registry and Git credentials again (Q115).
 # Every setting below has a default; override with environment variables or a .env file next to this one.
 name: omegacd
 
+x-image: &image ${OMEGACD_IMAGE:-ghcr.io/obleey/omegacd:latest} # or pin a release, e.g. ghcr.io/obleey/omegacd:0.2.0
+
 services:
+  # the mTLS certificates between the Control Plane and the Source Server, made once and kept on every later start, so
+  # the two keep trusting each other
+  source-certs:
+    image: *image
+    entrypoint: ["sh", "-c", "[ -s /etc/omegacd/source-tls/ca.pem ] || omegacd source-certs --out /etc/omegacd/source-tls --host source-server"]
+    volumes:
+      - source-tls:/etc/omegacd/source-tls
+
+  source-server:
+    image: *image
+    command: ["source-server"]
+    volumes:
+      - source-data:/data # Git credentials, sealed with source.key there, and the clones
+      - source-tls:/etc/omegacd/source-tls:ro
+    depends_on:
+      source-certs:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
   omegacd:
-    image: ${OMEGACD_IMAGE:-ghcr.io/obleey/omegacd:latest} # or pin a release, e.g. ghcr.io/obleey/omegacd:0.1.0
+    image: *image
     ports:
       - "${OMEGACD_PORT:-8080}:8080"
+    environment:
+      OMEGACD_SOURCE_SERVER: https://source-server:9090
     volumes:
-      - ${OMEGACD_DATA:-omegacd-data}:/data # a named volume, or a folder
-      - ${OMEGACD_AGE_KEY:-./age.key}:/etc/omegacd/age.key:ro
-      - ${OMEGACD_KNOWN_HOSTS:-./known_hosts}:/etc/omegacd/known_hosts:ro # for Git over SSH
+      - ${OMEGACD_DATA:-omegacd-data}:/data # a named volume, or a folder owned by uid 10001
+      - omegacd-keys:/etc/omegacd # the Master Key, made at the first start
+      - source-tls:/etc/omegacd/source-tls:ro
+    depends_on:
+      source-certs:
+        condition: service_completed_successfully
+      source-server: # started first, so a recreated Control Plane looks up its new address, not the old one's
+        condition: service_started
     restart: unless-stopped
 
 volumes:
   omegacd-data:
+  omegacd-keys:
+  source-data:
+  source-tls:

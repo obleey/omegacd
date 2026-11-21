@@ -31,6 +31,8 @@ spec:
     metadata:
       labels: { app.kubernetes.io/name: omegacd }
     spec:
+      # the image's omegacd user (Q236); fsGroup gives it the volume
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001 }
       containers:
         - name: omegacd
           image: ghcr.io/obleey/omegacd:0.1.0-rc.10

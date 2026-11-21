@@ -60,7 +60,7 @@ func New(db *DB, cache *Cache, work *WorkDir, secrets *Secrets, engine domain.En
 	ag := &Agent{db: db, cache: cache, work: work, secrets: secrets, engine: engine, log: cmp.Or(log, logging.Discard),
 		recorded: make(chan struct{}, 1)}
 	if inContainer() {
-		ag.self, _ = os.Hostname() // a container's hostname is its ID's prefix
+		ag.self = self()
 	}
 	ag.reports = &reporter{ag: ag, pending: map[string]bool{}}
 	return ag

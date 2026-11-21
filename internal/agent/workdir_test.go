@@ -11,6 +11,7 @@ import (
 	"github.com/moby/moby/api/types/container"
 
 	"github.com/obleey/omegacd/internal/domain"
+	"github.com/obleey/omegacd/internal/logging"
 )
 
 func newWorkDir(t *testing.T) (*WorkDir, *source, string) {
@@ -218,5 +219,44 @@ func TestWorkDirItCannotCreate(t *testing.T) {
 	err := w.deploy(t, src, App{Name: "web", WorkDir: filepath.Join(locked, "apps")}, "r1", map[string]string{"compose.yaml": "services: {}\n"})
 	if err == nil || !strings.Contains(err.Error(), "sudo install -d -o ") || !strings.Contains(err.Error(), filepath.Join(locked, "apps")) {
 		t.Fatalf("got %v", err)
+	}
+}
+
+// Q235: the Agent's own container by the ID in its mounts (Docker's and Podman's layouts), else its hostname.
+func TestSelf(t *testing.T) {
+	const id = "4f1c0e6a9b2d7c3e8f5a1b6d0c9e2f7a3b8d4c1e6f0a9b2c7d3e8f1a5b0c6d9e"
+	host, _ := os.Hostname()
+	for name, tc := range map[string]struct{ mounts, want string }{
+		"docker": {"612 590 254:1 /var/lib/docker/containers/" + id + "/hostname /etc/hostname rw,relatime - ext4 /dev/vda1 rw\n", id},
+		"rootless podman": {"1095 1073 0:44 /home/ana/.local/share/containers/storage/overlay-containers/" + id +
+			"/userdata/hosts /etc/hosts rw,nosuid - tmpfs tmpfs rw\n", id},
+		"not a container": {"22 1 254:1 / / rw,relatime - ext4 /dev/vda1 rw\n", host},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := filepath.Join(t.TempDir(), "mountinfo")
+			os.WriteFile(f, []byte(tc.mounts), 0o644)
+			old := mountinfo
+			mountinfo = f
+			t.Cleanup(func() { mountinfo = old })
+			if got := self(); got != tc.want {
+				t.Fatalf("self() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// Outside a container neither the rootless exception (Q240) nor the work dir's owner (Q237) applies.
+func TestOutsideAContainer(t *testing.T) {
+	if inContainer() {
+		t.Skip("runs in a container")
+	}
+	if RootlessContainer(t.Context(), logging.Discard) {
+		t.Error("taken for a rootless engine's container")
+	}
+	dir := t.TempDir()
+	os.Chmod(dir, 0o500)
+	t.Cleanup(func() { os.Chmod(dir, 0o700) })
+	if err := OwnWorkDir(t.Context(), dir, logging.Discard); err != nil {
+		t.Error(err)
 	}
 }

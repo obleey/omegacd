@@ -2,7 +2,7 @@
 	// Add Host (M5-01, Q37, Q43): a name, the command that enrolls its Agent with a single-use invite, a live wait for
 	// the Agent, its fingerprint compared, Approve.
 	import { api, enc, errMsg, get } from './api.ts';
-	import { agentCommand, dockerRun, httpWarning } from './addhost.ts';
+	import { agentCommand, composeAgent, httpWarning } from './addhost.ts';
 	import Dialog from './Dialog.svelte';
 	import { when } from './display.svelte.ts';
 	import Icon from './Icon.svelte';
@@ -35,7 +35,7 @@
 	let host = $derived(invite ? live.hosts[name] : undefined);
 	let expired = $derived(!!expiresAt && !host?.fingerprint && now > new Date(expiresAt).getTime());
 	let warning = $derived(httpWarning(url.trim()));
-	let command = $derived(tab === 'cli' ? agentCommand(url.trim(), invite) : dockerRun(url.trim(), invite, version));
+	let command = $derived(tab === 'cli' ? agentCommand(url.trim(), invite) : composeAgent(url.trim(), invite, version));
 
 	async function getInvite(e?: SubmitEvent) {
 		e?.preventDefault();
@@ -59,6 +59,20 @@
 			toast('green', 'Command copied', `Run it on ${name}`);
 		} catch (err) {
 			toastError(err, 'Copying the command failed');
+		}
+	}
+
+	// Cancel: the Host isn't wanted after all; it goes with its invite, and the key of an Agent that enrolled meanwhile
+	async function cancel() {
+		busy = true;
+		try {
+			await api('DELETE', `/settings/hosts/${enc(name)}`);
+			toast('green', `${name} cancelled`, 'Removed with its invite');
+			open = false;
+		} catch (err) {
+			toastError(err, `Cancelling ${name} failed`);
+		} finally {
+			busy = false;
 		}
 	}
 
@@ -97,14 +111,14 @@
 				</div>
 				{#if warning}<p class="warn small" role="alert"><Icon name="alert" size={14} />{warning}</p>{/if}
 				<div class="seg" role="group" aria-label="How to run the Agent">
-					<button type="button" aria-pressed={tab === 'docker'} onclick={() => (tab = 'docker')}><Icon name="container" size={15} />Docker</button>
+					<button type="button" aria-pressed={tab === 'docker'} onclick={() => (tab = 'docker')}><Icon name="container" size={15} />Docker Compose</button>
 					<button type="button" aria-pressed={tab === 'cli'} onclick={() => (tab = 'cli')}><Icon name="terminal" size={15} />Command line</button>
 				</div>
 				<pre class="cmd">{command}</pre>
 				<div class="row">
 					<button type="button" class="primary" onclick={copy}><Icon name="file-text" size={15} />Copy</button>
 					<span class="muted small">
-						{#if tab === 'cli'}With <code>omegacd</code> installed on {name}; as a user in the <code>docker</code> group, or with rootless Docker or Podman.{:else}The invite is single-use and valid until {when(expiresAt, 'time')}.{/if}
+						{#if tab === 'cli'}With <code>omegacd</code> installed on {name}; as a user in the <code>docker</code> group, or with rootless Docker or Podman.{:else}On {name}, as a user in the <code>docker</code> group; rootless Docker or Podman: the lines in <code>agent.yaml</code>'s comment. The invite is single-use and valid until {when(expiresAt, 'time')}.{/if}
 					</span>
 				</div>
 			</li>
@@ -129,8 +143,11 @@
 		{#if !invite}
 			<button type="button" onclick={() => (open = false)}>Cancel</button>
 			<button type="submit" form="addhost" class="primary" disabled={busy}>Next</button>
+		{:else if host?.approved}
+			<button type="button" class="primary" onclick={() => (open = false)}>Done</button>
 		{:else}
-			<button type="button" onclick={() => (open = false)}>{host?.approved ? 'Done' : 'Close'}</button>
+			<button type="button" class="danger" onclick={cancel} disabled={busy} title="Remove {name} and its invite">Cancel</button>
+			<button type="button" onclick={() => (open = false)} title="Keep {name} waiting for its Agent; its card has the rest">Close</button>
 		{/if}
 	{/snippet}
 </Dialog>

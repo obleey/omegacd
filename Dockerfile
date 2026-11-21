@@ -27,9 +27,15 @@ LABEL org.opencontainers.image.title="OmegaCD" \
       org.opencontainers.image.url="https://github.com/obleey/omegacd" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.version="${VERSION}"
-# Git over SSH goes through go-git: no ssh binary (Q106)
-RUN apk add --no-cache ca-certificates
+# Git over SSH goes through go-git: no ssh binary (Q106). Never root (Q236): its folders are the omegacd user's, so a new
+# named volume mounted on one is too; the Agent's container joins the engine socket's group (deploy/agent.yaml)
+RUN apk add --no-cache ca-certificates && \
+    addgroup -S -g 10001 omegacd && adduser -S -D -H -u 10001 -G omegacd -h /data omegacd && \
+    mkdir -p /data /etc/omegacd/source-tls /var/lib/omegacd-agent && \
+    chown omegacd:omegacd /data /etc/omegacd /etc/omegacd/source-tls /var/lib/omegacd-agent
+# tests swap this stage for a binary of their own: docker buildx build --build-context go=DIR
 COPY --from=go /omegacd /usr/local/bin/omegacd
+USER omegacd
 VOLUME /data
 EXPOSE 8080
 ENTRYPOINT ["omegacd"]

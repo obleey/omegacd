@@ -90,10 +90,7 @@ stop:
 # Runs OmegaCD as a container (deploy/compose.yaml) from this checkout, with the same data as `make run`; stop
 # `make run` first, both use port 8080.
 up: docker
-	touch data/known_hosts
-	OMEGACD_IMAGE=omegacd:$(VERSION) OMEGACD_DATA=$(CURDIR)/data \
-	OMEGACD_AGE_KEY=$(CURDIR)/data/age.key OMEGACD_KNOWN_HOSTS=$(CURDIR)/data/known_hosts \
-	docker compose -f deploy/compose.yaml up -d
+	OMEGACD_IMAGE=omegacd:$(VERSION) docker compose -f deploy/compose.yaml up -d
 
 down:
 	docker compose -f deploy/compose.yaml down

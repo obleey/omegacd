@@ -170,40 +170,49 @@ func reclaim(ctx context.Context, root, dir, image string) error {
 		p, rel = filepath.Join(p, first), cmp.Or(rest, ".")
 		chown = append(chown, p)
 	}
+	return helper(ctx, root, image, "reclaim "+dir,
+		`find "$1" -mindepth 1 -depth -type d -empty -delete && owner=$2 && shift 2 && chown "$owner" "$@"`,
+		append([]string{dir, owner()}, chown...)...)
+}
+
+// owner is the Agent's user and group, for chown.
+func owner() string { return fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()) }
+
+// helper runs script with args as root in a short-lived container of image (the Agent's own when empty: it is local,
+// so this works offline) with root bind-mounted at its own path; what names it in errors.
+func helper(ctx context.Context, root, image, what, script string, args ...string) error {
 	c, err := client.New(client.FromEnv)
 	if err != nil {
 		return err
 	}
 	defer c.Close()
 	if image == "" {
-		self, _ := os.Hostname()
-		insp, err := c.ContainerInspect(ctx, self, client.ContainerInspectOptions{})
+		insp, err := c.ContainerInspect(ctx, self(), client.ContainerInspectOptions{})
 		if err != nil {
 			return err
 		}
 		image = insp.Container.Config.Image
 	}
 	created, err := c.ContainerCreate(ctx, client.ContainerCreateOptions{
-		Config: &container.Config{Image: image, User: "0", Labels: map[string]string{"dev.omegacd.agent": "reclaim"},
-			Entrypoint: append([]string{"sh", "-c", `find "$1" -mindepth 1 -depth -type d -empty -delete && owner=$2 && shift 2 && chown "$owner" "$@"`,
-				"reclaim", dir, fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())}, chown...)},
+		Config: &container.Config{Image: image, User: "0", Labels: map[string]string{"dev.omegacd.agent": "helper"},
+			Entrypoint: append([]string{"sh", "-c", script, "helper"}, args...)},
 		HostConfig: &container.HostConfig{Binds: []string{root + ":" + root}},
 	})
 	if err != nil {
-		return fmt.Errorf("reclaim %s: %w", dir, err)
+		return fmt.Errorf("%s: %w", what, err)
 	}
 	defer c.ContainerRemove(context.Background(), created.ID, client.ContainerRemoveOptions{Force: true})
 	if _, err := c.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
-		return fmt.Errorf("reclaim %s: %w", dir, err)
+		return fmt.Errorf("%s: %w", what, err)
 	}
 	wait := c.ContainerWait(ctx, created.ID, client.ContainerWaitOptions{})
 	select {
 	case res := <-wait.Result:
 		if res.StatusCode != 0 {
-			return fmt.Errorf("reclaim %s: exit %d", dir, res.StatusCode)
+			return fmt.Errorf("%s: exit %d", what, res.StatusCode)
 		}
 	case err := <-wait.Error:
-		return fmt.Errorf("reclaim %s: %w", dir, err)
+		return fmt.Errorf("%s: %w", what, err)
 	}
 	return nil
 }
