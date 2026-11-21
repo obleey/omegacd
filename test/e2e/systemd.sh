@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# End-to-end: the Agent's systemd units from packaging/ (M6-03) as an operator installs them, this checkout's binary in
-# a drop-in: the system unit as the omegacd-agent user in the docker group on rootful Docker (Q242), the user unit on the
-# test user's rootless Docker and rootless Podman (Q244, Q246). Each enrolls, deploys an app with a restart policy that
-# mounts a decrypted file, keeps its work dir across an Agent restart (Q243), and comes through a simulated reboot: the
-# Agent and engine stopped, the RAM work dir emptied, the engine started, which runs the restore unit first, so the
-# container starts again with its file (Q59, Q248). Linux with systemd and passwordless sudo; the system unit changes the
-# machine (a user, /etc/omegacd, units), so it runs on the test servers and CI's runners.
+# End-to-end: the .deb (M6-09) with this checkout's binary, and the Agent's systemd units in it (M6-03) as an operator
+# uses them, a drop-in only logging at debug and collecting coverage: the system unit as the omegacd-agent user in the
+# docker group on rootful Docker (Q242), the user unit on the test user's rootless Docker and rootless Podman (Q244,
+# Q246). Each enrolls, deploys an app with a restart policy that mounts a decrypted file, keeps its work dir across an
+# Agent restart (Q243), and comes through a simulated reboot: the Agent and engine stopped, the RAM work dir emptied, the
+# engine started, which runs the restore unit first, so the container starts again with its file (Q59, Q248). Then the
+# package: an upgrade restarts the Agents under the running app (Q256), remove keeps the state, a reinstall starts the
+# Agent again, the Control Plane's unit runs, and purge leaves nothing of the Agent's (Q257, Q260). Linux with systemd,
+# apt and passwordless sudo; it changes the machine (a package, users), so it runs on the test servers and CI's runners.
 #
 # OMEGACD_E2E_REBOOT=clean removes what an aborted run left. =setup leaves the system unit and the rootless Docker user unit installed with an app each, for a
 # real reboot (test/linux.sh, Q249); =check then checks both apps came back with their files, and removes it all.
@@ -14,6 +16,10 @@ ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 BIN=${OMEGACD_BIN:-$ROOT/bin/omegacd}
 REBOOT=${OMEGACD_E2E_REBOOT:-}
 if [ "$(uname)" != Linux ] || ! command -v systemctl >/dev/null; then echo "SKIP  no systemd (Linux only)"; exit 0; fi
+if ! command -v apt-get >/dev/null; then
+  [ -z "${OMEGACD_TEST_ALL:-}" ] || { echo "FAIL  apt, which installs the .deb (Q260)"; exit 1; }
+  echo "SKIP  no apt"; exit 0
+fi
 if ! sudo -n true 2>/dev/null; then
   [ -z "${OMEGACD_TEST_ALL:-}" ] || { echo "FAIL  passwordless sudo, which installing the system unit needs (Q248)"; exit 1; }
   echo "SKIP  no passwordless sudo"; exit 0
@@ -21,7 +27,8 @@ fi
 export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
 T=/var/tmp/omegacd-e2ey # one path, on disk, which a real reboot's check finds again
 [ "$REBOOT" = check ] || { sudo rm -rf "$T"; mkdir -p "$T/repo" "$T/data"; }
-REPO=$T/repo API=http://127.0.0.1:18080/api EBIN=/usr/local/bin/omegacd-e2e
+REPO=$T/repo API=http://127.0.0.1:18080/api
+COV=/var/lib/omegacd-e2e-cov # where the units' processes write coverage: the Control Plane's has its own /var/tmp
 SD=/etc/systemd/system UD=$HOME/.config/systemd/user USTATE=$HOME/.local/share/omegacd-agent
 DSOCK=$XDG_RUNTIME_DIR/docker.sock PSOCK=$XDG_RUNTIME_DIR/podman/podman.sock
 fail=0
@@ -34,14 +41,19 @@ ctr() { DOCKER_HOST=$2 docker ps -q --filter label=com.docker.compose.project="$
 # the file the app's container reads: the decrypted secret, restored (a folder Docker made can't be cat)
 shows() { [ "$(DOCKER_HOST=$2 docker exec "$(ctr "$1" "$2")" cat /run/secrets/token 2>/dev/null)" = "TOKEN=$SECRET" ]; }
 mono() { "$@" | tr -dc 0-9; } # a unit's monotonic timestamp, from systemctl show -p … --value
+# a system user, which the test removes after itself: the test servers' own login is omegacd too (the package's
+# Control Plane then runs as it), never removed
+sysuser() { local uid; uid=$(id -u "$1" 2>/dev/null) && [ "$uid" -lt 1000 ]; }
+apt() { sudo DEBIAN_FRONTEND=noninteractive apt-get -y -q "$@" >> "$T/apt.log" 2>&1; }
 uninstall() {
-  sudo systemctl disable --now omegacd-agent.service omegacd-agent-restore.service >/dev/null 2>&1
-  sudo rm -rf $SD/omegacd-agent.service $SD/omegacd-agent-restore.service $SD/omegacd-agent.service.d \
-    $SD/omegacd-agent-restore.service.d /etc/omegacd/agent.env /var/lib/omegacd-agent /run/omegacd
-  sudo rmdir /etc/omegacd 2>/dev/null
-  sudo systemctl daemon-reload
-  id omegacd-agent >/dev/null 2>&1 && sudo userdel omegacd-agent
   uunits
+  sudo rm -rf $SD/omegacd.service.d $SD/omegacd-agent.service.d $SD/omegacd-agent-restore.service.d
+  sudo DEBIAN_FRONTEND=noninteractive apt-get -y -q purge omegacd >/dev/null 2>&1
+  # what's left: the Control Plane's data and Master Key, kept by purge; units and a user of M6-03's manual install
+  sudo rm -rf $SD/omegacd-agent.service $SD/omegacd-agent-restore.service /etc/omegacd /var/lib/omegacd \
+    /var/lib/omegacd-agent /run/omegacd
+  sudo systemctl daemon-reload
+  for u in omegacd-agent omegacd; do ! sysuser $u || sudo userdel $u; done
   rm -f "$HOME/.config/containers/containers.conf.d/omegacd-agent.conf"
   for s in "unix://$DSOCK" "unix://$PSOCK" ""; do
     for p in e2e-sys e2e-rl e2e-pm; do
@@ -49,7 +61,7 @@ uninstall() {
       [ -z "$ids" ] || DOCKER_HOST=$s docker rm -f $ids >/dev/null 2>&1
     done
   done
-  sudo rm -f "$EBIN"
+  sudo rm -f /usr/local/bin/omegacd-e2e # M6-03's
 }
 uunits() { # the user unit gone, and its state, before the next engine's
   systemctl --user disable --now omegacd-agent.service omegacd-agent-restore.service >/dev/null 2>&1
@@ -61,12 +73,12 @@ cleanup() {
   [ -z "${SRV:-}" ] || { kill $SRV 2>/dev/null; wait $SRV 2>/dev/null; }
   [ "$REBOOT" = setup ] && [ $fail -eq 0 ] && return # left for the reboot
   # coverage the units' processes wrote, as their users, where this run collects it
-  [ -z "${GOCOVERDIR:-}" ] || cp "$T"/cov/* "$GOCOVERDIR"/ 2>/dev/null
-  uninstall; sudo rm -rf "$T"
+  [ -z "${GOCOVERDIR:-}" ] || cp $COV/* "$GOCOVERDIR"/ 2>/dev/null
+  uninstall; sudo rm -rf "$T" $COV
 }
 trap cleanup EXIT
 
-if [ "$REBOOT" = clean ]; then uninstall; sudo rm -rf "$T"; trap - EXIT; exit 0; fi # test/linux.sh's stop
+if [ "$REBOOT" = clean ]; then uninstall; sudo rm -rf "$T" $COV; trap - EXIT; exit 0; fi # test/linux.sh's stop
 if [ "$REBOOT" = check ]; then
   SECRET=$(cat "$T/secret")
   check "after a real reboot the system unit's app runs with its file, restored before Docker started it" \
@@ -79,10 +91,14 @@ if [ "$REBOOT" = check ]; then
 fi
 
 uninstall # what an aborted run left
-sudo install -m 0755 "$BIN" "$EBIN" # the binary where the Agent's user can run it (homes are closed to others)
-mkdir -p "$T/cov" && chmod 0755 "$T" && chmod 1777 "$T/cov"
-# the units as shipped; a drop-in only swaps the binary, logs at debug and collects coverage
-dropin() { printf '[Service]\nExecStart=\nExecStart=%s %s\nEnvironment=OMEGACD_LOG_LEVEL=debug GOCOVERDIR=%s\n' "$EBIN" "$1" "$T/cov"; }
+sudo rm -rf $COV && sudo install -d -m 1777 $COV
+# this checkout as a package, twice: a newer version to upgrade to
+for v in 1 2; do
+  make -s -C "$ROOT" deb DEB_BIN="$BIN" VERSION=v0.0.1-e2e.$v DEB_OUT="$T/omegacd-$v.deb" >> "$T/apt.log" 2>&1 ||
+    { echo "FAIL  make deb"; tail -5 "$T/apt.log"; exit 1; }
+done
+# the units as shipped; a drop-in only logs at debug and collects coverage
+dropin() { printf '[Service]\nEnvironment=OMEGACD_LOG_LEVEL=debug GOCOVERDIR=%s\n' $COV; }
 
 SECRET=$(openssl rand -hex 12) && echo "$SECRET" > "$T/secret"
 PW=$(openssl rand -hex 12)
@@ -113,20 +129,18 @@ deploy() {
 }
 connected() { $1 | grep -c "connected to the Control Plane, approved"; }
 
-# --- the system unit, rootful Docker (Q242)
+# --- the package, and its system unit on rootful Docker (Q242, Q255)
 START=$(date +%s)
-sudo useradd --system --home-dir /var/lib/omegacd-agent --shell /usr/sbin/nologin --groups docker omegacd-agent
+apt install "$T/omegacd-1.deb"
+check "the package installs: the Agent's user in the docker group, its units enabled, not started without agent.env" \
+  'id -nG omegacd-agent | grep -qw docker && systemctl -q is-enabled omegacd-agent omegacd-agent-restore && ! systemctl -q is-active omegacd-agent && ! systemctl -q is-enabled omegacd || { tail -20 "$T/apt.log"; false; }'
 INVITE=$("$BIN" host add sys | grep -o 'omegacd-invite-[0-9a-f]*' | head -1)
-sudo install -d -m 0755 /etc/omegacd
 printf 'OMEGACD_AGENT_CONTROL_PLANE=%s\nOMEGACD_AGENT_INVITE=%s\n' http://127.0.0.1:18080 "$INVITE" |
   sudo install -m 0640 -g omegacd-agent /dev/stdin /etc/omegacd/agent.env # as the README has it
-sudo cp "$ROOT/packaging/omegacd-agent.service" "$ROOT/packaging/omegacd-agent-restore.service" $SD/
 sudo mkdir -p $SD/omegacd-agent.service.d $SD/omegacd-agent-restore.service.d
-dropin agent | sudo tee $SD/omegacd-agent.service.d/e2e.conf >/dev/null
-dropin "agent restore --files" | sudo tee $SD/omegacd-agent-restore.service.d/e2e.conf >/dev/null
+dropin | sudo tee $SD/omegacd-agent.service.d/e2e.conf $SD/omegacd-agent-restore.service.d/e2e.conf >/dev/null
 sudo systemctl daemon-reload
-sudo systemctl enable omegacd-agent-restore.service >/dev/null 2>&1 # with Docker; nothing to restore yet: skipped
-sudo systemctl enable --now omegacd-agent.service >/dev/null 2>&1
+sudo systemctl start omegacd-agent.service
 check "the system unit starts the Agent as omegacd-agent, not root, and it enrolls" \
   'waitfor "syslog | grep -q \"waiting for an admin to approve\"" && [ "$(ps -o uid= -p "$(systemctl show -p MainPID --value omegacd-agent)" | tr -d " ")" = "$(id -u omegacd-agent)" ]'
 approve sys syslog
@@ -161,9 +175,7 @@ user_unit() {
   local engine=$1 app=$2 sock=$3
   START=$(date +%s)
   mkdir -p "$UD/omegacd-agent.service.d" "$UD/omegacd-agent-restore.service.d" "$HOME/.config/omegacd"
-  cp "$ROOT/packaging/user/omegacd-agent.service" "$ROOT/packaging/user/omegacd-agent-restore.service" "$UD/"
-  dropin agent > "$UD/omegacd-agent.service.d/e2e.conf"
-  dropin "agent restore --files" > "$UD/omegacd-agent-restore.service.d/e2e.conf"
+  dropin | tee "$UD/omegacd-agent.service.d/e2e.conf" "$UD/omegacd-agent-restore.service.d/e2e.conf" >/dev/null
   INVITE=$("$BIN" host add "$app" | grep -o 'omegacd-invite-[0-9a-f]*' | head -1)
   (umask 077 && printf 'OMEGACD_AGENT_CONTROL_PLANE=http://127.0.0.1:18080\nOMEGACD_AGENT_INVITE=%s\nDOCKER_HOST=unix://%s\n' \
     "$INVITE" "$sock" > "$HOME/.config/omegacd/agent.env")
@@ -191,6 +203,19 @@ if usersd "$DSOCK"; then
       'waitfor "shows e2e-rl unix://$DSOCK" 60 && [ "$(mono systemctl --user show -p ExecMainExitTimestampMonotonic --value omegacd-agent-restore)" -lt "$(mono systemctl --user show -p ExecMainStartTimestampMonotonic --value docker)" ]'
     systemctl --user start omegacd-agent
     check "rootless Docker: the Agent reconnects" 'waitfor "[ \$(connected ulog) -gt $n ]" 90'
+  fi
+fi
+
+if [ "$REBOOT" != setup ]; then
+  # Q256: an upgrade restarts the running Agents on the new binary, the lingering user's too; the app runs on
+  pid() { $1 show -p MainPID --value omegacd-agent; }
+  sp=$(pid systemctl) up=$(pid "systemctl --user") app=$(ctr e2e-sys "") n=$(connected syslog)
+  usersd "$DSOCK" && un=$(connected ulog)
+  apt install "$T/omegacd-2.deb"
+  check "an upgrade restarts the system Agent, which reconnects with its key, while the app's container runs on" \
+    '[ "$(dpkg-query -W -f "\${Version}" omegacd)" = 0.0.1~e2e.2 ] && [ "$(pid systemctl)" != "$sp" ] && waitfor "[ \$(connected syslog) -gt $n ]" 90 && [ "$(ctr e2e-sys "")" = "$app" ] && shows e2e-sys ""'
+  if usersd "$DSOCK"; then
+    check "and the lingering user's Agent" '[ "$(pid "systemctl --user")" != "$up" ] && waitfor "[ \$(connected ulog) -gt $un ]" 90'
     "$BIN" app delete e2e-rl --yes >/dev/null 2>&1
     uunits
   fi
@@ -215,7 +240,32 @@ if [ "$REBOOT" != setup ] && usersd "$PSOCK"; then
   check "rootless Podman: the Agent reconnects" 'waitfor "[ \$(connected ulog) -gt $n ]" 90'
   "$BIN" app delete e2e-pm --yes >/dev/null 2>&1
   systemctl --user stop podman-restart.service
+fi
+
+if [ "$REBOOT" != setup ]; then
+  # Q257: remove stops the Agent and keeps its state; installed again, it starts by itself with it
+  n=$(connected syslog)
+  apt remove omegacd
+  check "apt remove stops the Agents, the user's too, and takes the binary, keeping its user, state and agent.env" \
+    '! systemctl -q is-active omegacd-agent && ! systemctl --user -q is-active omegacd-agent && [ ! -e /usr/bin/omegacd ] && id omegacd-agent >/dev/null && sudo test -f /var/lib/omegacd-agent/host.key && sudo test -f /etc/omegacd/agent.env'
   uunits
+  apt install "$T/omegacd-2.deb"
+  check "installed again, the Agent starts by itself and reconnects with its key" 'waitfor "[ \$(connected syslog) -gt $n ]" 90'
+
+  # the Control Plane's unit (Q253, Q254): not enabled by the package; enabled, it makes its Master Key in its folder
+  sudo mkdir -p $SD/omegacd.service.d && dropin | sudo tee $SD/omegacd.service.d/e2e.conf >/dev/null
+  printf 'OMEGACD_ADDR=127.0.0.1:18081\nOMEGACD_POLL_INTERVAL=1h\n' | sudo install -m 0600 /dev/stdin /etc/omegacd/omegacd.env
+  sudo systemctl daemon-reload && sudo systemctl enable --now omegacd >/dev/null 2>&1
+  check "the Control Plane's unit runs as omegacd, its Master Key made in /etc/omegacd/keys" \
+    'waitfor "curl -sf http://127.0.0.1:18081/api/version >/dev/null" && [ "$(sudo stat -c "%U %a" /etc/omegacd/keys/age.key)" = "omegacd 600" ] || { sudo journalctl -u omegacd -o cat | tail -10; false; }'
+
+  sudo rm -rf $SD/omegacd.service.d $SD/omegacd-agent.service.d $SD/omegacd-agent-restore.service.d
+  OMEGACD_UID=$(id -u omegacd) # a system user, or the test servers' own login
+  out=$(sudo DEBIAN_FRONTEND=noninteractive apt-get -y -q purge omegacd 2>&1)
+  check "apt purge leaves no unit or folder of the Agent's, and its users (Q261)" \
+    '[ -z "$(find /usr/lib/systemd /etc/systemd/system /usr/share/omegacd /usr/lib/sysusers.d -name "*omegacd*" 2>/dev/null)" ] && sysuser omegacd-agent && [ "$(id -u omegacd)" = "$OMEGACD_UID" ] && sudo test ! -e /var/lib/omegacd-agent -a ! -e /etc/omegacd/agent.env -a ! -e /run/omegacd || { echo "$out"; false; }'
+  check "and keeps the Control Plane's data and Master Key, saying so" \
+    'sudo test -d /var/lib/omegacd -a -f /etc/omegacd/keys/age.key && echo "$out" | grep -q "kept /var/lib/omegacd"'
 fi
 
 check "no secret or password in the logs (Q62)" \

@@ -1,0 +1,15 @@
+#!/bin/sh
+# purge: no unit or folder of the Agent's left; the Control Plane's data and Master Key stay, and both system users, as
+# Debian's packages leave theirs: a deleted user's uid, reused, would own what it left (the Master Key) (Q257, Q261)
+set -e
+[ ! -d /run/systemd/system ] || systemctl daemon-reload
+[ "$1" = purge ] || exit 0
+deb-systemd-helper purge omegacd-agent.service omegacd-agent-restore.service >/dev/null || true
+rm -f /etc/systemd/system/*.wants/omegacd.service # enabled by the admin
+rm -rf /var/lib/omegacd-agent /run/omegacd /etc/omegacd/agent.env
+rmdir /etc/omegacd/keys /etc/omegacd 2>/dev/null || true
+[ ! -d /run/systemd/system ] || systemctl daemon-reload
+for d in /var/lib/omegacd /etc/omegacd/keys; do
+  [ ! -e $d ] || echo "omegacd: kept $d, the Control Plane's data and Master Key: remove it by hand if no longer needed"
+done
+echo "omegacd: kept the system users omegacd and omegacd-agent"

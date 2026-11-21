@@ -1,0 +1,22 @@
+#!/bin/sh
+# configure [OLD-VERSION]: the users and folders, the Agent's system units enabled (an admin's disable kept), and on an
+# upgrade what ran restarted on the new binary, the lingering users' Agents too (Q255, Q256)
+set -e
+[ "$1" = configure ] || exit 0
+systemd-sysusers omegacd.conf
+install -d -m 0755 /etc/omegacd
+install -d -m 0700 -o omegacd -g omegacd /etc/omegacd/keys
+for u in omegacd-agent.service omegacd-agent-restore.service; do
+  if deb-systemd-helper --quiet was-enabled $u; then deb-systemd-helper enable $u; else deb-systemd-helper update-state $u; fi
+done
+[ -d /run/systemd/system ] || exit 0 # no systemd running (a container, a chroot)
+systemctl daemon-reload
+systemctl try-restart omegacd.service omegacd-agent.service
+# a first install, or one after the admin wrote agent.env: start it, unless the admin disabled it
+if [ -f /etc/omegacd/agent.env ] && systemctl -q is-enabled omegacd-agent.service && ! systemctl -q is-active omegacd-agent.service; then
+  systemctl start omegacd-agent.service
+fi
+for u in $(ls /var/lib/systemd/linger 2>/dev/null); do
+  systemctl --user -M "$u@" daemon-reload 2>/dev/null || continue
+  systemctl --user -M "$u@" try-restart omegacd-agent.service || true
+done

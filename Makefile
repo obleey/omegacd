@@ -1,4 +1,4 @@
-.PHONY: build web proto test test-integration test-engines test-all test-linux cover cover-profiles gate e2e docker run stop up down clean
+.PHONY: build web proto deb test test-integration test-engines test-all test-linux cover cover-profiles gate e2e docker run stop up down clean
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/obleey/omegacd/internal/version.Version=$(VERSION)
@@ -14,6 +14,16 @@ BUF := go run github.com/bufbuild/buf/cmd/buf@v1.75.0
 proto:
 	$(BUF) lint
 	$(BUF) generate
+
+# the .deb (M6-09, Q258): DEB_BIN (default: a Linux build of this checkout for DEB_ARCH) with packaging/'s units, into
+# DEB_OUT (a folder ending in /, or a file name)
+NFPM := go run github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
+DEB_ARCH ?= $(shell go env GOARCH)
+DEB_OUT ?= bin/
+deb:
+	mkdir -p bin/deb
+	$(if $(DEB_BIN),install -m 0755 $(DEB_BIN) bin/deb/omegacd,CGO_ENABLED=0 GOOS=linux GOARCH=$(DEB_ARCH) go build -trimpath -ldflags "$(LDFLAGS)" -o bin/deb/omegacd ./cmd/omegacd)
+	VERSION=$(VERSION) ARCH=$(DEB_ARCH) $(NFPM) package -f packaging/nfpm.yaml -p deb -t $(DEB_OUT)
 
 test:
 	go test ./...

@@ -5,6 +5,8 @@ Description=OmegaCD Agent: deploys this Host's Applications
 Documentation=https://github.com/obleey/omegacd
 After=network-online.target docker.service omegacd-agent-restore.service
 Wants=network-online.target omegacd-agent-restore.service
+# enabled by the package (Q255): a machine without the file (a Podman Host, a Control Plane alone) skips it
+ConditionPathExists=/etc/omegacd/agent.env
 
 [Service]
 Type=simple

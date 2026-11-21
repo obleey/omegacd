@@ -1,0 +1,36 @@
+# The .deb (M6-09, Q253): make deb, or the release workflow. VERSION (a tag: v0.2.0-rc.1 becomes 0.2.0~rc.1), ARCH
+# (amd64, arm64) come from the environment; the binary is bin/deb/omegacd (nfpm expands no variable in a path).
+name: omegacd
+version: ${VERSION}
+arch: ${ARCH}
+platform: linux
+section: admin
+maintainer: Miha Oblišar <miha.oblishar@gmail.com>
+homepage: https://github.com/obleey/omegacd
+license: Apache-2.0
+description: |-
+  GitOps continuous delivery for Docker Compose hosts
+  The omegacd binary (Control Plane, Agent, Source Server and CLI) with systemd units: the Agent's, enabled, which
+  starts once /etc/omegacd/agent.env exists; the Control Plane's and the Agent's user units, not enabled.
+contents:
+  - src: bin/deb/omegacd
+    dst: /usr/bin/omegacd
+    file_info: {mode: 0755}
+  - src: packaging/omegacd.service
+    dst: /usr/lib/systemd/system/omegacd.service
+  - src: packaging/omegacd-agent.service
+    dst: /usr/lib/systemd/system/omegacd-agent.service
+  - src: packaging/omegacd-agent-restore.service
+    dst: /usr/lib/systemd/system/omegacd-agent-restore.service
+  - src: packaging/user/omegacd-agent.service
+    dst: /usr/lib/systemd/user/omegacd-agent.service
+  - src: packaging/user/omegacd-agent-restore.service
+    dst: /usr/lib/systemd/user/omegacd-agent-restore.service
+  - src: packaging/containers.conf.d/omegacd-agent.conf
+    dst: /usr/share/omegacd/containers.conf.d/omegacd-agent.conf
+  - src: packaging/deb/sysusers.conf
+    dst: /usr/lib/sysusers.d/omegacd.conf
+scripts:
+  postinstall: packaging/deb/postinst
+  preremove: packaging/deb/prerm
+  postremove: packaging/deb/postrm
