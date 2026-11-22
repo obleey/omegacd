@@ -3,7 +3,7 @@
 Getting a Control Plane and Agents running anywhere, and moving existing stacks in.
 See [architecture](../architecture.md#install-q10-q21-q26-q33-q35-q51).
 
-Order (Q229): M6-02, M6-03, M6-09, M6-01, M6-04, M6-06, M6-08, M6-05, then M6-10.
+Order (Q229): M6-02, M6-03, M6-09, M6-01, M6-04 (deferred, Q276), M6-06, M6-08, M6-05, then M6-10.
 
 ### M6-01 · install.sh: full and agent modes
 **Status:** done (2026-11-22, PR #158)
@@ -22,7 +22,7 @@ Its agent-mode one-liner is a tab of the UI's Add Host dialog, with the invite f
 
 Agent mode installs the `.deb` (M6-09) where apt is there, the system unit with a docker-group user or, on a rootless
 engine, the package's user unit with lingering; the container (`deploy/agent.yaml`) when asked or without apt (Q232).
-Full mode keeps compose and kubernetes, and drops v0.1's `age-keygen` step, `known_hosts` file and "Master Key for
+Full mode keeps compose and kubernetes (kubernetes dropped for v0.2, Q276), and drops v0.1's `age-keygen` step, `known_hosts` file and "Master Key for
 .sops.yaml" line; it ends with "open the UI and add a Host" (Q233). It installs the version it was released with: the
 release workflow attaches it to each GitHub Release with the version filled in, and tests point it at local builds
 (Q234).
@@ -103,19 +103,18 @@ the rootless user unit's test needs, and with it `deploy-compose.sh`'s rootless 
 Docker.
 
 ### M6-04 · Kubernetes
-**Status:** todo
+**Status:** deferred: after v0.2 (Q276, 2026-11-22; ROADMAP)
 **Depends on:** M1-05
 
-`deploy/kubernetes.yaml`: Control Plane + Source Server (separate pods, mTLS between), no Agent (Q33, Q104).
+`deploy/kubernetes.yaml`: Control Plane + Source Server (separate pods, mTLS between), no Agent (Q33, Q104), and
+`install.sh`'s `kubernetes` target for it.
 
-From M6-03 (Q251): its README section and `deploy/kubernetes.yaml` still have v0.1's keys secret, an `age.key` made
-beforehand and a required `known_hosts` (`--from-file=age.key --from-file=known_hosts`); v0.2's Control Plane makes
-its Master Key (Q115) and `known_hosts` is optional (Git over SSH only, Q106).
+Deferred (Q276): v0.2 is for Docker hosts, and dropped v0.1's manifest, the `kubernetes` target and the README's
+Kubernetes option. Designed before the deferral (Q270–Q275) and built on the branch `park/m6-04-kubernetes`: the
+manifest, the target making the certificates Secret in a pod of the image, and `test/e2e/kubernetes.sh`, passing on
+OrbStack; still to do there: the run in kind on the Linux servers and CI, the README section and TESTING.md.
 
-From M6-01 (Q262): `install.sh`'s kubernetes target still makes the keys Secret (`keygen`, `known_hosts`) for that
-manifest; drop the step with it, and test the target here.
-
-**Done when:** installs in OrbStack's Kubernetes and manages a remote Agent.
+**Done when:** installs in OrbStack's Kubernetes and in kind on every Linux target, and manages a remote Agent.
 
 ### M6-05 · import through the Agent
 **Status:** todo

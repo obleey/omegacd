@@ -7,7 +7,7 @@ itself, and a separate **Source Server** owns Git and rendering. v0.1 (push over
 | Read | For |
 | --- | --- |
 | [architecture.md](architecture.md) | the decided design: components, trust boundaries, flows, protocol, UI, install |
-| [decisions.md](decisions.md) | every design decision (Q1–Q269) with its outcome: the "why" |
+| [decisions.md](decisions.md) | every design decision (Q1–Q276) with its outcome: the "why" |
 | [milestones/](milestones/) | the work, as tickets with dependencies and "done when" |
 | [../adr/](../adr/) | the hard-to-reverse decisions (0003–0006) |
 | [../../GLOSSARY.md](../../GLOSSARY.md) | the vocabulary: Host, Agent, Control Plane, Source Server, Enrollment, … |
@@ -29,7 +29,7 @@ M4-01 (Q79); M4's order is M4-01, M3-06, M4-08, M4-09 (coverage, Q96), M4-02, M4
 | M3 | [Connection](milestones/M3-connection.md): WebSocket, enrollment, signed challenges, version handshake, IP allowlist, resync | 6 |
 | M4 | [Control Plane in pull mode](milestones/M4-control-plane-pull.md): Sync and status through Agents, Source Server for Git, the Control Plane's machine through a normal Agent, delete push, DR; deletes, registry credentials and live progress through Agents; coverage: measured combined, then 100% of all code; a new Revision's Diff on the Agent | 11 |
 | M5 | [UI](milestones/M5-ui.md): Add Host, Host cards, badges, offline apps, Source Server settings, masked files, work dir field, "can't decrypt" | 8 |
-| M6 | [Install and import](milestones/M6-install-import.md): install.sh modes, compose files, systemd, Kubernetes, import via Agent, proxy docs, RHEL family (deferred), secrets helper, .deb packages | 9 |
+| M6 | [Install and import](milestones/M6-install-import.md): install.sh modes, compose files, systemd, Kubernetes (deferred), import via Agent, proxy docs, RHEL family (deferred), secrets helper, .deb packages | 9 |
 | M7 | [Hardening](milestones/M7-hardening.md): test pyramid incl. rootless Docker and Podman, e2e, chaos tests, real-world run, docs, RHEL-family matrix (deferred), Forgejo primary | 7 |
 | M8 | [UI polish, then release](milestones/M8-ui-polish.md): UX, accessibility, performance, visuals, release notes, v0.2.0 | 6 |
 

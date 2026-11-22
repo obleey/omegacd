@@ -23,7 +23,7 @@ All personas are one binary (Q5, Q15):
 
 | Command | Persona | Runs where |
 | --- | --- | --- |
-| `omegacd server` | **Control Plane**: UI, API, database, sync history, Agent connections; with an in-process Source Server; never a container engine (Q104) | the ops machine, a container, or Kubernetes |
+| `omegacd server` | **Control Plane**: UI, API, database, sync history, Agent connections; with an in-process Source Server; never a container engine (Q104) | the ops machine or a container (Kubernetes after v0.2, Q276) |
 | `omegacd source-server` | **Source Server**, standalone (recommended for production) | next to the Control Plane, internal network only |
 | `omegacd agent` | **Agent** | every Host: native (systemd) or a container |
 | `omegacd <anything else>` | CLI client (`app sync`, `import`, `keygen`, …) | laptops, CI |
@@ -193,8 +193,8 @@ only the Control Plane, never Agents or users. A reverse proxy in between must p
 
 - `install.sh` asks **full** (Control Plane, UI, Source Server; Q104) or **agent**
   (Control Plane URL + invite; container or systemd, rootless detected).
-- `deploy/compose.yaml` (full), `deploy/agent.yaml` (Agent; rootful and rootless variants), systemd units,
-  `deploy/kubernetes.yaml` (full).
+- `deploy/compose.yaml` (full), `deploy/agent.yaml` (Agent; rootful and rootless variants), systemd units; no
+  Kubernetes manifest in v0.2 (Q276).
 - An Agent on the Control Plane's machine is installed in **agent** mode and enrolled like any other (Q104).
 - Reverse proxy examples for Caddy, Traefik and nginx.
 

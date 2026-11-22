@@ -758,7 +758,8 @@ First written as Q208–Q210 on `main`; renumbered Q220–Q222, as M5-06 to M5-0
 - **Q232** `install.sh agent` installs the `.deb` where apt is there (the system unit with a docker-group user; the
   package's user unit with lingering when it finds a rootless engine), and the container (`deploy/agent.yaml`) when
   asked or without apt; always with recommended packages (M6-01's Debian note).
-- **Q233** `install.sh full` keeps both targets, compose and kubernetes (the context always confirmed), and drops
+- **Q233** `install.sh full` keeps both targets, compose and kubernetes (the context always confirmed; kubernetes
+  dropped for v0.2 by Q276), and drops
   v0.1's leftovers: no `age-keygen` step (the Control Plane makes its Master Key, Q115), no `known_hosts` file (Git
   over SSH only, optional, Q106), no "Master Key for .sops.yaml" line (never a recipient, Q192); it ends with the
   next step: open the UI and add a Host.
@@ -887,11 +888,11 @@ First written as Q208–Q210 on `main`; renumbered Q220–Q222, as M5-06 to M5-0
 
 ## install.sh (before M6-01, 2026-11-22)
 
-- **Q262** `install.sh full` drops the age-keygen step for compose only: `deploy/kubernetes.yaml` still mounts v0.1's
+- **Q262** (kubernetes deferred by Q276) `install.sh full` drops the age-keygen step for compose only: `deploy/kubernetes.yaml` still mounts v0.1's
   keys Secret read-only, so its target keeps making the Secret until M6-04 changes the manifest and drops the step,
   tested in OrbStack's Kubernetes there. M6-01 tests compose and agent mode.
 - **Q263** Settings for unattended runs: `OMEGACD_MODE` (`full`, `agent`); full: `OMEGACD_TARGET` (`compose`,
-  `kubernetes`) and today's; agent: the Agent's own `OMEGACD_AGENT_CONTROL_PLANE` and `OMEGACD_AGENT_INVITE`,
+  `kubernetes`; gone with Q276) and today's; agent: the Agent's own `OMEGACD_AGENT_CONTROL_PLANE` and `OMEGACD_AGENT_INVITE`,
   `OMEGACD_AGENT_INSTALL` (`systemd`, the default with apt; `container`, Q232) and `OMEGACD_AGENT_ENGINE` (`docker`,
   `rootless-docker`, `podman`; unset: the first found in Q103's order, asked with it as default when several are).
   Whatever is missing is asked on the terminal.
@@ -922,3 +923,28 @@ First written as Q208–Q210 on `main`; renumbered Q220–Q222, as M5-06 to M5-0
   `install.sh full` (the coverage image in `OMEGACD_IMAGE`, its overrides in `COMPOSE_FILE`) and the Agent with
   `install.sh agent` in a container, rootful and rootless; plus a rerun upgrading with the state kept, and `main`'s
   copy refusing. The gate's real reboot covers what it installed.
+
+## Kubernetes (before M6-04, 2026-11-22; deferred by Q276)
+
+The design M6-04 was built to, kept for when it comes back (branch `park/m6-04-kubernetes`, tried on OrbStack only):
+
+- **Q270** The Source Server's mTLS certificates are made at install, once, into a Secret `omegacd-source-tls`:
+  `install.sh` makes them in a pod of the image (`omegacd source-certs --host omegacd-source-server`, read from its
+  log once it ends: `kubectl run -i` loses the output of a pod that ends before it attaches), by hand
+  `omegacd source-certs`. Each pod mounts only its side's three files. No Job, RBAC or Kubernetes API code.
+- **Q271** The Master Key on its own small PVC `omegacd-keys` at `/etc/omegacd`, made at the first start (Q115), apart
+  from the data PVC, as Compose's `omegacd-keys` volume.
+- **Q272** `known_hosts` an optional Secret `omegacd-known-hosts`, mounted in the Source Server's pod only (Q106); the
+  Source Server has its own PVC for `source.key` and the clones.
+- **Q273** The manifest's image is `ghcr.io/obleey/omegacd:latest`, as `compose.yaml`'s; `install.sh` puts its
+  release's in.
+- **Q274** Tested by `test/e2e/kubernetes.sh` in `make e2e`: OrbStack's cluster on macOS, a kind cluster (`go run`,
+  pinned; kubectl fetched and checked when missing) on the Linux servers and CI; `install.sh` full into a namespace of
+  its own, a remote Agent enrolled through a port-forward deploying an Application from Forgejo, and a rerun on
+  another image keeping the Master Key and the certificates. A Service routes to a new pod seconds after it's ready,
+  so the test retries its Syncs as the Control Plane does (Q124).
+- **Q275** No NetworkPolicy (mTLS keeps others out of the Source Server), no Helm chart; the commented Ingress has
+  TLS: remote Agents take `http://` only on loopback (Q95).
+- **Q276** Kubernetes is deferred until after v0.2, as the RHEL family is (Q61): OmegaCD is for Docker hosts, and teams
+  on Kubernetes deploy with Argo CD or Flux. v0.2 drops `deploy/kubernetes.yaml`, `install.sh`'s `kubernetes` target
+  (`OMEGACD_TARGET` with it: full mode is Compose) and the README's Kubernetes option; M6-04 waits in the ROADMAP.
