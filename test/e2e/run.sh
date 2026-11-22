@@ -5,13 +5,14 @@
 # Needs: docker with compose, git, curl, python3, age-keygen, sops; readme-walkthrough.sh fetches this repository
 # from GitHub; webhook.sh needs a running Forgejo (OMEGACD_E2E_FORGEJO, default forgejo-forgejo-1; start one with
 # docker compose -f test/e2e/forgejo.yaml up -d) and skips without.
+# systemd.sh installs the Agent's units and a user (Linux with systemd and passwordless sudo; skipped elsewhere).
 # OMEGACD_BIN picks the binary (default bin/omegacd); name scripts to run only those: run.sh secrets adopt
 set -u
 cd "$(dirname "$0")"
 # at debug, the most a log says: the scripts holding known secrets check that none of them is in it (Q62)
 export OMEGACD_LOG_LEVEL=${OMEGACD_LOG_LEVEL:-debug}
 scripts=("$@")
-[ ${#scripts[@]} -gt 0 ] || scripts=(mounts compose-views secrets migrations child-rollback adopt readme-walkthrough webhook source-server source-paths recovery payloads agent enrollment agent-sync agent-ops agent-self deploy-compose old-database startup)
+[ ${#scripts[@]} -gt 0 ] || scripts=(mounts compose-views secrets migrations child-rollback adopt readme-walkthrough webhook source-server source-paths recovery payloads agent enrollment agent-sync agent-ops agent-self deploy-compose old-database startup systemd)
 failed=()
 for s in "${scripts[@]}"; do
 	out=$(bash "./${s%.sh}.sh" 2>&1)
@@ -22,6 +23,7 @@ for s in "${scripts[@]}"; do
 	*)
 		printf '✗ %s\n' "$s"
 		printf '%s\n' "$out" | grep -E '^(FAIL|PASS)  ' | sed 's/^/    /'
+		printf '%s\n' "$out" | sed -n '/^--- /,$p' | sed 's/^/    /' # the logs a script prints when it fails
 		failed+=("$s")
 		;;
 	esac

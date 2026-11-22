@@ -96,20 +96,19 @@ Then [add a Host](#hosts) — this machine too, if Applications should run on it
 Download the `linux_amd64` or `linux_arm64` archive from [GitHub Releases](https://github.com/obleey/omegacd/releases) and verify it:
 
 ```sh
-VERSION=v0.1.0 ARCH=amd64
+VERSION=v0.2.0 ARCH=amd64
 curl -LO https://github.com/obleey/omegacd/releases/download/$VERSION/omegacd_${VERSION}_linux_${ARCH}.tar.gz
 curl -LO https://github.com/obleey/omegacd/releases/download/$VERSION/SHA256SUMS
 sha256sum --ignore-missing -c SHA256SUMS
 tar -xzf omegacd_${VERSION}_linux_${ARCH}.tar.gz
-sudo install -m 0755 omegacd_${VERSION}_linux_${ARCH}/omegacd /usr/local/bin/omegacd
+sudo install -m 0755 omegacd_${VERSION}_linux_${ARCH}/omegacd /usr/bin/omegacd
 ```
 
-Create a service user and its key files:
+Create a service user and its folder:
 
 ```sh
 sudo useradd --system --home-dir /var/lib/omegacd --shell /usr/sbin/nologin omegacd
 sudo install -d -m 0750 -o omegacd -g omegacd /etc/omegacd
-sudo -u omegacd install -m 0600 /dev/null /etc/omegacd/known_hosts
 ```
 
 The Master Key, `/etc/omegacd/age.key`, is created at the first start (logged with its path); keep a copy apart from your backups (see [Backup and recovery](#backup-and-recovery)).
@@ -137,14 +136,13 @@ Wants=network-online.target
 Type=simple
 User=omegacd
 Group=omegacd
-ExecStart=/usr/local/bin/omegacd server
+ExecStart=/usr/bin/omegacd server
 Restart=on-failure
 RestartSec=5
 
 Environment=OMEGACD_ADDR=:8080
 Environment=OMEGACD_DATA=/var/lib/omegacd
 Environment=OMEGACD_AGE_KEY_FILE=/etc/omegacd/age.key
-Environment=OMEGACD_SSH_KNOWN_HOSTS=/etc/omegacd/known_hosts
 EnvironmentFile=-/etc/omegacd/omegacd.env
 
 StateDirectory=omegacd
@@ -166,7 +164,7 @@ WantedBy=multi-user.target
 
 </details>
 
-Further settings (webhook secret, trusted proxies, …) go into `/etc/omegacd/omegacd.env` (mode 0600). **Upgrade:** replace `/usr/local/bin/omegacd` and `systemctl restart omegacd`.
+Further settings (webhook secret, trusted proxies, …) go into `/etc/omegacd/omegacd.env` (mode 0600). **Upgrade:** replace `/usr/bin/omegacd` and `systemctl restart omegacd`. Its Hosts each run an Agent: [the Agent with systemd](#the-agent-with-systemd).
 
 ### Option 3: CLI only
 
@@ -458,7 +456,57 @@ takes the folder back when Docker made it as root after a reboot. Its keys are i
 `signing.key` and `host.key`. With **rootless Docker or Podman** the engine's root in a container is your own user on
 the Host, so the Agent runs as that: `OMEGACD_AGENT_USER=0:0`, `OMEGACD_DOCKER_GID=0`, your socket in
 `OMEGACD_DOCKER_SOCK` (`/run/user/1000/docker.sock`, Podman's `/run/user/1000/podman/podman.sock`) and a work dir under
-it in `OMEGACD_AGENT_WORKDIR` (`/run/user/1000/omegacd`). Anywhere else the Agent refuses to run as root.
+it in `OMEGACD_AGENT_WORKDIR` (`/run/user/1000/omegacd`). Anywhere else the Agent refuses to run as root. Rootless
+Docker's host network has a loopback of its own, so there the Agent takes OmegaCD's `https://` URL even on the same
+machine (a private CA: `OMEGACD_AGENT_CA_FILE`, with the file mounted); or run it as a
+[user unit](#the-agent-with-systemd) instead.
+
+### The Agent with systemd
+
+The binary as a service, from [`packaging/`](packaging/), with `omegacd` installed as `/usr/bin/omegacd` (as in
+[Binary + systemd](#option-2-binary--systemd)). With **rootful Docker**, the system unit runs it as its own user in the
+`docker` group, never root:
+
+```sh
+sudo useradd --system --home-dir /var/lib/omegacd-agent --shell /usr/sbin/nologin --groups docker omegacd-agent
+sudo install -d -m 0755 /etc/omegacd
+printf 'OMEGACD_AGENT_CONTROL_PLANE=%s\nOMEGACD_AGENT_INVITE=%s\n' https://omegacd.example.com omegacd-invite-… |
+  sudo install -m 0640 -g omegacd-agent /dev/stdin /etc/omegacd/agent.env
+for u in omegacd-agent omegacd-agent-restore; do
+  sudo curl -fsSLo /etc/systemd/system/$u.service https://raw.githubusercontent.com/obleey/omegacd/main/packaging/$u.service
+done
+sudo systemctl daemon-reload
+sudo systemctl enable omegacd-agent-restore && sudo systemctl enable --now omegacd-agent
+journalctl -u omegacd-agent | grep fingerprint         # approve it in the UI
+```
+
+Its keys and cache are in `/var/lib/omegacd-agent` (back up `signing.key` and `host.key`), its work dir is
+`/run/omegacd`, in RAM, and stays while the Agent restarts or upgrades. After a reboot Docker restarts containers before
+the Agent runs, and would make their missing files root-owned folders: `omegacd-agent-restore` puts the files back
+first, decrypted from the Agent's cache, so every app comes back as it was, OmegaCD reachable or not. Further settings
+(`omegacd agent --help`) go into `agent.env`; `omegacd agent rollback` runs as the Agent's user with its settings:
+`sudo -u omegacd-agent sh -c 'set -a; . /etc/omegacd/agent.env; STATE_DIRECTORY=/var/lib/omegacd-agent omegacd agent rollback'`.
+
+With **rootless Docker or Podman**, the user units run it as you, lingering so it starts with the machine:
+
+```sh
+mkdir -p ~/.config/systemd/user ~/.config/omegacd
+(umask 077; printf 'OMEGACD_AGENT_CONTROL_PLANE=%s\nOMEGACD_AGENT_INVITE=%s\n' https://omegacd.example.com omegacd-invite-… \
+  > ~/.config/omegacd/agent.env)
+echo "DOCKER_HOST=unix://$XDG_RUNTIME_DIR/podman/podman.sock" >> ~/.config/omegacd/agent.env   # Podman only
+for u in omegacd-agent omegacd-agent-restore; do
+  curl -fsSLo ~/.config/systemd/user/$u.service https://raw.githubusercontent.com/obleey/omegacd/main/packaging/user/$u.service
+done
+sudo loginctl enable-linger "$USER"
+systemctl --user daemon-reload
+systemctl --user enable omegacd-agent-restore && systemctl --user enable --now omegacd-agent
+```
+
+Its keys are in `~/.local/share/omegacd-agent`, its work dir is `$XDG_RUNTIME_DIR/omegacd`, and the restore unit runs
+before rootless Docker's `docker.service` and Podman's `podman-restart.service` (enable it for containers with
+`restart: always` to come back at boot). **Podman** also needs its events and logs in files, which Self-Heal reads,
+with the logs capped: [`packaging/containers.conf.d/omegacd-agent.conf`](packaging/containers.conf.d/omegacd-agent.conf)
+into `~/.config/containers/containers.conf.d/`, then `systemctl --user restart podman.socket`.
 
 ## Secrets
 

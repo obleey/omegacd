@@ -10,14 +10,13 @@ Wants=network-online.target
 Type=simple
 User=omegacd
 Group=omegacd
-ExecStart=/usr/local/bin/omegacd server
+ExecStart=/usr/bin/omegacd server
 Restart=on-failure
 RestartSec=5
 
 Environment=OMEGACD_ADDR=:8080
 Environment=OMEGACD_DATA=/var/lib/omegacd
 Environment=OMEGACD_AGE_KEY_FILE=/etc/omegacd/age.key
-Environment=OMEGACD_SSH_KNOWN_HOSTS=/etc/omegacd/known_hosts
 # Optional settings (webhook secret, trusted proxies, ...) go here, mode 0600:
 EnvironmentFile=-/etc/omegacd/omegacd.env
 

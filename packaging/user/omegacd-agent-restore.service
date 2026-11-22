@@ -1,0 +1,18 @@
+# After a reboot rootless Docker (its user docker.service) and Podman (podman-restart.service) restart containers with
+# a restart policy before the Agent runs: so the Applications' files go back into the work dir first (Q59, Q244).
+[Unit]
+Description=OmegaCD Agent: restore the Applications' files before the engine starts their containers
+Documentation=https://github.com/obleey/omegacd
+Before=docker.service podman-restart.service
+ConditionPathExists=%h/.local/share/omegacd-agent/agent.db
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/omegacd agent restore --files
+EnvironmentFile=%h/.config/omegacd/agent.env
+RuntimeDirectory=omegacd
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+
+[Install]
+WantedBy=docker.service podman-restart.service

@@ -8,6 +8,8 @@
 #   OMEGACD_DOCKER_GID=0
 #   OMEGACD_DOCKER_SOCK=/run/user/1000/docker.sock               # Podman: /run/user/1000/podman/podman.sock
 #   OMEGACD_AGENT_WORKDIR=/run/user/1000/omegacd
+# Rootless Docker's host network has a loopback of its own: there the Agent takes the Control Plane's https:// URL, even
+# beside it (or runs as a user unit instead, packaging/user/).
 # Then docker compose up -d, and approve the fingerprint in the UI (docker compose logs agent prints it too).
 name: omegacd-agent
 
@@ -18,7 +20,7 @@ services:
     user: ${OMEGACD_AGENT_USER:-omegacd}
     group_add:
       - "${OMEGACD_DOCKER_GID:?set OMEGACD_DOCKER_GID to the socket's group: stat -c %g /var/run/docker.sock}"
-    network_mode: host # reaches a Control Plane on this machine over loopback (Q238)
+    network_mode: host # reaches a Control Plane on this machine over loopback (Q238), but with rootless Docker (Q252)
     environment:
       OMEGACD_AGENT_CONTROL_PLANE: ${OMEGACD_AGENT_CONTROL_PLANE:?set OMEGACD_AGENT_CONTROL_PLANE to the Control Plane's URL}
       OMEGACD_AGENT_INVITE: ${OMEGACD_AGENT_INVITE:-}

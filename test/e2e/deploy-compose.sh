@@ -4,7 +4,8 @@
 # made once (Q231, Q236); the Agent in a container on host networking, as the omegacd user in the socket's group,
 # reaching the Control Plane over loopback (Q238), finding its container without its hostname (Q235), taking back a
 # work dir Docker made as root (Q237), refusing one mounted at another path (Q21); and, with the user's rootless
-# Podman, the rootless variant as container root (Q240). The binary is OMEGACD_BIN on Linux; elsewhere a Linux build.
+# Podman and rootless Docker (over https, Q252), the rootless variant as container root (Q240). The binary is
+# OMEGACD_BIN on Linux; elsewhere a Linux build.
 set -u # no pipefail: grep -q closing the pipe early must not fail a check
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 BIN=${OMEGACD_BIN:-$ROOT/bin/omegacd}
@@ -20,17 +21,20 @@ cp_() { docker compose -p $CP -f "$ROOT/deploy/compose.yaml" -f "$T/cp-cover.yam
 ag() { docker compose -p $AG -f "$ROOT/deploy/agent.yaml" -f "$T/agent-cover.yaml" --env-file "$T/agent.env" "$@"; }
 agentlog() { docker logs $AG-agent-1 2>&1; }
 waitfor() { for _ in $(seq $((${2:-30} * 5))); do eval "$1" && return 0; sleep 0.2; done; return 1; } # CMD [SECONDS]
-PODMAN=unix://${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock
+PODMAN=unix://${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock DOCKERR=unix://${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/docker.sock
 cleanup() {
   "$BIN" app delete web --yes >/dev/null 2>&1; "$BIN" app delete webp --yes >/dev/null 2>&1
   for p in web e2e-parity; do docker rm -f $(docker ps -aq --filter label=com.docker.compose.project=$p) >/dev/null 2>&1; done
   ag down -v >/dev/null 2>&1; cp_ down -v >/dev/null 2>&1
-  if [ -S "${PODMAN#unix://}" ]; then
-    DOCKER_HOST=$PODMAN docker rm -f $(DOCKER_HOST=$PODMAN docker ps -aq --filter label=com.docker.compose.project=webp) >/dev/null 2>&1
-    DOCKER_HOST=$PODMAN docker compose -p e2e-agentp -f "$ROOT/deploy/agent.yaml" -f "$T/agent-cover.yaml" --env-file "$T/agentp.env" down -v >/dev/null 2>&1
-    DOCKER_HOST=$PODMAN docker rmi $IMAGE >/dev/null 2>&1
-    rm -rf "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/omegacd-e2e"
-  fi
+  "$BIN" app delete webd --yes >/dev/null 2>&1; docker rm -f e2e-tlsfront >/dev/null 2>&1
+  for sock in "$PODMAN" "$DOCKERR"; do # the rootless variants: the user's Podman (p) and Docker (d)
+    [ -S "${sock#unix://}" ] || continue
+    n=p; [ "$sock" = "$DOCKERR" ] && n=d
+    DOCKER_HOST=$sock docker rm -f $(DOCKER_HOST=$sock docker ps -aq --filter label=com.docker.compose.project=web$n) >/dev/null 2>&1
+    DOCKER_HOST=$sock docker compose -p e2e-agent$n -f "$ROOT/deploy/agent.yaml" --env-file "$T/agent$n.env" down -v >/dev/null 2>&1
+    DOCKER_HOST=$sock docker rmi $IMAGE >/dev/null 2>&1
+    rm -rf "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/omegacd-e2e$n"
+  done
   docker rmi $IMAGE >/dev/null 2>&1
   docker exec -u git "$FJ" forgejo admin user delete --username $U --purge >/dev/null 2>&1
   docker run --rm -v "$T:$T" busybox:1.38 rm -rf "$T/work" >/dev/null 2>&1 # Docker made it as root
@@ -164,34 +168,52 @@ check "root in a rootful engine's container is refused (Q240)" 'echo "$out" | gr
 out=$(docker run --rm --user 0:0 -e OMEGACD_LOG_LEVEL=debug ${GOCOVERDIR:+-e GOCOVERDIR=$GOCOVERDIR -v $GOCOVERDIR:$GOCOVERDIR} $IMAGE agent 2>&1)
 check "and where it can't ask the engine whether it's rootless, logged" 'echo "$out" | grep -q "engine unreachable: not taken for rootless" && echo "$out" | grep -q "refusing to run as root"'
 
-# Q240: the rootless variant, as container root, with the user's own rootless Podman
+# Q240: the rootless variant, as container root, with the user's own rootless Podman and rootless Docker
+RT=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+# rootless ENGINE N SOCKET URL [OVERRIDE]: agent.yaml's Agent as container root there, approved, deploying
+rootless() {
+  local engine=$1 n=$2 sock=$3 url=$4 extra=${5:-}
+  docker save $IMAGE | DOCKER_HOST=$sock docker load >/dev/null 2>&1
+  local invite; invite=$("$BIN" host add box$n | grep -o 'omegacd-invite-[0-9a-f]*' | head -1)
+  printf '%s\n' "OMEGACD_AGENT_CONTROL_PLANE=$url" "OMEGACD_AGENT_INVITE=$invite" OMEGACD_AGENT_USER=0:0 OMEGACD_DOCKER_GID=0 \
+    "OMEGACD_DOCKER_SOCK=${sock#unix://}" "OMEGACD_AGENT_WORKDIR=$RT/omegacd-e2e$n" OMEGACD_LOG_LEVEL=debug > "$T/agent$n.env"
+  agr() { DOCKER_HOST=$sock docker compose -p e2e-agent$n -f "$ROOT/deploy/agent.yaml" -f "$T/agent-cover.yaml" ${extra:+-f "$extra"} --env-file "$T/agent$n.env" "$@"; }
+  rlog() { agr logs agent 2>&1; }
+  agr up -d >/dev/null 2>&1
+  check "$engine: the Agent runs as container root, the user on the Host (Q240)" \
+    'waitfor "rlog | grep -q \"running as root in a rootless engine.s container\"" && waitfor "rlog | grep -q \"waiting for an admin to approve\"" 90 || { rlog | tail -8 >&2; false; }'
+  "$BIN" host approve box$n "$(rlog | grep -o 'fingerprint=SHA256:[A-Za-z0-9+/]*' | head -1 | cut -d= -f2)" >/dev/null
+  waitfor "rlog | grep -q \"connected to the Control Plane, approved\"" 90 # else the Sync is queued, and --wait returns
+  "$BIN" app create web$n --repo http://git.localhost/$U/deploy.git --path web --host box$n >/dev/null
+  out=$("$BIN" app sync web$n --wait --timeout 3m 2>&1); rc=$?
+  check "$engine: and deploys through the user's engine" '[ $rc -eq 0 ] && [ -f "$RT/omegacd-e2e$n/web$n/conf.txt" ] || { echo "$out" >&2; rlog | tail -5 >&2; false; }'
+}
 if [ "$(uname)" = Linux ] && { [ -S "${PODMAN#unix://}" ] || [ -n "${OMEGACD_TEST_ALL:-}" ]; }; then
-  RT=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
-  docker save $IMAGE | DOCKER_HOST=$PODMAN docker load >/dev/null 2>&1
-  INVITE=$("$BIN" host add boxp | grep -o 'omegacd-invite-[0-9a-f]*' | head -1)
-  cat > "$T/agentp.env" <<EOF
-OMEGACD_AGENT_CONTROL_PLANE=http://127.0.0.1:18080
-OMEGACD_AGENT_INVITE=$INVITE
-OMEGACD_AGENT_USER=0:0
-OMEGACD_DOCKER_GID=0
-OMEGACD_DOCKER_SOCK=${PODMAN#unix://}
-OMEGACD_AGENT_WORKDIR=$RT/omegacd-e2e
-OMEGACD_LOG_LEVEL=debug
-EOF
-  agp() { DOCKER_HOST=$PODMAN docker compose -p e2e-agentp -f "$ROOT/deploy/agent.yaml" -f "$T/agent-cover.yaml" --env-file "$T/agentp.env" "$@"; }
-  plog() { agp logs agent 2>&1; }
-  agp up -d >/dev/null 2>&1
-  check "rootless Podman: the Agent runs as container root, the user on the Host (Q240)" \
-    'waitfor "plog | grep -q \"running as root in a rootless engine.s container\"" && waitfor "plog | grep -q \"waiting for an admin to approve\""'
-  FP=$(plog | grep -o 'fingerprint=SHA256:[A-Za-z0-9+/]*' | head -1 | cut -d= -f2)
-  "$BIN" host approve boxp "$FP" >/dev/null
-  waitfor "plog | grep -q \"connected to the Control Plane, approved\"" # else the Sync is queued, and --wait returns
-  "$BIN" app create webp --repo http://git.localhost/$U/deploy.git --path web --host boxp >/dev/null
-  out=$("$BIN" app sync webp --wait --timeout 3m 2>&1); rc=$?
-  check "and deploys through the user's Podman" '[ $rc -eq 0 ] && [ -f "$RT/omegacd-e2e/webp/conf.txt" ] || { echo "$out" >&2; false; }'
+  rootless "rootless Podman" p "$PODMAN" http://127.0.0.1:18080
+fi
+# Q252: rootless Docker's host network has a loopback of its own, so its Agent takes the Control Plane's https:// URL,
+# here a TLS front on this server's own address with a private CA
+if [ "$(uname)" = Linux ] && { [ -S "${DOCKERR#unix://}" ] || [ -n "${OMEGACD_TEST_ALL:-}" ]; }; then
+  IP=$(hostname -I | awk '{print $1}')
+  mkdir -p "$T/tls" && (cd "$T/tls" &&
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 1 -subj /CN=e2e-ca -keyout ca.key -out ca.pem &&
+    openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -subj /CN=e2e -keyout front.key -out front.csr &&
+    printf 'subjectAltName=IP:%s\n' "$IP" > san.cnf &&
+    openssl x509 -req -in front.csr -CA ca.pem -CAkey ca.key -CAcreateserial -days 1 -extfile san.cnf -out front.crt &&
+    cat front.crt front.key > front.pem && chmod 0644 front.pem ca.pem) >/dev/null 2>&1
+  docker run -d --name e2e-tlsfront --network host -v "$T/tls:/tls:ro" alpine/socat:1.8.0.3 \
+    "openssl-listen:18443,bind=$IP,fork,reuseaddr,cert=/tls/front.pem,verify=0" tcp:127.0.0.1:18080 >/dev/null 2>&1
+  waitfor "curl -sf --cacert $T/tls/ca.pem https://$IP:18443/api/version >/dev/null" # listening, before the Agent dials
+  printf 'services:\n  agent:\n    environment: {OMEGACD_AGENT_CA_FILE: /etc/omegacd-ca.pem}\n    volumes: ["%s:/etc/omegacd-ca.pem:ro"]\n' "$T/tls/ca.pem" > "$T/agentd-ca.yaml"
+  rootless "rootless Docker" d "$DOCKERR" "https://$IP:18443" "$T/agentd-ca.yaml"
 fi
 
 check "no password in the logs (Q62)" '! { cp_ logs 2>&1; agentlog; } | grep -qF "$PW"'
 
-[ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- agent log"; agentlog | tail -15; echo "--- control plane log"; cp_ logs omegacd 2>&1 | tail -10; }
+[ $fail -eq 0 ] && echo "ALL PASSED" || {
+  echo "--- agent log"; agentlog | tail -15; echo "--- control plane log"; cp_ logs omegacd 2>&1 | tail -10
+  for n in p d; do [ ! -f "$T/agent$n.env" ] || { echo "--- rootless agent $n"; [ $n = p ] && sock=$PODMAN || sock=$DOCKERR
+    DOCKER_HOST=$sock docker compose -p e2e-agent$n -f "$ROOT/deploy/agent.yaml" --env-file "$T/agent$n.env" logs agent 2>&1 | tail -15; }; done
+  docker logs e2e-tlsfront 2>&1 | tail -5
+}
 exit $fail

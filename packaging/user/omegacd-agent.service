@@ -1,0 +1,23 @@
+# OmegaCD's Agent as a user service, for rootless Docker or Podman (Q10): into ~/.config/systemd/user/, with
+# loginctl enable-linger, so it runs from boot without a login. See README.md, "The Agent with systemd".
+[Unit]
+Description=OmegaCD Agent: deploys this Host's Applications
+Documentation=https://github.com/obleey/omegacd
+After=network-online.target docker.service podman.socket omegacd-agent-restore.service
+Wants=omegacd-agent-restore.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/omegacd agent
+Restart=on-failure
+RestartSec=5
+# OMEGACD_AGENT_CONTROL_PLANE and OMEGACD_AGENT_INVITE; DOCKER_HOST for Podman (unix://%t/podman/podman.sock)
+EnvironmentFile=%h/.config/omegacd/agent.env
+# the work dir, in RAM: $XDG_RUNTIME_DIR/omegacd, kept when the unit stops (Q243). Its keys and cache stay where the
+# command line keeps them, ~/.local/share/omegacd-agent, so omegacd agent rollback finds them
+RuntimeDirectory=omegacd
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+
+[Install]
+WantedBy=default.target
