@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/obleey/omegacd/internal/domain"
 	"github.com/obleey/omegacd/internal/importer"
 )
 
@@ -23,7 +22,8 @@ func (c *CLI) importStacks(ctx context.Context, args []string) error {
 	fs := c.flags("import", &o)
 	hostName := fs.String("host", "", "the Host's name in OmegaCD, whose Agent runs these stacks (required)")
 	var recipients listFlag
-	fs.Var(&recipients, "recipient", "age public key to encrypt secrets for (the Host Key from the Hosts page); repeatable; default: looked up on your OmegaCD")
+	fs.Var(&recipients, "recipient", "age public key to encrypt secrets for, instead of the Host Key and the people's keys covering the Host (looked up on your OmegaCD); repeatable")
+	hostOnly := fs.Bool("host-only", false, "encrypt for the Host alone when no person's key covers it: nobody can edit the files again")
 	appsDir := fs.String("apps-dir", "apps", "folder for the stacks, relative to the repository root")
 	defs := fs.String("definitions", "platform/apps.yaml", "App of Apps file to add the definitions to, relative to the repository root")
 	repoURL := fs.String("repo-url", "", "repository URL for the definitions (default: the origin remote)")
@@ -37,14 +37,12 @@ func (c *CLI) importStacks(ctx context.Context, args []string) error {
 		return errors.New("import needs --host NAME: the name this machine has (or will have) in OmegaCD, on its Hosts page")
 	}
 
-	root, err := git(ctx, "rev-parse", "--show-toplevel")
+	root, err := checkoutRoot(ctx, "import")
 	if err != nil {
-		return errors.New("run omegacd import inside your Git repository's checkout (git rev-parse found none)")
+		return err
 	}
-	if *repoURL == "" {
-		if *repoURL, err = git(ctx, "remote", "get-url", "origin"); err != nil {
-			return errors.New("the repository has no origin remote: add one, or pass --repo-url")
-		}
+	if *repoURL, err = repoURLOf(ctx, *repoURL); err != nil {
+		return err
 	}
 	revision, _ := git(ctx, "branch", "--show-current") // a detached HEAD prints nothing, and that is all that goes wrong here
 	if revision == "" {
@@ -70,30 +68,26 @@ func (c *CLI) importStacks(ctx context.Context, args []string) error {
 			if len(recipients) > 0 {
 				return recipients, nil
 			}
-			return c.hostRecipient(ctx, o, *hostName)
+			return c.hostRecipients(ctx, o, *hostName, *hostOnly)
 		},
 	})
 }
 
-// hostRecipient looks up the Host Key's public key, from its Agent (Q108), on the OmegaCD the CLI is logged in to.
-func (c *CLI) hostRecipient(ctx context.Context, o opts, host string) ([]string, error) {
+// hostRecipients are the Host Key and the people's keys covering the Host (Q194), on the OmegaCD the CLI is logged in to.
+func (c *CLI) hostRecipients(ctx context.Context, o opts, host string, hostOnly bool) ([]string, error) {
 	cl, err := c.client(o)
 	if err != nil {
-		return nil, fmt.Errorf("secrets found: pass --recipient age1… (the Host Key of %s from the Hosts page), or omegacd login so it can be looked up", host)
+		return nil, fmt.Errorf("secrets found: omegacd login so their keys can be looked up, or pass --recipient age1…")
 	}
-	var hosts []domain.HostView
-	if err := cl.do(ctx, "GET", "/api/settings/hosts", nil, &hosts); err != nil {
-		return nil, fmt.Errorf("look up the Host Key of %s: %w (or pass --recipient)", host, err)
+	k, err := c.keyring(ctx, cl)
+	if err != nil {
+		return nil, fmt.Errorf("look up the keys of %s: %w (or pass --recipient)", host, err)
 	}
-	for _, h := range hosts {
-		if h.Name == host {
-			if h.AgeRecipient == "" {
-				return nil, fmt.Errorf("Host %s has no Host Key yet: its Agent makes one when it enrolls; enroll it first, or pass --recipient", host)
-			}
-			return []string{h.AgeRecipient}, nil
-		}
+	r, err := k.recipients(host, hostOnly)
+	if err != nil {
+		return nil, fmt.Errorf("%w (or pass --recipient)", err)
 	}
-	return nil, fmt.Errorf("Host %s is not in OmegaCD: add it on the Hosts page first, or pass --recipient", host)
+	return r, nil
 }
 
 func git(ctx context.Context, args ...string) (string, error) {

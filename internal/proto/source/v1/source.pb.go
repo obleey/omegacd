@@ -206,7 +206,8 @@ type RenderRequest struct {
 	Path          string                 `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`
 	ComposeFiles  []string               `protobuf:"bytes,4,rep,name=compose_files,json=composeFiles,proto3" json:"compose_files,omitempty"`
 	Profiles      []string               `protobuf:"bytes,5,rep,name=profiles,proto3" json:"profiles,omitempty"`
-	Apps          bool                   `protobuf:"varint,6,opt,name=apps,proto3" json:"apps,omitempty"` // an App of Apps: read its definitions
+	Apps          bool                   `protobuf:"varint,6,opt,name=apps,proto3" json:"apps,omitempty"`            // an App of Apps: read its definitions
+	Recipients    []string               `protobuf:"bytes,7,rep,name=recipients,proto3" json:"recipients,omitempty"` // the keys its *.sops.* files should be encrypted for, exactly; none: not checked
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -281,6 +282,13 @@ func (x *RenderRequest) GetApps() bool {
 		return x.Apps
 	}
 	return false
+}
+
+func (x *RenderRequest) GetRecipients() []string {
+	if x != nil {
+		return x.Recipients
+	}
+	return nil
 }
 
 type RenderResponse struct {
@@ -1330,14 +1338,17 @@ const file_omegacd_source_v1_source_proto_rawDesc = "" +
 	"\brevision\x18\x01 \x01(\tR\brevision\".\n" +
 	"\x11InvalidateRequest\x12\x19\n" +
 	"\brepo_url\x18\x01 \x01(\tR\arepoUrl\"\x14\n" +
-	"\x12InvalidateResponse\"\xaf\x01\n" +
+	"\x12InvalidateResponse\"\xcf\x01\n" +
 	"\rRenderRequest\x12\x19\n" +
 	"\brepo_url\x18\x01 \x01(\tR\arepoUrl\x12\x1a\n" +
 	"\brevision\x18\x02 \x01(\tR\brevision\x12\x12\n" +
 	"\x04path\x18\x03 \x01(\tR\x04path\x12#\n" +
 	"\rcompose_files\x18\x04 \x03(\tR\fcomposeFiles\x12\x1a\n" +
 	"\bprofiles\x18\x05 \x03(\tR\bprofiles\x12\x12\n" +
-	"\x04apps\x18\x06 \x01(\bR\x04apps\"\xc7\x01\n" +
+	"\x04apps\x18\x06 \x01(\bR\x04apps\x12\x1e\n" +
+	"\n" +
+	"recipients\x18\a \x03(\tR\n" +
+	"recipients\"\xc7\x01\n" +
 	"\x0eRenderResponse\x12-\n" +
 	"\x05files\x18\x01 \x03(\v2\x17.omegacd.source.v1.FileR\x05files\x12\x1a\n" +
 	"\bchecksum\x18\x02 \x01(\tR\bchecksum\x12\x1a\n" +

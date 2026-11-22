@@ -313,7 +313,7 @@ func TestImportEdges(t *testing.T) {
 		t.Errorf("no Docker: %+v", r)
 	}
 	withHost := func(c *CLI) { c.ImportHost = func() (importer.Host, error) { return importHost{}, nil } }
-	if r := runWith(t, srv, nil, withHost, "import", "--host", "vps"); r.code != 1 || !strings.Contains(r.stdout, "look up the Host Key of vps") {
+	if r := runWith(t, srv, nil, withHost, "import", "--host", "vps"); r.code != 1 || !strings.Contains(r.stdout, "look up the keys of vps") {
 		t.Errorf("the server can't say: %+v", r)
 	}
 }
@@ -338,7 +338,7 @@ func TestFollowInterruptedAndKeygenUnwritten(t *testing.T) {
 	if code := c.Run(ctx, []string{"app", "logs", "web", "-f"}); code != 0 || !strings.Contains(out.String(), "first") {
 		t.Errorf("interrupted: %d %q", code, out.String())
 	}
-	r := runWith(t, nil, nil, func(c *CLI) { c.Stdout = failingWriter{} }, "keygen")
+	r := runWith(t, nil, nil, func(c *CLI) { c.Stdout = failingWriter{} }, "keygen", "--out", "-")
 	if r.code != 1 || !strings.Contains(r.stderr, "stdout closed") {
 		t.Errorf("keygen: %+v", r)
 	}

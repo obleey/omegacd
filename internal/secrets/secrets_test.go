@@ -55,8 +55,11 @@ func TestDecryptDir(t *testing.T) {
 	}
 	encrypt("DB_PASSWORD=s3cret\n", "db.env", "db.sops.env")
 	encrypt("api:\n  key: abc123\n", "config.yaml", filepath.Join("sub", "config.sops.yaml"))
-	if err := os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte("services: {}\n"), 0o644); err != nil {
-		t.Fatal(err)
+	// an Application at the repository's root has SOPS's own .sops.yaml too: not a secret
+	for _, f := range []string{"compose.yaml", ".sops.yaml"} {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("services: {}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	// pre-existing output must keep its inode
@@ -99,8 +102,10 @@ func TestDecryptDir(t *testing.T) {
 			t.Fatalf("%s still there: %v", enc, err)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(dir, "compose.yaml")); err != nil {
-		t.Fatal(err)
+	for _, f := range []string{"compose.yaml", ".sops.yaml"} {
+		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if inode(t, envOut) != before {
 		t.Fatal("inode changed")

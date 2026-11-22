@@ -26,6 +26,7 @@ import (
 	"github.com/obleey/omegacd/internal/blob"
 	"github.com/obleey/omegacd/internal/domain"
 	"github.com/obleey/omegacd/internal/secretkey"
+	"github.com/obleey/omegacd/internal/secrets"
 	"github.com/obleey/omegacd/internal/version"
 	"github.com/obleey/omegacd/internal/workdir"
 )
@@ -112,7 +113,8 @@ func (s *Server) Blob(_ context.Context, hash string) ([]byte, error) { return s
 func (s *Server) Render(ctx context.Context, spec domain.RenderSpec) (domain.Rendered, error) {
 	// a commit never changes, so neither does its render
 	key := strings.Join([]string{NormalizeURL(spec.RepoURL), spec.Revision, cleanPath(spec.Path),
-		strings.Join(spec.ComposeFiles, ","), strings.Join(spec.Profiles, ","), fmt.Sprint(spec.Apps)}, "\x00")
+		strings.Join(spec.ComposeFiles, ","), strings.Join(spec.Profiles, ","), fmt.Sprint(spec.Apps),
+		strings.Join(spec.Recipients, ",")}, "\x00")
 	var r domain.Rendered
 	s.mu.Lock()
 	e, ok := s.rendered[key]
@@ -162,7 +164,7 @@ func (s *Server) Render(ctx context.Context, spec domain.RenderSpec) (domain.Ren
 	default:
 		a := domain.Application{Name: "render", ComposeFiles: spec.ComposeFiles, Profiles: spec.Profiles}
 		r.Invalid = validate(ctx, s.Log, a, dir)
-		r.Warnings = plainSecrets(ctx, s.Log, a, dir)
+		r.Warnings = append(plainSecrets(ctx, s.Log, a, dir), outdatedKeys(ctx, s.Log, dir, spec.Recipients)...)
 	}
 
 	s.Log.DebugContext(ctx, "rendered", "repo", redact(spec.RepoURL), "revision", spec.Revision, "path", spec.Path,
@@ -241,6 +243,69 @@ func checkBindSources(p *types.Project, dir string) error {
 		}
 	}
 	return nil
+}
+
+// outdatedKeys warns about each Encrypted Secret not encrypted for exactly recipients, the Host's key and the people's
+// keys allowed for it (Q196, Q293): a key missing, or one removed from the list still in it. Nothing is decrypted.
+func outdatedKeys(ctx context.Context, log *slog.Logger, dir string, recipients []string) []string {
+	if len(recipients) == 0 {
+		return nil
+	}
+	want := slices.Sorted(slices.Values(recipients))
+	var warnings []string
+	err := filepath.WalkDir(dir, func(path string, e fs.DirEntry, err error) error {
+		if err != nil || !e.Type().IsRegular() || !secrets.Encrypted(e.Name()) {
+			return err
+		}
+		rel, _ := filepath.Rel(dir, path)
+		b, err := os.ReadFile(path)
+		if err != nil { // coverage: unreachable, a file just written into a fresh staging folder
+			return err
+		}
+		have, err := secrets.Recipients(b, e.Name())
+		if err != nil {
+			log.DebugContext(ctx, "keys not compared: the Host reports a file it can't decrypt", "file", rel, "err", err)
+			return nil
+		}
+		if slices.Equal(have, want) {
+			return nil
+		}
+		var missing, extra []string
+		for _, k := range want {
+			if !slices.Contains(have, k) {
+				missing = append(missing, shortKey(k))
+			}
+		}
+		for _, k := range have {
+			if !slices.Contains(want, k) {
+				extra = append(extra, shortKey(k))
+			}
+		}
+		w := filepath.ToSlash(rel) + " is encrypted for an outdated set of keys ("
+		if len(missing) > 0 {
+			w += "not for " + strings.Join(missing, ", ")
+			if len(extra) > 0 {
+				w += "; "
+			}
+		}
+		if len(extra) > 0 {
+			w += "still for " + strings.Join(extra, ", ")
+		}
+		warnings = append(warnings, w+"): run omegacd secrets rekey in a checkout of the repository")
+		return nil
+	})
+	if err != nil { // coverage: unreachable, walking a fresh staging folder just written
+		log.ErrorContext(ctx, "compare the keys of the secret files", "err", err)
+	}
+	return warnings
+}
+
+// shortKey is a public key shortened to recognize it (Q216): age1abc…7x2c.
+func shortKey(k string) string {
+	if len(k) <= 16 {
+		return k
+	}
+	return k[:8] + "…" + k[len(k)-4:]
 }
 
 // plainSecrets warns about environment values in the compose files that look like secrets and are written out

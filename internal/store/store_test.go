@@ -218,6 +218,58 @@ func TestRegistryCredentials(t *testing.T) {
 	wantErr(t, s.DeleteRegistryCredential(ctx, id), domain.ErrNotFound)
 }
 
+// People's keys (Q189, Q291): changed by name, their Hosts renamed and deleted with them, a key whose Hosts are all
+// gone covering none; the Master Key, a Host Key, a key twice and an unknown Host refused.
+func TestEncryptionKeys(t *testing.T) {
+	s, _ := open(t)
+	for _, h := range []string{"web", "db"} {
+		_, err := s.CreateInvite(ctx, h, time.Now().Add(time.Hour))
+		must(t, err)
+	}
+	invite, err := s.CreateInvite(ctx, "edge", time.Now().Add(time.Hour))
+	must(t, err)
+	_, err = s.Enroll(ctx, invite, []byte("key"), "age1edge", time.Now())
+	must(t, err)
+
+	must(t, s.SaveEncryptionKey(ctx, domain.EncryptionKey{Name: "laptop", Recipient: "age1laptop", AllHosts: true}))
+	must(t, s.SaveEncryptionKey(ctx, domain.EncryptionKey{Name: "ana", Recipient: "age1ana", Hosts: []string{"web", "db"}}))
+	must(t, s.SaveEncryptionKey(ctx, domain.EncryptionKey{Name: "laptop", Recipient: "age1laptop2", Hosts: []string{"web"}}))
+	must(t, s.RenameHost(ctx, "web", "web-1"))
+	must(t, s.DeleteHost(ctx, "db"))
+	keys, err := s.ListEncryptionKeys(ctx)
+	must(t, err)
+	want := []domain.EncryptionKey{{Name: "ana", Recipient: "age1ana", Hosts: []string{"web-1"}},
+		{Name: "laptop", Recipient: "age1laptop2", Hosts: []string{"web-1"}}}
+	if !reflect.DeepEqual(keys, want) {
+		t.Fatalf("got %+v", keys)
+	}
+	must(t, s.DeleteHost(ctx, "web-1"))
+	if keys, _ = s.ListEncryptionKeys(ctx); len(keys) != 2 || len(keys[0].Hosts) != 0 || keys[0].AllHosts {
+		t.Fatalf("a key whose Hosts are gone: %+v", keys)
+	}
+
+	for _, c := range []struct {
+		k    domain.EncryptionKey
+		want error
+		says string
+	}{
+		{domain.EncryptionKey{Name: "x", Recipient: s.sealer.Recipient(), AllHosts: true}, domain.ErrInvalid, "Master Key"},
+		{domain.EncryptionKey{Name: "x", Recipient: "age1edge", AllHosts: true}, domain.ErrInvalid, "Host Key of edge"},
+		{domain.EncryptionKey{Name: "x", Recipient: "age1ana", AllHosts: true}, domain.ErrAlreadyExists, ""},
+		{domain.EncryptionKey{Name: "x", Recipient: "age1x", Hosts: []string{"gone"}}, domain.ErrNotFound, `no Host "gone"`},
+		{domain.EncryptionKey{Name: "x", Recipient: "age1x", Hosts: []string{"edge", "edge"}}, domain.ErrAlreadyExists, ""},
+	} {
+		if err := s.SaveEncryptionKey(ctx, c.k); !errors.Is(err, c.want) || !strings.Contains(err.Error(), c.says) {
+			t.Errorf("%+v: %v", c.k, err)
+		}
+	}
+	if keys, _ = s.ListEncryptionKeys(ctx); len(keys) != 2 {
+		t.Fatalf("a refused key was kept: %+v", keys)
+	}
+	must(t, s.DeleteEncryptionKey(ctx, "ana"))
+	wantErr(t, s.DeleteEncryptionKey(ctx, "ana"), domain.ErrNotFound)
+}
+
 func TestTokens(t *testing.T) {
 	s, _ := open(t)
 	tok, plain, err := s.CreateToken(ctx, "ci")
@@ -775,6 +827,8 @@ func TestClosedStore(t *testing.T) {
 		"CreateOp":                func() error { _, err := s.CreateOp(ctx, domain.SyncOperation{App: "web"}); return err }(),
 		"ListOps":                 func() error { _, err := s.ListOps(ctx, "web"); return err }(),
 		"ListRegistryCredentials": func() error { _, err := s.ListRegistryCredentials(ctx); return err }(),
+		"ListEncryptionKeys":      func() error { _, err := s.ListEncryptionKeys(ctx); return err }(),
+		"SaveEncryptionKey":       s.SaveEncryptionKey(ctx, domain.EncryptionKey{Name: "x", Recipient: "age1x"}),
 		"ListHosts":               func() error { _, err := s.ListHosts(ctx); return err }(),
 		"ApplyAgentReport":        func() error { _, err := s.ApplyAgentReport(ctx, "edge", 1, domain.AgentReport{}); return err }(),
 		"CreateInvite":            func() error { _, err := s.CreateInvite(ctx, "edge", time.Now()); return err }(),

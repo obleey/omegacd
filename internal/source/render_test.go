@@ -14,11 +14,13 @@ import (
 	"testing"
 	"time"
 
+	"filippo.io/age"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/obleey/omegacd/internal/domain"
 	"github.com/obleey/omegacd/internal/logging"
+	"github.com/obleey/omegacd/internal/secrets"
 )
 
 func server(t *testing.T) *Server {
@@ -335,5 +337,52 @@ func TestRenderUnwritableBlobs(t *testing.T) {
 	t.Cleanup(func() { os.Chmod(blobs, 0o700) })
 	if _, err := s.Render(t.Context(), domain.RenderSpec{RepoURL: f.dir, Revision: sha}); !errors.Is(err, fs.ErrPermission) {
 		t.Errorf("%v, want a permission error", err)
+	}
+}
+
+// Each secret file not encrypted for exactly the Host's key and the people's keys allowed for it warns, saying which
+// keys are missing and which are still there (Q196, Q293); without recipients nothing is compared. A file that isn't
+// SOPS is left to the Host, which can't decrypt it.
+func TestRenderOutdatedKeys(t *testing.T) {
+	var k [3]string
+	for i := range k {
+		id, err := age.GenerateX25519Identity()
+		if err != nil {
+			t.Fatal(err)
+		}
+		k[i] = id.Recipient().String()
+	}
+	enc := func(name string, keys ...string) string {
+		b, err := secrets.Encrypt([]byte("A=1\n"), name, keys)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	f := newFixture(t)
+	sha := f.commit(map[string]string{"app/compose.yaml": "services: {}\n", "app/.sops.env": enc(".sops.env", k[0], k[1]),
+		"app/sub/b.sops.env": enc("b.sops.env", k[0]), "app/c.sops.env": "not sops\n"})
+	s := server(t)
+	render := func(recipients ...string) []string {
+		t.Helper()
+		r, err := s.Render(t.Context(), domain.RenderSpec{RepoURL: f.dir, Revision: sha, Path: "app", Recipients: recipients})
+		if err != nil || r.Invalid != nil {
+			t.Fatal(err, r.Invalid)
+		}
+		return r.Warnings
+	}
+	if w := render(); w != nil {
+		t.Errorf("no recipients: %q", w)
+	}
+	if w := render(k[1], k[0]); len(w) != 1 || !strings.HasPrefix(w[0], "sub/b.sops.env is encrypted for an outdated set of keys (not for "+shortKey(k[1])+")") {
+		t.Errorf("a key missing: %q", w)
+	}
+	w := render(k[0], k[2])
+	if len(w) != 2 || w[0] != ".sops.env is encrypted for an outdated set of keys (not for "+shortKey(k[2])+"; still for "+shortKey(k[1])+
+		"): run omegacd secrets rekey in a checkout of the repository" || !strings.Contains(w[1], "sub/b.sops.env") {
+		t.Errorf("a key missing and one removed: %q", w)
+	}
+	if shortKey("age1short") != "age1short" {
+		t.Error("a short key shortened")
 	}
 }

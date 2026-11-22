@@ -298,10 +298,32 @@ func (c *Controller) target(ctx context.Context, a domain.Application, fetch boo
 	return sha, r.Checksum, err
 }
 
-// render is a's Desired State at sha.
+// render is a's Desired State at sha; a Compose Application's secret files are compared with the keys of its Host
+// (Q293).
 func (c *Controller) render(ctx context.Context, a domain.Application, sha string) (domain.Rendered, error) {
-	return c.cfg.Source.Render(ctx, domain.RenderSpec{RepoURL: a.RepoURL, Revision: sha, Path: a.Path,
-		ComposeFiles: a.ComposeFiles, Profiles: a.Profiles, Apps: a.Kind == domain.KindApps})
+	spec := domain.RenderSpec{RepoURL: a.RepoURL, Revision: sha, Path: a.Path,
+		ComposeFiles: a.ComposeFiles, Profiles: a.Profiles, Apps: a.Kind == domain.KindApps}
+	if !spec.Apps {
+		var err error
+		if spec.Recipients, err = c.recipients(ctx, a.Host); err != nil {
+			return domain.Rendered{}, fmt.Errorf("the keys of Host %s: %w", a.Host, err)
+		}
+	}
+	return c.cfg.Source.Render(ctx, spec)
+}
+
+// recipients are the keys host's secrets are encrypted for (Q190): none before its Agent enrolled.
+func (c *Controller) recipients(ctx context.Context, host string) ([]string, error) {
+	h, err := c.cfg.Store.GetHost(ctx, host)
+	if errors.Is(err, domain.ErrNotFound) || err == nil && h.AgeRecipient == "" {
+		c.cfg.Log.DebugContext(ctx, "secret files' keys not compared: the Host has no Host Key", "host", host)
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	keys, err := c.cfg.Store.ListEncryptionKeys(ctx)
+	return domain.Recipients(h.AgeRecipient, host, keys), err
 }
 
 // renderAt is a's Desired State at sha: the render kept for tree when there is one (Q120, Q122), else the Source

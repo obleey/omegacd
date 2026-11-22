@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"filippo.io/age"
+
 	"github.com/obleey/omegacd/internal/agents"
 	"github.com/obleey/omegacd/internal/appdef"
 	"github.com/obleey/omegacd/internal/domain"
@@ -531,6 +533,53 @@ func (s *server) deleteRegistryCred(w http.ResponseWriter, r *http.Request) {
 	id, err := pathID(r)
 	if err == nil {
 		err = s.Store.DeleteRegistryCredential(r.Context(), id)
+	}
+	respond(w, http.StatusNoContent, nil, err)
+}
+
+// listEncryptionKeys is the people's public keys Hosts' secrets are encrypted for (Q189, Q199): what secrets init
+// and rekey read.
+func (s *server) listEncryptionKeys(w http.ResponseWriter, r *http.Request) {
+	keys, err := s.Store.ListEncryptionKeys(r.Context())
+	respond(w, http.StatusOK, keys, err)
+}
+
+// saveEncryptionKey adds the key named in the path, or changes it (Q292).
+func (s *server) saveEncryptionKey(w http.ResponseWriter, r *http.Request) {
+	k := domain.EncryptionKey{Name: strings.TrimSpace(r.PathValue("name"))}
+	var req struct {
+		Recipient string   `json:"recipient"`
+		AllHosts  bool     `json:"allHosts"`
+		Hosts     []string `json:"hosts"`
+	}
+	err := decode(w, r, &req)
+	if err == nil && k.Name == "" {
+		err = fmt.Errorf("%w: a key needs a name, such as whose laptop it is", domain.ErrInvalid)
+	}
+	if err == nil {
+		k.Recipient, k.AllHosts, k.Hosts = strings.TrimSpace(req.Recipient), req.AllHosts, req.Hosts
+		if _, perr := age.ParseX25519Recipient(k.Recipient); perr != nil {
+			err = fmt.Errorf("%w: that is not an age public key (age1…): send the public half, never the private key", domain.ErrInvalid) // not echoed: it may be the private one
+		}
+	}
+	if err == nil && k.AllHosts == (len(k.Hosts) > 0) {
+		err = fmt.Errorf("%w: a key covers all Hosts or the ones listed: one of them", domain.ErrInvalid)
+	}
+	if err == nil {
+		err = s.Store.SaveEncryptionKey(r.Context(), k)
+	}
+	if err == nil {
+		s.Log.InfoContext(r.Context(), "encryption key saved", "name", k.Name, "key", k.Recipient, "allHosts", k.AllHosts, "hosts", k.Hosts)
+	}
+	respond(w, http.StatusOK, k, err)
+}
+
+// deleteEncryptionKey removes a key from the list; files stay encrypted for it until a rekey (Q193).
+func (s *server) deleteEncryptionKey(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	err := s.Store.DeleteEncryptionKey(r.Context(), name)
+	if err == nil {
+		s.Log.InfoContext(r.Context(), "encryption key removed", "name", name)
 	}
 	respond(w, http.StatusNoContent, nil, err)
 }

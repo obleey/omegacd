@@ -471,22 +471,43 @@ user `omegacd-agent` made by hand, the user ones into `~/.config/systemd/user/`,
 
 ## Secrets
 
-Commit secrets encrypted with [SOPS](https://github.com/getsops/sops) to the **Host Key** of the Host the Application deploys to. Each Host's Agent makes its own age key when it enrolls and keeps it in its state dir; only its public half reaches OmegaCD, so OmegaCD can decrypt nothing, and a key leaked from one server exposes only that server's secrets.
+Commit secrets encrypted with [SOPS](https://github.com/getsops/sops) for the **Host Key** of the Host the Application deploys to, and for the **people's keys** allowed to open and edit them. Each Host's Agent makes its own age key when it enrolls and keeps it in its state dir; only its public half reaches OmegaCD, so OmegaCD can decrypt nothing, and a key leaked from one server exposes only that server's secrets. Back up each Agent's state dir: it holds the Host Key.
 
-The **Hosts** page shows each Host's public key, and the **Keys** dialog has the ready `.sops.yaml` rule for it (**Copy .sops.yaml for all Hosts** gives one rule per Host); `omegacd host key show HOST` prints it. Back up each Agent's state dir: it holds the Host Key.
+A file encrypted for a Host alone can be opened by no person again, so each person who edits secrets has a key of their own, on OmegaCD's key list:
+
+```sh
+omegacd keygen                                 # your key, where sops reads it (~/.config/sops/age/keys.txt on Linux,
+                                               # ~/Library/Application Support/sops/age/keys.txt on macOS); prints its public half
+omegacd secrets key add ana age1…              # the admin adds it, for all Hosts (or --host web --host db); or Settings → Encryption keys
+```
+
+Then, in your repository's checkout, `omegacd secrets init` writes a `.sops.yaml` rule for each Application of a Host, with its Host Key and the people's keys covering that Host, and `sops` encrypts by it:
+
+```sh
+omegacd secrets init --host prod               # one rule per Application of prod from this repository; --path DIR for more
+sops encrypt --in-place apps/shop/.sops.env    # or sops edit apps/shop/.sops.env
+```
 
 ```yaml
-# .sops.yaml — the paths are up to you
+# .sops.yaml, as secrets init writes it (your own rules stay, after OmegaCD's)
 creation_rules:
-  - path_regex: apps/prod/.*\.sops\.
-    age: age1...   # Host Key of "prod"
-  - path_regex: apps/local/.*\.sops\.
-    age: age1...   # Host Key of "local"
+  # omegacd: Host prod
+  - path_regex: ^apps/shop/.*\.sops\.
+    age: age1…,age1…   # the Host Key of prod, then ana's
 ```
+
+The **Hosts** page shows each Host's public key and copies a ready rule for it (**Copy .sops.yaml for all Hosts** gives one per Host), with the people's keys too; `omegacd host key show HOST` prints the key.
+
+When the key list changes, or a Host's key does, run `omegacd secrets rekey` in the checkout and commit: it refreshes the rules OmegaCD wrote and re-encrypts every secret file for them with your key, the values unchanged. It lists the files it can't open (encrypted only for keys you don't hold, such as a Host's alone): write those values again. Until then, an Application whose files are encrypted for an outdated set of keys warns in its Diff.
+
+- **Keep one key offline** (made with `omegacd keygen --out recovery.key`, stored safely) on the list for recovery. With the list empty, only the Hosts can decrypt: nobody can edit the secrets, and a lost Host loses them; `secrets init` and `import` refuse that unless you pass `--host-only`.
+- **The list decides who can read the secrets, not who can change them**: anyone who can push to the repository can encrypt a new value with a Host's public key. Who may change production is decided in Git (branch protection, reviews).
+- **When someone leaves**, remove their key and rekey, then **change the secret values**: old commits stay readable to the removed key.
+- **A Host whose keys are lost** gets a new Host Key: with Applications, forget them (`app delete NAME --forget`), delete the Host and add it again, create the Applications again, and rekey. Deleting a Host takes it off the keys that named it.
 
 Decryption uses age keys only: files encrypted solely with PGP or a cloud KMS are not decrypted.
 
-A file its Host's key can't decrypt fails the Sync, naming the keys it is encrypted for. Rotating a Host Key comes later ([Roadmap](ROADMAP.md)).
+A file its Host's key can't decrypt fails the Sync, naming the keys it is encrypted for.
 
 Any file whose name contains `.sops.` is decrypted by the Agent at Sync time, with `.sops.` removed from the name — `app.sops.env` becomes `app.env`, `db-password.sops.txt` becomes `db-password.txt`. The work dir keeps only the decrypted file, which is what the containers read; the encrypted one stays in Git:
 
@@ -611,7 +632,7 @@ For each stack it:
 
 - copies the compose files and the **config** they mount (files up to 1 MB, read-only folders up to 1 MB) into `apps/<name>/`; what in them isn't a regular file (a symlink) is left out with a warning, to copy by hand;
 - leaves **data** where it is: writable or big folders become absolute paths on the server (`./wp-content` → `/opt/stacks/blog/wp-content`), named volumes stay as they are;
-- **encrypts secrets** with the server's Host Key: env files with password-like keys, and any it can't read as an env file (with a warning), become `*.sops.env`, Compose secret files and bind-mounted files that hold a key or credential (by name, or by content: private keys, age keys, `password:`/`token=` settings) `*.sops.*` — never as is; one without a file extension is left out with a warning — and passwords written in `environment:` move into an encrypted `.sops.env` (the compose file then says `${WORDPRESS_DB_PASSWORD}`). The key is looked up on your OmegaCD by `--host` (the Host's Agent must have enrolled), or given with `--recipient age1…`;
+- **encrypts secrets** with the server's Host Key: env files with password-like keys, and any it can't read as an env file (with a warning), become `*.sops.env`, Compose secret files and bind-mounted files that hold a key or credential (by name, or by content: private keys, age keys, `password:`/`token=` settings) `*.sops.*` — never as is; one without a file extension is left out with a warning — and passwords written in `environment:` move into an encrypted `.sops.env` (the compose file then says `${WORDPRESS_DB_PASSWORD}`). The keys are the Host Key and the people's keys covering it (see [Secrets](#secrets)), looked up on your OmegaCD by `--host` (the Host's Agent must have enrolled), or given with `--recipient age1…`;
 - adds a definition to `platform/apps.yaml` with `host: vps` and `adopt: true`, Auto-Sync **off**;
 - says what the takeover will do: containers that only use images and volumes keep running; those mounting files from the stack's folder are recreated once.
 
@@ -630,7 +651,10 @@ omegacd host unlock web                    # locked by two connections with one 
 omegacd host rename web web-1              # only while no Application uses it: Git names Hosts
 omegacd host delete web                    # revokes its Agent's key (a key that may be stolen: delete, add again)
 omegacd host key show web                  # its Host Key's public half, for .sops.yaml
-omegacd keygen --out age.key               # a new age key, e.g. the Master Key for a fresh install
+omegacd keygen                             # your age key, where sops reads it (--out FILE elsewhere, --out - to stdout)
+omegacd secrets key add ana age1… [--host web]   # a person's public key on the key list; secrets key list, secrets key remove NAME
+omegacd secrets init --host web            # in your checkout: a .sops.yaml rule per Application of web
+omegacd secrets rekey                      # in your checkout: rules and secret files for the current keys
 ```
 
 ### All commands
@@ -648,7 +672,7 @@ omegacd keygen --out age.key               # a new age key, e.g. the Master Key 
 | `app logs NAME [CONTAINER_OR_SERVICE] [-f] [--tail N]` | |
 | `app export NAME` | Application definition YAML |
 | `app delete NAME [--cascade=false \| --volumes \| --forget] [--yes]` | asks first on a terminal; `--cascade=false` keeps the containers; `--volumes` also deletes the volumes and their data; its Host's Agent deletes, and to an offline Host the delete waits for it; `--forget` removes it from OmegaCD only, for an Application whose Host is gone for good |
-| `import --host NAME [STACK]... [--recipient age1…] [--apps-dir apps] [--definitions platform/apps.yaml] [--repo-url URL] [--dry-run] [--force]` | run in your repository's checkout — see [Moving an existing server](#moving-an-existing-server-to-omegacd) |
+| `import --host NAME [STACK]... [--recipient age1…] [--host-only] [--apps-dir apps] [--definitions platform/apps.yaml] [--repo-url URL] [--dry-run] [--force]` | run in your repository's checkout — see [Moving an existing server](#moving-an-existing-server-to-omegacd) |
 | `host list` | |
 | `host add NAME`, `host approve NAME FINGERPRINT` | enrolls a Host's Agent with a single-use invite (valid an hour), approved by its key's fingerprint; Applications on it then deploy through the Agent, which decrypts their secrets and reports their Health, containers, resources and logs (a Sync to it while it's offline waits for it; offline, the app shows its last known state and since when the Host is gone). The Agent connects over https only, except to its own machine; `OMEGACD_AGENT_CA_FILE` trusts a private CA |
 | `host allow NAME [CIDR]...` | the addresses the Host's Agent may connect from (behind a reverse proxy: set `OMEGACD_TRUSTED_PROXIES`); none: anywhere |
@@ -657,7 +681,10 @@ omegacd keygen --out age.key               # a new age key, e.g. the Master Key 
 | `host rotate NAME`, `host unlock NAME`, `host delete NAME` | a new signing key for the connected Agent; let a Host locked by two connections with its key connect again; delete a Host, revoking its Agent's key |
 | `host key show HOST` | the public half of its Host Key; the private half never leaves the Host |
 | `backup FILE` | the Control Plane's backup: the database and the encrypted Git credentials, no key; owner-only, never overwrites a file |
-| `keygen [--out FILE]` | a new age key, like `age-keygen`; works offline, never overwrites a file |
+| `keygen [--out FILE]` | a new age key, like `age-keygen`, by default where `sops` reads keys (a key there already is kept); `--out -` prints it; works offline, never overwrites a file |
+| `secrets key add NAME age1… [--host H]...`, `secrets key list`, `secrets key remove NAME` | the people's public keys Hosts' secrets are encrypted for, each for all Hosts or the ones named |
+| `secrets init --host NAME [--path DIR]... [--repo-url URL] [--host-only]` | in your checkout: a `.sops.yaml` rule per Application of the Host, for its Host Key and the people's keys covering it |
+| `secrets rekey [--host-only]` | in your checkout: the rules OmegaCD wrote refreshed from the current keys, every secret file re-encrypted with your key; exit 1 lists the ones it couldn't open |
 
 Every command talking to a server takes `--server`, `--token` and `-o table|json`; `OMEGACD_SERVER` and `OMEGACD_TOKEN` override the saved login. Colors are used only on a terminal and honour `NO_COLOR`.
 

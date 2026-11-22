@@ -208,6 +208,14 @@ export interface HostKey {
 	createdAt?: string;
 }
 
+/** A person's age public key that Hosts' secrets are encrypted for besides each Host Key (Q189): never a private key. */
+export interface EncryptionKey {
+	name: string;
+	recipient: string;
+	allHosts: boolean;
+	hosts: string[]; // the Hosts it covers when not allHosts
+}
+
 export interface APIToken {
 	id: number;
 	name: string;

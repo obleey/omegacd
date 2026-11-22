@@ -124,6 +124,21 @@ CREATE TABLE renders (
 CREATE TRIGGER hosts_rename AFTER UPDATE OF name ON hosts BEGIN
 	UPDATE invites SET host = NEW.name WHERE host = OLD.name;
 END;
+`, `
+-- M6-08: people's age public keys Hosts' secrets are encrypted for (Q189), each for all Hosts or the ones listed (Q291)
+CREATE TABLE encryption_keys (
+	name TEXT PRIMARY KEY,
+	recipient TEXT NOT NULL UNIQUE,
+	all_hosts INTEGER NOT NULL
+);
+CREATE TABLE encryption_key_hosts (
+	key TEXT NOT NULL REFERENCES encryption_keys(name) ON DELETE CASCADE ON UPDATE CASCADE,
+	host TEXT NOT NULL REFERENCES hosts(name) ON DELETE CASCADE,
+	PRIMARY KEY (key, host)
+);
+CREATE TRIGGER hosts_rename_keys AFTER UPDATE OF name ON hosts BEGIN
+	UPDATE encryption_key_hosts SET host = NEW.name WHERE host = OLD.name;
+END;
 `}
 
 type Store struct {
@@ -513,6 +528,72 @@ func (s *Store) SaveRegistryCredential(ctx context.Context, c domain.RegistryCre
 
 func (s *Store) DeleteRegistryCredential(ctx context.Context, id int64) error {
 	return affected(s.db.ExecContext(ctx, `DELETE FROM registry_credentials WHERE id = ?`, id))
+}
+
+// ---- encryption keys ----
+
+func (s *Store) ListEncryptionKeys(ctx context.Context) ([]domain.EncryptionKey, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT k.name, k.recipient, k.all_hosts, h.host FROM encryption_keys k
+		LEFT JOIN encryption_key_hosts h ON h.key = k.name ORDER BY k.name, h.host`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	keys := []domain.EncryptionKey{}
+	for rows.Next() {
+		var k domain.EncryptionKey
+		var host sql.NullString
+		if err := rows.Scan(&k.Name, &k.Recipient, &k.AllHosts, &host); err != nil { // coverage: unreachable, scanning fixed columns into their own types
+			return nil, err
+		}
+		if n := len(keys); n == 0 || keys[n-1].Name != k.Name {
+			k.Hosts = []string{}
+			keys = append(keys, k)
+		}
+		if host.Valid {
+			keys[len(keys)-1].Hosts = append(keys[len(keys)-1].Hosts, host.String)
+		}
+	}
+	return keys, rows.Err()
+}
+
+func (s *Store) SaveEncryptionKey(ctx context.Context, k domain.EncryptionKey) error {
+	if k.Recipient == s.sealer.Recipient() {
+		return fmt.Errorf("%w: that's the Control Plane's Master Key, which never decrypts an Application's secrets", domain.ErrInvalid)
+	}
+	var host string
+	switch err := s.db.QueryRowContext(ctx, `SELECT name FROM hosts WHERE age_recipient = ?`, k.Recipient).Scan(&host); {
+	case err == nil:
+		return fmt.Errorf("%w: that's the Host Key of %s, which its rules get anyway", domain.ErrInvalid, host)
+	case !errors.Is(err, sql.ErrNoRows):
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil { // coverage: unreachable, the query above just read this database
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO encryption_keys (name, recipient, all_hosts) VALUES (?,?,?)
+		ON CONFLICT (name) DO UPDATE SET recipient = excluded.recipient, all_hosts = excluded.all_hosts`,
+		k.Name, k.Recipient, k.AllHosts); err != nil {
+		return mapErr(err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM encryption_key_hosts WHERE key = ?`, k.Name); err != nil { // coverage: unreachable, the insert above just wrote to this database
+		return err
+	}
+	for _, h := range k.Hosts {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO encryption_key_hosts (key, host) VALUES (?,?)`, k.Name, h); err != nil {
+			if se := (*sqlite.Error)(nil); errors.As(err, &se) && se.Code() == sqlite3.SQLITE_CONSTRAINT_FOREIGNKEY {
+				return fmt.Errorf("%w: no Host %q", domain.ErrNotFound, h)
+			}
+			return mapErr(err)
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) DeleteEncryptionKey(ctx context.Context, name string) error {
+	return affected(s.db.ExecContext(ctx, `DELETE FROM encryption_keys WHERE name = ?`, name))
 }
 
 // ---- hosts ----
