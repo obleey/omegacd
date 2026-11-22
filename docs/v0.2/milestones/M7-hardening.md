@@ -49,6 +49,10 @@ repository over SSH, and images from a private registry.
 The scenarios, with steps and expected results, are TESTING.md's "Real-world run (v0.2, M7-04)" checklist: each ticket
 that builds one of its parts adds its exact commands.
 
+From M6-06 (Q284): the Control Plane once through Cloudflare, proxied DNS in front of a `deploy/proxy` proxy: the
+Agents connect and stay, the CLI with an API token works, and `host allow` sees real client addresses once the README's
+Cloudflare step is done.
+
 **Done when:** every row of that checklist is run and recorded in TESTING.md with what was found and fixed.
 
 ### M7-05 · Documentation

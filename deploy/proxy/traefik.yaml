@@ -1,0 +1,48 @@
+# Traefik in front of OmegaCD's Control Plane, with Let's Encrypt, from compose.yaml's folder:
+#   printf 'OMEGACD_DOMAIN=omegacd.example.com\nOMEGACD_ACME_EMAIL=you@example.com\n' >> .env  # ports 80, 443 open
+#   docker compose -f compose.yaml -f proxy/traefik.yaml up -d
+# Traefik reads the labels below through the Docker socket (read-only here; it can still see every container).
+# OmegaCD trusts X-Forwarded-For from Traefik's address alone, fixed on a network of the two (Q278); if 172.30.255.0/29
+# clashes with a network you have, set another in .env: OMEGACD_PROXY_NET=172.30.254 (the first three numbers).
+services:
+  omegacd:
+    ports: !override # this machine only: an Agent beside it (Q238); everyone else through Traefik
+      - "127.0.0.1:${OMEGACD_PORT:-8080}:8080"
+    environment:
+      OMEGACD_TRUSTED_PROXIES: ${OMEGACD_PROXY_NET:-172.30.255}.2
+    networks:
+      default:
+      omegacd-proxy: { ipv4_address: "${OMEGACD_PROXY_NET:-172.30.255}.3" }
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: ${COMPOSE_PROJECT_NAME}_omegacd-proxy
+      traefik.http.routers.omegacd.rule: Host(`${OMEGACD_DOMAIN:?set OMEGACD_DOMAIN in .env}`)
+      traefik.http.routers.omegacd.entrypoints: websecure
+      traefik.http.routers.omegacd.tls.certresolver: le
+      traefik.http.services.omegacd.loadbalancer.server.port: "8080"
+
+  traefik:
+    image: traefik:v3.6
+    command:
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.le.acme.email=${OMEGACD_ACME_EMAIL:?set OMEGACD_ACME_EMAIL in .env}
+      - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
+    ports: ["80:80", "443:443"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-acme:/letsencrypt
+    networks:
+      omegacd-proxy: { ipv4_address: "${OMEGACD_PROXY_NET:-172.30.255}.2" } # the one OmegaCD trusts
+    restart: unless-stopped
+
+networks:
+  omegacd-proxy:
+    ipam:
+      config: [{ subnet: "${OMEGACD_PROXY_NET:-172.30.255}.0/29" }] # fixed addresses only: none handed out twice
+
+volumes:
+  traefik-acme:

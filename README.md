@@ -83,7 +83,7 @@ docker compose logs omegacd | grep "initial admin password"
 
 Back up the Master Key (`age.key` in the `omegacd-keys` volume) and the Source Server's `source.key` (in `source-data`) apart from [`omegacd backup`](#backup-and-recovery)'s files: without them, registry and Git credentials have to be entered again.
 
-Open http://localhost:8080, log in as `admin` with the password from the log, and set a new password (required on first login). Put OmegaCD behind a TLS-terminating reverse proxy before exposing it.
+Open http://localhost:8080, log in as `admin` with the password from the log, and set a new password (required on first login). Put OmegaCD behind a TLS-terminating [reverse proxy](#reverse-proxy) before exposing it.
 
 Then [add a Host](#hosts) — this machine too, if Applications should run on it.
 
@@ -123,6 +123,23 @@ by it.
 ### Option 3: CLI only
 
 For laptops and CI, download the `darwin_*` or `linux_*` archive from [Releases](https://github.com/obleey/omegacd/releases) and put `omegacd` on your `PATH`. It is the same binary as the server — see [CLI](#cli).
+
+### Reverse proxy
+
+OmegaCD serves plain http on 8080; put a proxy with TLS in front before anyone else reaches it. Agents on other machines need it: they take `https://` only, plain `http://` only on loopback. [`deploy/proxy`](deploy/proxy) has one Compose override each for **Caddy** (automatic HTTPS), **Traefik** (Let's Encrypt) and **nginx** (your certificate, e.g. certbot's), all tested; fetch the folder next to `compose.yaml`, set what its file names at the top in `.env`, and start both together:
+
+```sh
+echo OMEGACD_DOMAIN=omegacd.example.com >> .env
+docker compose -f compose.yaml -f proxy/caddy.yaml up -d
+```
+
+Each puts the proxy and the Control Plane on a network of their own, the proxy at a fixed address, and trusts `X-Forwarded-For` from that address alone (`OMEGACD_TRUSTED_PROXIES`), so the client's address is the real one for login throttling and [`host allow`](#hosts-and-keys) and nobody can claim another. The Control Plane's own port stays open on `127.0.0.1` for an Agent on the same machine. If `172.30.255.0/29` clashes with a network you have, set `OMEGACD_PROXY_NET` (e.g. `172.30.254`). WebSockets and event streams pass through all three; the Agents ping every 30 s, so idle timeouts of a minute or more (nginx's 60 s) don't cut them.
+
+**A proxy you already run** (one Traefik or Caddy for every site on the machine): attach `omegacd` to its network, route your domain to `omegacd:8080`, and set `OMEGACD_TRUSTED_PROXIES` to the proxy's address, or that network's subnet, knowing every container on it is then trusted to name a client.
+
+**Behind Cloudflare** (proxied DNS in front of your proxy): nothing changes for OmegaCD; WebSockets pass and API tokens reach it. Your proxy sees Cloudflare's edge as the client: let it restore the real one (Cloudflare's `CF-Connecting-IP`, or its [address ranges](https://www.cloudflare.com/ips/) as trusted proxies in Caddy or nginx's `real_ip`), or add those ranges to `OMEGACD_TRUSTED_PROXIES`, if `host allow` or login throttling should see real clients. With **Cloudflare Access** in front, keep it to the UI: a Bypass rule for `/api/agents/`, `/api/webhooks/` and API-token calls to `/api/`, which can't log in with a browser (or give the CLI a service token).
+
+A proxy between the Control Plane and a [standalone Source Server](#standalone-source-server) must pass TLS through: see there.
 
 ### Kubernetes
 

@@ -1,0 +1,30 @@
+# nginx in front of OmegaCD's Control Plane, with your certificate (e.g. certbot's fullchain.pem and privkey.pem),
+# from compose.yaml's folder:
+#   echo OMEGACD_TLS_DIR=/etc/letsencrypt/live/omegacd.example.com >> .env    # ports 80 and 443 open
+#   docker compose -f compose.yaml -f proxy/nginx.yaml up -d
+# OmegaCD trusts X-Forwarded-For from nginx's address alone, fixed on a network of the two (Q278); if 172.30.255.0/29
+# clashes with a network you have, set another in .env: OMEGACD_PROXY_NET=172.30.254 (the first three numbers).
+services:
+  omegacd:
+    ports: !override # this machine only: an Agent beside it (Q238); everyone else through nginx
+      - "127.0.0.1:${OMEGACD_PORT:-8080}:8080"
+    environment:
+      OMEGACD_TRUSTED_PROXIES: ${OMEGACD_PROXY_NET:-172.30.255}.2
+    networks:
+      default:
+      omegacd-proxy: { ipv4_address: "${OMEGACD_PROXY_NET:-172.30.255}.3" }
+
+  nginx:
+    image: nginx:1.29-alpine
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./proxy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${OMEGACD_TLS_DIR:?set OMEGACD_TLS_DIR in .env}:/etc/nginx/certs:ro # follows certbot's links in live/
+    networks:
+      omegacd-proxy: { ipv4_address: "${OMEGACD_PROXY_NET:-172.30.255}.2" } # the one OmegaCD trusts
+    restart: unless-stopped
+
+networks:
+  omegacd-proxy:
+    ipam:
+      config: [{ subnet: "${OMEGACD_PROXY_NET:-172.30.255}.0/29" }] # fixed addresses only: none handed out twice
