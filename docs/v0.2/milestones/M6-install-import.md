@@ -131,11 +131,14 @@ The import encrypts for the Host's key plus the people's keys allowed for it, an
 **Done when:** today's importer tests pass through a fake Agent, and an integration test imports from a real Agent.
 
 ### M6-06 · Reverse proxy documentation
-**Status:** todo
+**Status:** done (2026-11-22, PR #160)
 **Depends on:** M3-01
 
 Examples for Caddy, Traefik and nginx in front of the Control Plane (WebSocket upgrade, timeouts, trusted proxies),
 and the TLS-passthrough note for a proxy in front of a standalone Source Server (Q51).
+
+Settled before it (Q277–Q285): Compose overrides in `deploy/proxy/` tested as shipped; trust only the proxy's fixed
+address on a network of the two; Cloudflare in front works unchanged, a README paragraph and a hand check in M7-04.
 
 **Done when:** each example is tested in the e2e suite or by hand and recorded in TESTING.md.
 

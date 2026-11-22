@@ -12,7 +12,7 @@ cd "$(dirname "$0")"
 # at debug, the most a log says: the scripts holding known secrets check that none of them is in it (Q62)
 export OMEGACD_LOG_LEVEL=${OMEGACD_LOG_LEVEL:-debug}
 scripts=("$@")
-[ ${#scripts[@]} -gt 0 ] || scripts=(mounts compose-views secrets migrations child-rollback adopt readme-walkthrough webhook source-server source-paths recovery payloads agent enrollment agent-sync agent-ops agent-self deploy-compose old-database startup systemd)
+[ ${#scripts[@]} -gt 0 ] || scripts=(mounts compose-views secrets migrations child-rollback adopt readme-walkthrough webhook source-server source-paths recovery payloads agent enrollment agent-sync agent-ops agent-self deploy-compose proxies old-database startup systemd)
 failed=()
 for s in "${scripts[@]}"; do
 	out=$(bash "./${s%.sh}.sh" 2>&1)

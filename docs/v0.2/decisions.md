@@ -948,3 +948,35 @@ The design M6-04 was built to, kept for when it comes back (branch `park/m6-04-k
 - **Q276** Kubernetes is deferred until after v0.2, as the RHEL family is (Q61): OmegaCD is for Docker hosts, and teams
   on Kubernetes deploy with Argo CD or Flux. v0.2 drops `deploy/kubernetes.yaml`, `install.sh`'s `kubernetes` target
   (`OMEGACD_TARGET` with it: full mode is Compose) and the README's Kubernetes option; M6-04 waits in the ROADMAP.
+
+## Reverse proxies (before M6-06, 2026-11-22)
+
+- **Q277** The examples are files, tested as shipped: `deploy/proxy/` holds one Compose override per proxy
+  (`caddy.yaml` with its `Caddyfile`, `traefik.yaml`, `nginx.yaml` with its `nginx.conf`), used as
+  `docker compose -f compose.yaml -f proxy/<name>.yaml up -d`; the README's "Reverse proxy" section links them.
+- **Q278** OmegaCD trusts `X-Forwarded-For` from the proxy's address alone: each override puts the proxy and the
+  Control Plane on a network of their own, both at fixed addresses (proxy `.2`, Control Plane `.3` of
+  `OMEGACD_PROXY_NET`, default `172.30.255`, a `/29`), so neither the network's gateway (Docker's own relays of
+  loopback traffic) nor any other container is trusted, and no address is handed out twice. nginx replaces the header
+  instead of appending to it, as Caddy and Traefik do. The Control Plane's port stays published on `127.0.0.1` only,
+  for an Agent on the same machine (Q238). A proxy the operator already runs: trust its address or its network,
+  knowing every container on that network is then trusted.
+- **Q279** TLS: Caddy's automatic HTTPS (`OMEGACD_DOMAIN`), Traefik's Let's Encrypt resolver over the HTTP challenge
+  (`OMEGACD_ACME_EMAIL`), nginx with a certificate in `OMEGACD_TLS_DIR` (certbot's names). nginx asks Docker's DNS
+  again every 10 s, so a recreated Control Plane is found; its body limit is 5 MB, a webhook's.
+- **Q280** `test/e2e/proxies.sh` runs the three side by side in front of the Compose Control Plane: https with http
+  redirected, a Secure cookie, an API token, an Agent over `wss://` trusting the proxy's certificate
+  (`OMEGACD_AGENT_CA_FILE`), the client's address from the proxy's header only (a client's own one changing nothing,
+  `host allow` keeping and dropping the Agent by it), 75 s of quiet past nginx's 60 s idle timeout, and a recreated
+  Control Plane. Certificates: Caddy's own for `localhost`, a test CA's for Traefik and nginx.
+- **Q281** A proxy in front of a standalone Source Server: the README's TLS-passthrough note stays as it is, no
+  example (`compose.yaml` keeps the two on one network).
+- **Q282** `install.sh` offers no proxy; its closing line points at `deploy/proxy` and the README section.
+- **Q283** Cloudflare needs nothing of OmegaCD: in front of the operator's proxy it passes WebSockets and API tokens;
+  the README says how to restore the real client address (Cloudflare's ranges trusted by the proxy, or in
+  `OMEGACD_TRUSTED_PROXIES`). No Tunnel example and no Cloudflare-specific configuration.
+- **Q284** Cloudflare is tried by hand once, in M7-04's real-world run (proxied DNS in front of the proxy), not in
+  the e2e suite: that would need an account, a domain and a token on every run.
+- **Q285** With Cloudflare Access, the README says to keep it to the UI: a Bypass rule for the Agents'
+  `/api/agents/`, `/api/webhooks/` and API-token calls, which can't log in with a browser, or a service token for the
+  CLI.

@@ -1,0 +1,34 @@
+# Caddy in front of OmegaCD's Control Plane, with automatic HTTPS (Let's Encrypt), from compose.yaml's folder:
+#   echo OMEGACD_DOMAIN=omegacd.example.com >> .env    # its DNS name points at this machine; ports 80 and 443 open
+#   docker compose -f compose.yaml -f proxy/caddy.yaml up -d
+# OmegaCD trusts X-Forwarded-For from Caddy's address alone, fixed on a network of the two (Q278); if 172.30.255.0/29
+# clashes with a network you have, set another in .env: OMEGACD_PROXY_NET=172.30.254 (the first three numbers).
+services:
+  omegacd:
+    ports: !override # this machine only: an Agent beside it (Q238); everyone else through Caddy
+      - "127.0.0.1:${OMEGACD_PORT:-8080}:8080"
+    environment:
+      OMEGACD_TRUSTED_PROXIES: ${OMEGACD_PROXY_NET:-172.30.255}.2
+    networks:
+      default:
+      omegacd-proxy: { ipv4_address: "${OMEGACD_PROXY_NET:-172.30.255}.3" }
+
+  caddy:
+    image: caddy:2.10
+    ports: ["80:80", "443:443", "443:443/udp"]
+    environment:
+      OMEGACD_DOMAIN: ${OMEGACD_DOMAIN:?set OMEGACD_DOMAIN in .env}
+    volumes:
+      - ./proxy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data # its certificates
+    networks:
+      omegacd-proxy: { ipv4_address: "${OMEGACD_PROXY_NET:-172.30.255}.2" } # the one OmegaCD trusts
+    restart: unless-stopped
+
+networks:
+  omegacd-proxy:
+    ipam:
+      config: [{ subnet: "${OMEGACD_PROXY_NET:-172.30.255}.0/29" }] # fixed addresses only: none handed out twice
+
+volumes:
+  caddy-data:
