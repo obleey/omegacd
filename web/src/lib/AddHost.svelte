@@ -2,7 +2,7 @@
 	// Add Host (M5-01, Q37, Q43): a name, the command that enrolls its Agent with a single-use invite, a live wait for
 	// the Agent, its fingerprint compared, Approve.
 	import { api, enc, errMsg, get } from './api.ts';
-	import { agentCommand, composeAgent, httpWarning } from './addhost.ts';
+	import { agentCommand, composeAgent, httpWarning, installAgent } from './addhost.ts';
 	import Dialog from './Dialog.svelte';
 	import { when } from './display.svelte.ts';
 	import Icon from './Icon.svelte';
@@ -15,7 +15,7 @@
 	let invite = $state('');
 	let expiresAt = $state('');
 	let url = $state(location.origin); // Agents may reach OmegaCD at another name than this browser (Q160)
-	let tab = $state<'cli' | 'docker'>('docker');
+	let tab = $state<'install' | 'docker' | 'cli'>('install');
 	let error = $state('');
 	let busy = $state(false);
 	let version = $state('');
@@ -35,7 +35,9 @@
 	let host = $derived(invite ? live.hosts[name] : undefined);
 	let expired = $derived(!!expiresAt && !host?.fingerprint && now > new Date(expiresAt).getTime());
 	let warning = $derived(httpWarning(url.trim()));
-	let command = $derived(tab === 'cli' ? agentCommand(url.trim(), invite) : composeAgent(url.trim(), invite, version));
+	let command = $derived(
+		tab === 'install' ? installAgent(url.trim(), invite, version) : tab === 'cli' ? agentCommand(url.trim(), invite) : composeAgent(url.trim(), invite, version)
+	);
 
 	async function getInvite(e?: SubmitEvent) {
 		e?.preventDefault();
@@ -111,16 +113,21 @@
 				</div>
 				{#if warning}<p class="warn small" role="alert"><Icon name="alert" size={14} />{warning}</p>{/if}
 				<div class="seg" role="group" aria-label="How to run the Agent">
+					<button type="button" aria-pressed={tab === 'install'} onclick={() => (tab = 'install')}><Icon name="download" size={15} />install.sh</button>
 					<button type="button" aria-pressed={tab === 'docker'} onclick={() => (tab = 'docker')}><Icon name="container" size={15} />Docker Compose</button>
 					<button type="button" aria-pressed={tab === 'cli'} onclick={() => (tab = 'cli')}><Icon name="terminal" size={15} />Command line</button>
 				</div>
-				<pre class="cmd">{command}</pre>
-				<div class="row">
-					<button type="button" class="primary" onclick={copy}><Icon name="file-text" size={15} />Copy</button>
-					<span class="muted small">
-						{#if tab === 'cli'}With <code>omegacd</code> installed on {name}; as a user in the <code>docker</code> group, or with rootless Docker or Podman.{:else}On {name}, as a user in the <code>docker</code> group; rootless Docker or Podman: the lines in <code>agent.yaml</code>'s comment. The invite is single-use and valid until {when(expiresAt, 'time')}.{/if}
-					</span>
-				</div>
+				{#if command}
+					<pre class="cmd">{command}</pre>
+					<div class="row">
+						<button type="button" class="primary" onclick={copy}><Icon name="file-text" size={15} />Copy</button>
+						<span class="muted small">
+							{#if tab === 'install'}On {name}, as the user whose Docker or Podman the Agent uses (it asks for <code>sudo</code> where needed): it installs the Agent as a systemd service, or in a container without apt. The invite is single-use and valid until {when(expiresAt, 'time')}.{:else if tab === 'cli'}With <code>omegacd</code> installed on {name}; as a user in the <code>docker</code> group, or with rootless Docker or Podman.{:else}On {name}, as a user in the <code>docker</code> group; rootless Docker or Podman: the lines in <code>agent.yaml</code>'s comment. The invite is single-use and valid until {when(expiresAt, 'time')}.{/if}
+						</span>
+					</div>
+				{:else}
+					<p class="muted small">This is a development build of OmegaCD: <code>install.sh</code> installs releases only. Use Docker Compose or the command line.</p>
+				{/if}
 			</li>
 			<li aria-live="polite">
 				<h3>Approve its key</h3>

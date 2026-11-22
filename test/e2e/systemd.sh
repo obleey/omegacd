@@ -55,6 +55,7 @@ uninstall() {
   sudo systemctl daemon-reload
   for u in omegacd-agent omegacd; do ! sysuser $u || sudo userdel $u; done
   rm -f "$HOME/.config/containers/containers.conf.d/omegacd-agent.conf"
+  systemctl --user disable --now podman-restart.service >/dev/null 2>&1 # install.sh enabled it (Q265)
   for s in "unix://$DSOCK" "unix://$PSOCK" ""; do
     for p in e2e-sys e2e-rl e2e-pm; do
       ids=$(DOCKER_HOST=$s docker ps -aq --filter label=com.docker.compose.project=$p 2>/dev/null)
@@ -92,11 +93,20 @@ fi
 
 uninstall # what an aborted run left
 sudo rm -rf $COV && sudo install -d -m 1777 $COV
-# this checkout as a package, twice: a newer version to upgrade to
+# this checkout as a package, twice (a newer version to upgrade to), as releases publish it for install.sh (Q266)
+ARCH=$(dpkg --print-architecture)
+mkdir -p "$T/dl"
 for v in 1 2; do
-  make -s -C "$ROOT" deb DEB_BIN="$BIN" VERSION=v0.0.1-e2e.$v DEB_OUT="$T/omegacd-$v.deb" >> "$T/apt.log" 2>&1 ||
+  make -s -C "$ROOT" deb DEB_BIN="$BIN" VERSION=v0.0.1-e2e.$v DEB_OUT="$T/dl/omegacd_v0.0.1-e2e.${v}_linux_$ARCH.deb" >> "$T/apt.log" 2>&1 ||
     { echo "FAIL  make deb"; tail -5 "$T/apt.log"; exit 1; }
 done
+(cd "$T/dl" && sha256sum *.deb > SHA256SUMS)
+# inst VERSION ENGINE [SETTING=VALUE…]: install.sh's agent mode with systemd, this checkout's copy (Q269)
+inst() {
+  local v=$1 engine=$2; shift 2
+  env OMEGACD_VERSION=v0.0.1-e2e.$v OMEGACD_DOWNLOAD="file://$T/dl" OMEGACD_MODE=agent OMEGACD_AGENT_INSTALL=systemd \
+    OMEGACD_AGENT_ENGINE="$engine" "$@" sh "$ROOT/deploy/install.sh" > "$T/install.out" 2>&1 </dev/null
+}
 # the units as shipped; a drop-in only logs at debug and collects coverage
 dropin() { printf '[Service]\nEnvironment=OMEGACD_LOG_LEVEL=debug GOCOVERDIR=%s\n' $COV; }
 
@@ -131,16 +141,16 @@ connected() { $1 | grep -c "connected to the Control Plane, approved"; }
 
 # --- the package, and its system unit on rootful Docker (Q242, Q255)
 START=$(date +%s)
-apt install "$T/omegacd-1.deb"
+apt install "$T/dl/omegacd_v0.0.1-e2e.1_linux_$ARCH.deb"
 check "the package installs: the Agent's user in the docker group, its units enabled, not started without agent.env" \
   'id -nG omegacd-agent | grep -qw docker && systemctl -q is-enabled omegacd-agent omegacd-agent-restore && ! systemctl -q is-active omegacd-agent && ! systemctl -q is-enabled omegacd || { tail -20 "$T/apt.log"; false; }'
 INVITE=$("$BIN" host add sys | grep -o 'omegacd-invite-[0-9a-f]*' | head -1)
-printf 'OMEGACD_AGENT_CONTROL_PLANE=%s\nOMEGACD_AGENT_INVITE=%s\n' http://127.0.0.1:18080 "$INVITE" |
-  sudo install -m 0640 -g omegacd-agent /dev/stdin /etc/omegacd/agent.env # as the README has it
 sudo mkdir -p $SD/omegacd-agent.service.d $SD/omegacd-agent-restore.service.d
 dropin | sudo tee $SD/omegacd-agent.service.d/e2e.conf $SD/omegacd-agent-restore.service.d/e2e.conf >/dev/null
 sudo systemctl daemon-reload
-sudo systemctl start omegacd-agent.service
+inst 1 docker OMEGACD_AGENT_CONTROL_PLANE=http://127.0.0.1:18080 OMEGACD_AGENT_INVITE="$INVITE"
+check "install.sh agent writes agent.env (0640, the Agent's group) and starts the system unit; it prints the fingerprint" \
+  '[ "$(sudo stat -c "%U:%G %a" /etc/omegacd/agent.env)" = "root:omegacd-agent 640" ] && grep -q "Approve it in OmegaCD.s UI (Hosts) if its fingerprint is: SHA256:" "$T/install.out" || { cat "$T/install.out"; false; }'
 check "the system unit starts the Agent as omegacd-agent, not root, and it enrolls" \
   'waitfor "syslog | grep -q \"waiting for an admin to approve\"" && [ "$(ps -o uid= -p "$(systemctl show -p MainPID --value omegacd-agent)" | tr -d " ")" = "$(id -u omegacd-agent)" ]'
 approve sys syslog
@@ -170,18 +180,16 @@ if [ "$REBOOT" = setup ]; then :; else
   check "and the Agent, started, reconnects" 'waitfor "[ \$(connected syslog) -gt $n ]" 90'
 fi
 
-# --- the user unit, ENGINE NAME SOCKET: rootless Docker or Podman (Q244)
+# --- the user unit, ENGINE NAME SOCKET INSTALL-ENGINE VERSION: rootless Docker or Podman (Q244)
 user_unit() {
   local engine=$1 app=$2 sock=$3
   START=$(date +%s)
-  mkdir -p "$UD/omegacd-agent.service.d" "$UD/omegacd-agent-restore.service.d" "$HOME/.config/omegacd"
+  mkdir -p "$UD/omegacd-agent.service.d" "$UD/omegacd-agent-restore.service.d"
   dropin | tee "$UD/omegacd-agent.service.d/e2e.conf" "$UD/omegacd-agent-restore.service.d/e2e.conf" >/dev/null
-  INVITE=$("$BIN" host add "$app" | grep -o 'omegacd-invite-[0-9a-f]*' | head -1)
-  (umask 077 && printf 'OMEGACD_AGENT_CONTROL_PLANE=http://127.0.0.1:18080\nOMEGACD_AGENT_INVITE=%s\nDOCKER_HOST=unix://%s\n' \
-    "$INVITE" "$sock" > "$HOME/.config/omegacd/agent.env")
-  systemctl --user daemon-reload
-  systemctl --user enable omegacd-agent-restore.service >/dev/null 2>&1
-  systemctl --user enable --now omegacd-agent.service >/dev/null 2>&1
+  local INVITE; INVITE=$("$BIN" host add "$app" | grep -o 'omegacd-invite-[0-9a-f]*' | head -1)
+  inst "$5" "$4" OMEGACD_AGENT_CONTROL_PLANE=http://127.0.0.1:18080 OMEGACD_AGENT_INVITE="$INVITE"
+  check "$engine: install.sh agent sets up the user units, lingering, with the engine's socket in agent.env" \
+    '[ "$(stat -c %a "$HOME/.config/omegacd/agent.env")" = 600 ] && grep -qx "DOCKER_HOST=unix://$sock" "$HOME/.config/omegacd/agent.env" && systemctl --user -q is-enabled omegacd-agent omegacd-agent-restore && [ -f "/var/lib/systemd/linger/$(id -un)" ] || { cat "$T/install.out"; false; }'
   check "$engine: the user unit starts the Agent as the user, and it enrolls" \
     'waitfor "ulog | grep -q \"waiting for an admin to approve\"" && ulog | grep -q "rootless=true"'
   approve "$app" ulog
@@ -193,7 +201,7 @@ user_unit() {
 # the user units need the user's systemd (lingering), which the test servers have and CI's runners don't
 usersd() { [ -n "${OMEGACD_TEST_ALL:-}" ] || { [ -S "$1" ] && systemctl --user show-environment >/dev/null 2>&1; }; }
 if usersd "$DSOCK"; then
-  user_unit "rootless Docker" e2e-rl "$DSOCK"
+  user_unit "rootless Docker" e2e-rl "$DSOCK" rootless-docker 1
   if [ "$REBOOT" != setup ]; then
     n=$(connected ulog)
     systemctl --user stop omegacd-agent docker
@@ -211,7 +219,9 @@ if [ "$REBOOT" != setup ]; then
   pid() { $1 show -p MainPID --value omegacd-agent; }
   sp=$(pid systemctl) up=$(pid "systemctl --user") app=$(ctr e2e-sys "") n=$(connected syslog)
   usersd "$DSOCK" && un=$(connected ulog)
-  apt install "$T/omegacd-2.deb"
+  inst 2 docker # a rerun, with no settings: the new version, agent.env kept (Q267)
+  check "install.sh run again upgrades the package, keeping agent.env" \
+    'sudo grep -q "^OMEGACD_AGENT_INVITE=$INVITE\$" /etc/omegacd/agent.env || { cat "$T/install.out"; false; }'
   check "an upgrade restarts the system Agent, which reconnects with its key, while the app's container runs on" \
     '[ "$(dpkg-query -W -f "\${Version}" omegacd)" = 0.0.1~e2e.2 ] && [ "$(pid systemctl)" != "$sp" ] && waitfor "[ \$(connected syslog) -gt $n ]" 90 && [ "$(ctr e2e-sys "")" = "$app" ] && shows e2e-sys ""'
   if usersd "$DSOCK"; then
@@ -222,13 +232,10 @@ if [ "$REBOOT" != setup ]; then
 fi
 
 if [ "$REBOOT" != setup ] && usersd "$PSOCK"; then
-  # Q246: the drop-in in the user's containers.conf.d; the API service reads it when it starts next
-  mkdir -p "$HOME/.config/containers/containers.conf.d"
-  cp "$ROOT/packaging/containers.conf.d/omegacd-agent.conf" "$HOME/.config/containers/containers.conf.d/"
-  systemctl --user stop podman.service 2>/dev/null
-  user_unit "rootless Podman" e2e-pm "$PSOCK"
-  check "rootless Podman: the containers.conf drop-in caps the app's log at 10 MiB" \
-    'ps -eo args | grep "[c]onmon" | grep "$(ctr e2e-pm unix://$PSOCK)" | grep -q -- "--log-size-max 10485760"'
+  # Q246, Q265: install.sh copies the package's drop-in, which the API service reads when it starts next
+  user_unit "rootless Podman" e2e-pm "$PSOCK" podman 2 # after the upgrade
+  check "rootless Podman: install.sh enables podman-restart.service, and the drop-in caps the app's log at 10 MiB" \
+    'systemctl --user -q is-enabled podman-restart.service && ps -eo args | grep "[c]onmon" | grep "$(ctr e2e-pm unix://$PSOCK)" | grep -q -- "--log-size-max 10485760"'
   n=$(connected ulog)
   systemctl --user stop omegacd-agent
   DOCKER_HOST=unix://$PSOCK docker stop -t 1 "$(ctr e2e-pm unix://$PSOCK)" >/dev/null
@@ -249,7 +256,7 @@ if [ "$REBOOT" != setup ]; then
   check "apt remove stops the Agents, the user's too, and takes the binary, keeping its user, state and agent.env" \
     '! systemctl -q is-active omegacd-agent && ! systemctl --user -q is-active omegacd-agent && [ ! -e /usr/bin/omegacd ] && id omegacd-agent >/dev/null && sudo test -f /var/lib/omegacd-agent/host.key && sudo test -f /etc/omegacd/agent.env'
   uunits
-  apt install "$T/omegacd-2.deb"
+  apt install "$T/dl/omegacd_v0.0.1-e2e.2_linux_$ARCH.deb"
   check "installed again, the Agent starts by itself and reconnects with its key" 'waitfor "[ \$(connected syslog) -gt $n ]" 90'
 
   # the Control Plane's unit (Q253, Q254): not enabled by the package; enabled, it makes its Master Key in its folder

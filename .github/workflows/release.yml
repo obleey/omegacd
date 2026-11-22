@@ -68,7 +68,9 @@ jobs:
               [ "$os" != linux ] || make deb DEB_ARCH=$arch DEB_BIN="build/${name}/omegacd" VERSION="$VERSION" DEB_OUT="dist/${name}.deb"
             done
           done
-          (cd dist && sha256sum *.tar.gz *.deb > SHA256SUMS)
+          # install.sh installs this release (Q234, Q266)
+          sed "s/@VERSION@/${VERSION}/" deploy/install.sh > dist/install.sh
+          (cd dist && sha256sum *.tar.gz *.deb install.sh > SHA256SUMS)
           cat dist/SHA256SUMS
       - name: Create GitHub Release
         env:

@@ -6,7 +6,7 @@ See [architecture](../architecture.md#install-q10-q21-q26-q33-q35-q51).
 Order (Q229): M6-02, M6-03, M6-09, M6-01, M6-04, M6-06, M6-08, M6-05, then M6-10.
 
 ### M6-01 · install.sh: full and agent modes
-**Status:** todo
+**Status:** done (2026-11-22, PR #158)
 **Depends on:** M4-04, M3-02
 
 `install.sh` asks **full** (Control Plane, UI, Source Server) or **agent** (Control Plane URL + invite; container or
@@ -33,6 +33,14 @@ a rootless engine it enables the package's user units (`systemctl --user enable`
 `/usr/share/omegacd/containers.conf.d/omegacd-agent.conf` into the user's `~/.config/containers/containers.conf.d/`.
 
 **Done when:** both modes are tested on a clean machine, rootful and rootless.
+
+Settled before it (Q262–Q269): kubernetes keeps its key step until M6-04; the settings (`OMEGACD_MODE`, the Agent's own
+names, `OMEGACD_AGENT_INSTALL`, `OMEGACD_AGENT_ENGINE` in Q103's order); run as the engine's user, `sudo` only where
+needed; agent mode's system unit, user units with lingering (Podman: drop-in, `podman-restart`) or container (Q240's
+rootless values, Q252's refusal); the release attaches it with its version, the `.deb` checked against `SHA256SUMS`,
+`main`'s copy refuses; a rerun upgrades; Add Host's install.sh tab first; `systemd.sh` and `deploy-compose.sh` install
+through it, so the gate's real reboot covers what it set up. The test servers aren't fresh machines: each test purges
+what it installs first.
 
 ### M6-02 · Compose files
 **Status:** done (2026-11-20, PR #154)
@@ -103,6 +111,9 @@ Docker.
 From M6-03 (Q251): its README section and `deploy/kubernetes.yaml` still have v0.1's keys secret, an `age.key` made
 beforehand and a required `known_hosts` (`--from-file=age.key --from-file=known_hosts`); v0.2's Control Plane makes
 its Master Key (Q115) and `known_hosts` is optional (Git over SSH only, Q106).
+
+From M6-01 (Q262): `install.sh`'s kubernetes target still makes the keys Secret (`keygen`, `known_hosts`) for that
+manifest; drop the step with it, and test the target here.
 
 **Done when:** installs in OrbStack's Kubernetes and manages a remote Agent.
 

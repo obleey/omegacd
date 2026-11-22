@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { agentCommand, composeAgent, httpWarning, imageTag } from './addhost.ts';
+import { agentCommand, composeAgent, httpWarning, imageTag, installAgent } from './addhost.ts';
 
 test('the image is this version, a development build the latest release', () => {
 	assert.equal(imageTag('v0.2.0'), '0.2.0');
@@ -27,6 +27,14 @@ test('the commands carry the address and the invite', () => {
 		assert.ok(c.includes(want), want);
 	assert.ok(!c.includes('ALLOW_ROOT'), 'never root (Q236)');
 	assert.ok(composeAgent('http://127.0.0.1:8080', 'i', '(devel)').includes('/obleey/omegacd/main/deploy/agent.yaml'), 'a development build: main');
+});
+
+test('install.sh is the release\'s, in agent mode; a development build has none', () => {
+	assert.equal(
+		installAgent('https://cd.example.com', 'omegacd-invite-x', 'v0.2.0-rc.1'),
+		'curl -fsSL https://github.com/obleey/omegacd/releases/download/v0.2.0-rc.1/install.sh | OMEGACD_MODE=agent OMEGACD_AGENT_CONTROL_PLANE=https://cd.example.com OMEGACD_AGENT_INVITE=omegacd-invite-x sh'
+	);
+	assert.equal(installAgent('https://cd.example.com', 'i', '(devel)'), '');
 });
 
 test('Agents connect over https, or plain http to their own machine', () => {

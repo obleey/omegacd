@@ -884,3 +884,41 @@ First written as Q208–Q210 on `main`; renumbered Q220–Q222, as M5-06 to M5-0
   files outside the folders purge removes (a work dir allowed on disk), so a deleted user's uid, given to the next
   system user, would own them; and a user of that name may not be the package's (an admin's `useradd`, or the test
   servers' own login `omegacd`, which `sysusers` keeps). Purge says it kept them; a reinstall reuses them.
+
+## install.sh (before M6-01, 2026-11-22)
+
+- **Q262** `install.sh full` drops the age-keygen step for compose only: `deploy/kubernetes.yaml` still mounts v0.1's
+  keys Secret read-only, so its target keeps making the Secret until M6-04 changes the manifest and drops the step,
+  tested in OrbStack's Kubernetes there. M6-01 tests compose and agent mode.
+- **Q263** Settings for unattended runs: `OMEGACD_MODE` (`full`, `agent`); full: `OMEGACD_TARGET` (`compose`,
+  `kubernetes`) and today's; agent: the Agent's own `OMEGACD_AGENT_CONTROL_PLANE` and `OMEGACD_AGENT_INVITE`,
+  `OMEGACD_AGENT_INSTALL` (`systemd`, the default with apt; `container`, Q232) and `OMEGACD_AGENT_ENGINE` (`docker`,
+  `rootless-docker`, `podman`; unset: the first found in Q103's order, asked with it as default when several are).
+  Whatever is missing is asked on the terminal.
+- **Q264** It runs as the user whose engine the Agent uses, with `sudo` only for what needs root (`apt install`,
+  `/etc/omegacd/agent.env`, lingering when not allowed without); as root it offers rootful Docker only.
+- **Q265** Agent mode installs the release's `.deb`. Rootful Docker: `/etc/omegacd/agent.env` (0640
+  `root:omegacd-agent`), `omegacd-agent` started. Rootless Docker or Podman: `~/.config/omegacd/agent.env` (0600,
+  `DOCKER_HOST` for Podman), lingering, the user's `omegacd-agent-restore` enabled and `omegacd-agent` started; Podman
+  also the package's drop-in copied, `podman.socket` restarted and `podman-restart.service` enabled, so containers with
+  `restart: always` come back at boot with their files (Q59). Container: `agent.yaml` and `.env` in
+  `/opt/omegacd-agent` (`~/omegacd-agent` on a rootless engine) with Q240's rootless values; on rootless Docker it
+  refuses an `http://127.0.0.1` Control Plane (Q252), naming the user unit. Each ends printing the fingerprint to
+  approve.
+- **Q266** The release workflow attaches `install.sh` with `@VERSION@` filled in, listed in `SHA256SUMS` (Q234); it
+  fetches the `.deb`, `compose.yaml` and `agent.yaml` of that version and checks the `.deb` against `SHA256SUMS`.
+  `OMEGACD_DOWNLOAD` (`file://` too) and `OMEGACD_IMAGE` point it at local builds for tests. From `main`, unfilled, it
+  stops: use the release's `install.sh`, or set `OMEGACD_VERSION`. The README's one-liner is
+  `…/releases/latest/download/install.sh`.
+- **Q267** Running it again upgrades: the newer `.deb` (which restarts the Agent, Q256), the container's new image in
+  `.env` and `up -d`, compose's new image; `agent.env` rewritten only from values given (an enrolled Agent ignores an
+  invite); the Master Key never touched.
+- **Q268** Add Host gets an **install.sh** tab, first and the default, with the release's one-liner and the invite
+  filled in; a development build's tab says it needs a release and points at Docker Compose and Command line, which
+  stay.
+- **Q269** The tests drive the existing scripts through `install.sh`, as Q260 did for the package: `systemd.sh`
+  installs the system and both user units with `install.sh agent` from a local `.deb` (lingering, Podman's drop-in and
+  `podman-restart` included; coverage drop-ins placed first); `deploy-compose.sh` brings up the Control Plane with
+  `install.sh full` (the coverage image in `OMEGACD_IMAGE`, its overrides in `COMPOSE_FILE`) and the Agent with
+  `install.sh agent` in a container, rootful and rootless; plus a rerun upgrading with the state kept, and `main`'s
+  copy refusing. The gate's real reboot covers what it installed.

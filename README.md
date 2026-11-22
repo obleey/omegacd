@@ -66,10 +66,10 @@ OmegaCD (the Control Plane) makes an [age](https://github.com/FiloSottile/age) k
 **Quick install** — on a Linux server with Docker, or into a Kubernetes cluster with `kubectl`:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/obleey/omegacd/main/deploy/install.sh | sh
+curl -fsSL https://github.com/obleey/omegacd/releases/latest/download/install.sh | sh
 ```
 
-[`install.sh`](deploy/install.sh) asks for the port (Compose) or the kubectl context and namespace (Kubernetes, always confirmed), creates the Master Key, starts OmegaCD and prints the URL and the initial admin password. It needs no `age` or `sops` on the server (`omegacd keygen` makes the key), never replaces an existing key, and runs unattended with `OMEGACD_TARGET`, `OMEGACD_VERSION` and the settings listed at its top. The options below do the same by hand.
+[`install.sh`](deploy/install.sh) asks **full** (OmegaCD itself) or **agent** (a [Host's](#hosts) Agent). Full mode asks for the port (Compose) or the kubectl context and namespace (Kubernetes, always confirmed), starts OmegaCD and prints the URL and the initial admin password; then open the UI and add a Host. Agent mode takes OmegaCD's address and an invite (Hosts → Add Host shows the line with both filled in) and installs the Agent for the engine it finds (install Docker or Podman first; on Debian with its recommended packages, as apt does by default: a minimal image without them lacks the `docker` command and Podman's networking): the [`.deb`](#option-2-binary--systemd)'s systemd service where apt is there (as its own user with rootful Docker, as you with rootless Docker or Podman), or [in a container](#the-agent-in-a-container). Run it as the user whose Docker or Podman the Agent uses; it asks for `sudo` where it needs root. Each release has its own `install.sh`, which installs that release; running it again upgrades to it and keeps the keys and settings. It runs unattended with the settings listed at its top (`OMEGACD_MODE`, `OMEGACD_TARGET`, `OMEGACD_AGENT_CONTROL_PLANE`, …). The options below do the same by hand.
 
 ### Option 1: Docker Compose (recommended)
 
@@ -367,8 +367,9 @@ OMEGACD_AGENT_CONTROL_PLANE=https://omegacd.example.com OMEGACD_AGENT_INVITE=ome
 omegacd host approve web-1 SHA256:…          # after comparing the fingerprint the Agent printed with host list's
 ```
 
-In the UI it is **Hosts → Add Host**: name the Host, copy the commands that run its Agent (in a container with
-[`deploy/agent.yaml`](#the-agent-in-a-container), or the command line with `omegacd` installed), and watch it connect; compare the fingerprint it shows with the one
+In the UI it is **Hosts → Add Host**: name the Host, copy the commands that run its Agent (`install.sh`'s one-liner,
+in a container with [`deploy/agent.yaml`](#the-agent-in-a-container), or the command line with `omegacd` installed), and
+watch it connect; compare the fingerprint it shows with the one
 the Agent printed, and **Approve**. **Cancel** removes the Host with its invite (and the key of an Agent that enrolled
 meanwhile); **Close** leaves it waiting for its Agent. Agents connect over https only: open OmegaCD at the address they reach it at.
 Each Host then has a card, live: online or last seen, its Agent's version (flagged **outdated** when older than
@@ -417,7 +418,8 @@ machine (a private CA: `OMEGACD_AGENT_CA_FILE`, with the file mounted); or run i
 
 ### The Agent with systemd
 
-The `.deb` (see [Binary + systemd](#option-2-binary--systemd)) has the Agent's units. With **rootful Docker**, its system
+`install.sh` in agent mode does what follows (see [Quick install](#install)). The `.deb` (see
+[Binary + systemd](#option-2-binary--systemd)) has the Agent's units. With **rootful Docker**, its system
 unit runs the Agent as its own user, `omegacd-agent`, in the `docker` group, never root. The package enables it; it
 starts once its settings are there:
 
