@@ -37,7 +37,7 @@ jobs:
           retention-days: 1
 
   binaries:
-    name: Binaries and GitHub Release
+    name: Binaries, packages and GitHub Release
     needs: web
     runs-on: ubuntu-24.04
     steps:
@@ -64,9 +64,11 @@ jobs:
                 -o "build/${name}/omegacd" ./cmd/omegacd
               cp LICENSE README.md "build/${name}/"
               tar -C build -czf "dist/${name}.tar.gz" "${name}"
+              # the .deb with its systemd units (M6-09), named like the archive (Q259)
+              [ "$os" != linux ] || make deb DEB_ARCH=$arch DEB_BIN="build/${name}/omegacd" VERSION="$VERSION" DEB_OUT="dist/${name}.deb"
             done
           done
-          (cd dist && sha256sum *.tar.gz > SHA256SUMS)
+          (cd dist && sha256sum *.tar.gz *.deb > SHA256SUMS)
           cat dist/SHA256SUMS
       - name: Create GitHub Release
         env:

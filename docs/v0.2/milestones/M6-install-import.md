@@ -27,6 +27,11 @@ Full mode keeps compose and kubernetes, and drops v0.1's `age-keygen` step, `kno
 release workflow attaches it to each GitHub Release with the version filled in, and tests point it at local builds
 (Q234).
 
+From M6-09 (Q255): the package makes `omegacd-agent`, so agent mode writes `/etc/omegacd/agent.env` (0640,
+`root:omegacd-agent`) after installing it, then starts the Agent (the package starts it only if the file was there); on
+a rootless engine it enables the package's user units (`systemctl --user enable`, with lingering) and on Podman copies
+`/usr/share/omegacd/containers.conf.d/omegacd-agent.conf` into the user's `~/.config/containers/containers.conf.d/`.
+
 **Done when:** both modes are tested on a clean machine, rootful and rootless.
 
 ### M6-02 · Compose files
@@ -165,7 +170,7 @@ keeps it deployable and editable with the user's key; tested end to end; and the
 (dummy) source.
 
 ### M6-09 · .deb packages
-**Status:** todo
+**Status:** done (2026-11-22, PR #157)
 **Depends on:** M6-03
 
 Every release builds `.deb` packages for amd64 and arm64 (nfpm, in the release workflow) and attaches them to the
@@ -176,7 +181,18 @@ with the RHEL family and a signed apt/dnf repository (`apt upgrade`) later, both
 
 **Done when:** on the test servers (Ubuntu 24.04 and Debian 13, amd64 and arm64) the package installs, the Agent runs and survives a
 reboot with its apps restored, an upgrade to a newer package keeps the state and the apps running, and uninstalling
-leaves no unit, user or folder but the state the admin chose to keep.
+leaves no unit or folder but the state the admin chose to keep; the system users stay, as Debian's packages leave
+them, so nothing they own is left to a reused uid (Q261).
+
+Settled before it (Q253–Q260): one `omegacd` package (nfpm through `go run`, `make deb`) with the Control Plane's unit
+too, never enabled by it; `/etc/omegacd` root's, the Master Key in `/etc/omegacd/keys/`; users from `sysusers.d`, the
+Agent's system units enabled with `ConditionPathExists=/etc/omegacd/agent.env`, the user units and Podman's drop-in
+shipped, never enabled; an upgrade restarts the running Agents, the lingering users' too; remove keeps the state, purge
+removes the Agent's, never the Control Plane's data or Master Key, nor the users (Q261); assets named like the archives;
+`systemd.sh` tests the package, and the gate's real reboot with it.
+Found while building it (Q261): purge deleting the users would leave the kept Master Key, and any file the Agent wrote
+outside its folders, to whichever user gets the uid next, and could delete a user the package didn't make (the test
+servers' own login is `omegacd`, which `sysusers` keeps); so the users stay.
 
 ### M6-10 · Decrypted files as bind mounts
 **Status:** todo

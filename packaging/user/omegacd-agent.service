@@ -1,5 +1,5 @@
-# OmegaCD's Agent as a user service, for rootless Docker or Podman (Q10): into ~/.config/systemd/user/, with
-# loginctl enable-linger, so it runs from boot without a login. See README.md, "The Agent with systemd".
+# OmegaCD's Agent as a user service, for rootless Docker or Podman (Q10): in the .deb, enabled by each user (systemctl
+# --user enable), with loginctl enable-linger, so it runs from boot without a login. See README.md, "The Agent with systemd".
 [Unit]
 Description=OmegaCD Agent: deploys this Host's Applications
 Documentation=https://github.com/obleey/omegacd

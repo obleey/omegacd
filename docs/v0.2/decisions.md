@@ -845,3 +845,42 @@ First written as Q208–Q210 on `main`; renumbered Q220–Q222, as M5-06 to M5-0
   refusing plain http beyond loopback (Q95); beside its Control Plane on rootless Docker the user unit fits.
   `deploy-compose.sh`'s rootless Docker variant connects through a TLS front on the server's own address, its private
   CA in `OMEGACD_AGENT_CA_FILE`.
+
+## .deb packages (before M6-09, 2026-11-21)
+
+- **Q253** One package, `omegacd`: the binary, the Agent's system units, the user units (`/usr/lib/systemd/user/`)
+  and the Control Plane's `omegacd.service`, which the package never enables. "Binary + systemd" becomes installing
+  the `.deb` and `systemctl enable --now omegacd`: one install path for both (Q232).
+- **Q254** `/etc/omegacd` is root's, 0755, made by the package; the Agent's `agent.env` stays in it (Q242), and the
+  Control Plane's Master Key moves to `/etc/omegacd/keys/age.key`, a folder of its own (0700, `omegacd`'s), which its
+  unit may write (`ReadWritePaths`; `ProtectSystem=full` makes `/etc` read-only). Before, the Control Plane's steps
+  made `/etc/omegacd` 0750 `omegacd`'s and the Agent's 0755: on one machine the second lost.
+- **Q255** Installing creates both users from a `sysusers.d` file (`omegacd-agent` in `docker`, the group created
+  when Docker isn't there yet) and enables the Agent's system units, as Debian enables a package's services
+  (`deb-systemd-helper`, which keeps an admin's disable); `omegacd-agent.service` gains
+  `ConditionPathExists=/etc/omegacd/agent.env`, so a machine without it (a Podman Host, a Control Plane alone) skips it
+  at boot. The Agent starts at install only when `agent.env` is there. The Control Plane's unit and the user units are
+  never enabled by the package (`--global` would start an Agent for every user); Podman's drop-in goes to
+  `/usr/share/omegacd/containers.conf.d/`, copied by the operator or `install.sh`, not into `/etc/containers`, which
+  would change Podman for every user.
+- **Q256** An upgrade restarts what runs (`systemctl try-restart` of `omegacd` and `omegacd-agent`; the work dir and
+  the apps stay, Q243) and the running user Agents of lingering users (`systemctl --user -M USER@`), which would
+  otherwise run the old binary until a reboot.
+- **Q257** `apt remove` stops the units and keeps the users, `/etc/omegacd` and both state dirs. `apt purge` also
+  removes the Agent's state (`/var/lib/omegacd-agent`, its keys: an Agent is enrolled again), `agent.env`,
+  `/run/omegacd` and both users (amended by Q261: not the users); never the Control Plane's data or its Master Key (losing it loses every sealed
+  credential), which it says it kept; never users' homes (the user units' state). Removing stops running user Agents
+  too: their binary is gone.
+- **Q258** nfpm builds it, through `go run …/nfpm@v2.48.0` in `make deb` (as buf runs): the release workflow and the
+  tests use the same, so nothing is added to nix or the test servers. The binary is static: no `Depends`.
+- **Q259** The release's packages are named like its archives, `omegacd_v0.2.0-rc.1_linux_amd64.deb`, and listed in
+  `SHA256SUMS`; the version inside is Debian's `0.2.0~rc.1`, so a release sorts after its release candidates.
+- **Q260** `systemd.sh` installs this checkout as a `.deb` (the coverage binary inside), not copied units: the system
+  unit and the user units as the package ships them, so the gate's real reboot (Q249) proves the package; it adds an
+  upgrade (a higher version: the Agents restart on it with the same key while the app's container runs on), `apt
+  remove` and `apt purge`, and checks the Control Plane's unit. The README's systemd steps become the `.deb`.
+- **Q261** (while building M6-09; amends Q257) `apt purge` deletes neither user, as Debian's packages leave their
+  system users: it keeps the Control Plane's data and Master Key, owned by `omegacd`, and the Agent may have written
+  files outside the folders purge removes (a work dir allowed on disk), so a deleted user's uid, given to the next
+  system user, would own them; and a user of that name may not be the package's (an admin's `useradd`, or the test
+  servers' own login `omegacd`, which `sysusers` keeps). Purge says it kept them; a reinstall reuses them.

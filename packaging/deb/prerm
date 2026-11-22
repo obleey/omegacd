@@ -1,0 +1,8 @@
+#!/bin/sh
+# remove: the services stopped, the users' Agents too, as their binary goes (Q257); an upgrade's postinst restarts them
+set -e
+[ "$1" = remove ] && [ -d /run/systemd/system ] || exit 0
+systemctl stop omegacd.service omegacd-agent.service || true
+for u in $(ls /var/lib/systemd/linger 2>/dev/null); do
+  systemctl --user -M "$u@" stop omegacd-agent.service 2>/dev/null || true
+done

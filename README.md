@@ -93,78 +93,32 @@ Then [add a Host](#hosts) — this machine too, if Applications should run on it
 
 ### Option 2: Binary + systemd
 
-Download the `linux_amd64` or `linux_arm64` archive from [GitHub Releases](https://github.com/obleey/omegacd/releases) and verify it:
+On Debian or Ubuntu, install the `.deb` from [GitHub Releases](https://github.com/obleey/omegacd/releases) (`amd64` or
+`arm64`): `/usr/bin/omegacd`, the Control Plane's unit and the [Agent's](#the-agent-with-systemd). Verify it, install
+it, then enable the Control Plane, which the package doesn't do by itself:
 
 ```sh
 VERSION=v0.2.0 ARCH=amd64
-curl -LO https://github.com/obleey/omegacd/releases/download/$VERSION/omegacd_${VERSION}_linux_${ARCH}.tar.gz
+curl -LO https://github.com/obleey/omegacd/releases/download/$VERSION/omegacd_${VERSION}_linux_${ARCH}.deb
 curl -LO https://github.com/obleey/omegacd/releases/download/$VERSION/SHA256SUMS
 sha256sum --ignore-missing -c SHA256SUMS
-tar -xzf omegacd_${VERSION}_linux_${ARCH}.tar.gz
-sudo install -m 0755 omegacd_${VERSION}_linux_${ARCH}/omegacd /usr/bin/omegacd
-```
-
-Create a service user and its folder:
-
-```sh
-sudo useradd --system --home-dir /var/lib/omegacd --shell /usr/sbin/nologin omegacd
-sudo install -d -m 0750 -o omegacd -g omegacd /etc/omegacd
-```
-
-The Master Key, `/etc/omegacd/age.key`, is created at the first start (logged with its path); keep a copy apart from your backups (see [Backup and recovery](#backup-and-recovery)).
-
-Install the unit from [`packaging/omegacd.service`](packaging/omegacd.service) and start it:
-
-```sh
-sudo curl -Lo /etc/systemd/system/omegacd.service https://raw.githubusercontent.com/obleey/omegacd/main/packaging/omegacd.service
-sudo systemctl daemon-reload
+sudo apt install ./omegacd_${VERSION}_linux_${ARCH}.deb
 sudo systemctl enable --now omegacd
 journalctl -u omegacd | grep "initial admin password"
 ```
 
-<details>
-<summary><code>packaging/omegacd.service</code></summary>
+It runs as the system user `omegacd`, with its data in `/var/lib/omegacd`. The Master Key, `/etc/omegacd/keys/age.key`,
+is created at the first start (logged with its path); keep a copy apart from your backups (see
+[Backup and recovery](#backup-and-recovery)). The unit is
+[`packaging/omegacd.service`](packaging/omegacd.service); further settings (webhook secret, trusted proxies, …) go into
+`/etc/omegacd/omegacd.env` (mode 0600).
 
-```ini
-[Unit]
-Description=OmegaCD - GitOps continuous delivery for Docker Compose
-Documentation=https://github.com/obleey/omegacd
-After=network-online.target
-Wants=network-online.target
+**Upgrade:** `sudo apt install` the newer `.deb`; it restarts what runs. `apt remove` stops it and keeps everything;
+`apt purge` also removes the Agent's state, but never the Control Plane's data, its Master Key or the system users.
 
-[Service]
-Type=simple
-User=omegacd
-Group=omegacd
-ExecStart=/usr/bin/omegacd server
-Restart=on-failure
-RestartSec=5
-
-Environment=OMEGACD_ADDR=:8080
-Environment=OMEGACD_DATA=/var/lib/omegacd
-Environment=OMEGACD_AGE_KEY_FILE=/etc/omegacd/age.key
-EnvironmentFile=-/etc/omegacd/omegacd.env
-
-StateDirectory=omegacd
-StateDirectoryMode=0750
-
-NoNewPrivileges=yes
-ProtectSystem=full
-ProtectHome=yes
-PrivateTmp=yes
-ProtectKernelTunables=yes
-ProtectKernelModules=yes
-ProtectControlGroups=yes
-RestrictSUIDSGID=yes
-LockPersonality=yes
-
-[Install]
-WantedBy=multi-user.target
-```
-
-</details>
-
-Further settings (webhook secret, trusted proxies, …) go into `/etc/omegacd/omegacd.env` (mode 0600). **Upgrade:** replace `/usr/bin/omegacd` and `systemctl restart omegacd`. Its Hosts each run an Agent: [the Agent with systemd](#the-agent-with-systemd).
+Elsewhere, the `linux_amd64` and `linux_arm64` archives hold the binary alone: put it at `/usr/bin/omegacd` and the units
+from [`packaging/`](packaging/) into `/etc/systemd/system/`, with a system user `omegacd` and `/etc/omegacd/keys` owned
+by it.
 
 ### Option 3: CLI only
 
@@ -463,20 +417,15 @@ machine (a private CA: `OMEGACD_AGENT_CA_FILE`, with the file mounted); or run i
 
 ### The Agent with systemd
 
-The binary as a service, from [`packaging/`](packaging/), with `omegacd` installed as `/usr/bin/omegacd` (as in
-[Binary + systemd](#option-2-binary--systemd)). With **rootful Docker**, the system unit runs it as its own user in the
-`docker` group, never root:
+The `.deb` (see [Binary + systemd](#option-2-binary--systemd)) has the Agent's units. With **rootful Docker**, its system
+unit runs the Agent as its own user, `omegacd-agent`, in the `docker` group, never root. The package enables it; it
+starts once its settings are there:
 
 ```sh
-sudo useradd --system --home-dir /var/lib/omegacd-agent --shell /usr/sbin/nologin --groups docker omegacd-agent
-sudo install -d -m 0755 /etc/omegacd
+sudo apt install ./omegacd_${VERSION}_linux_${ARCH}.deb
 printf 'OMEGACD_AGENT_CONTROL_PLANE=%s\nOMEGACD_AGENT_INVITE=%s\n' https://omegacd.example.com omegacd-invite-… |
   sudo install -m 0640 -g omegacd-agent /dev/stdin /etc/omegacd/agent.env
-for u in omegacd-agent omegacd-agent-restore; do
-  sudo curl -fsSLo /etc/systemd/system/$u.service https://raw.githubusercontent.com/obleey/omegacd/main/packaging/$u.service
-done
-sudo systemctl daemon-reload
-sudo systemctl enable omegacd-agent-restore && sudo systemctl enable --now omegacd-agent
+sudo systemctl start omegacd-agent
 journalctl -u omegacd-agent | grep fingerprint         # approve it in the UI
 ```
 
@@ -486,27 +435,29 @@ the Agent runs, and would make their missing files root-owned folders: `omegacd-
 first, decrypted from the Agent's cache, so every app comes back as it was, OmegaCD reachable or not. Further settings
 (`omegacd agent --help`) go into `agent.env`; `omegacd agent rollback` runs as the Agent's user with its settings:
 `sudo -u omegacd-agent sh -c 'set -a; . /etc/omegacd/agent.env; STATE_DIRECTORY=/var/lib/omegacd-agent omegacd agent rollback'`.
+Upgrading the package restarts the Agent; the apps run on. `apt purge` removes its keys and state too: the Host is then
+enrolled again.
 
-With **rootless Docker or Podman**, the user units run it as you, lingering so it starts with the machine:
+With **rootless Docker or Podman**, the package's user units run it as you, lingering so it starts with the machine:
 
 ```sh
-mkdir -p ~/.config/systemd/user ~/.config/omegacd
+mkdir -p ~/.config/omegacd
 (umask 077; printf 'OMEGACD_AGENT_CONTROL_PLANE=%s\nOMEGACD_AGENT_INVITE=%s\n' https://omegacd.example.com omegacd-invite-… \
   > ~/.config/omegacd/agent.env)
 echo "DOCKER_HOST=unix://$XDG_RUNTIME_DIR/podman/podman.sock" >> ~/.config/omegacd/agent.env   # Podman only
-for u in omegacd-agent omegacd-agent-restore; do
-  curl -fsSLo ~/.config/systemd/user/$u.service https://raw.githubusercontent.com/obleey/omegacd/main/packaging/user/$u.service
-done
 sudo loginctl enable-linger "$USER"
-systemctl --user daemon-reload
 systemctl --user enable omegacd-agent-restore && systemctl --user enable --now omegacd-agent
 ```
 
 Its keys are in `~/.local/share/omegacd-agent`, its work dir is `$XDG_RUNTIME_DIR/omegacd`, and the restore unit runs
 before rootless Docker's `docker.service` and Podman's `podman-restart.service` (enable it for containers with
 `restart: always` to come back at boot). **Podman** also needs its events and logs in files, which Self-Heal reads,
-with the logs capped: [`packaging/containers.conf.d/omegacd-agent.conf`](packaging/containers.conf.d/omegacd-agent.conf)
-into `~/.config/containers/containers.conf.d/`, then `systemctl --user restart podman.socket`.
+with the logs capped: copy `/usr/share/omegacd/containers.conf.d/omegacd-agent.conf` (from
+[`packaging/containers.conf.d/`](packaging/containers.conf.d/omegacd-agent.conf)) into
+`~/.config/containers/containers.conf.d/`, then `systemctl --user restart podman.socket`.
+
+Without the package, the units are in [`packaging/`](packaging/): the system ones into `/etc/systemd/system/` with the
+user `omegacd-agent` made by hand, the user ones into `~/.config/systemd/user/`, and the binary at `/usr/bin/omegacd`.
 
 ## Secrets
 

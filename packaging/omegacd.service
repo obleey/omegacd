@@ -1,5 +1,4 @@
-# OmegaCD as a systemd service. See README.md, "Binary + systemd".
-# Install: cp omegacd.service /etc/systemd/system/ && systemctl daemon-reload && systemctl enable --now omegacd
+# OmegaCD as a systemd service, in the .deb, not enabled: systemctl enable --now omegacd. See README.md, "Binary + systemd".
 [Unit]
 Description=OmegaCD - GitOps continuous delivery for Docker Compose
 Documentation=https://github.com/obleey/omegacd
@@ -16,7 +15,8 @@ RestartSec=5
 
 Environment=OMEGACD_ADDR=:8080
 Environment=OMEGACD_DATA=/var/lib/omegacd
-Environment=OMEGACD_AGE_KEY_FILE=/etc/omegacd/age.key
+# the Master Key, made at the first start in a folder of its own, which ProtectSystem leaves writable (Q254)
+Environment=OMEGACD_AGE_KEY_FILE=/etc/omegacd/keys/age.key
 # Optional settings (webhook secret, trusted proxies, ...) go here, mode 0600:
 EnvironmentFile=-/etc/omegacd/omegacd.env
 
@@ -26,6 +26,7 @@ StateDirectoryMode=0750
 
 NoNewPrivileges=yes
 ProtectSystem=full
+ReadWritePaths=/etc/omegacd/keys
 ProtectHome=yes
 PrivateTmp=yes
 ProtectKernelTunables=yes
