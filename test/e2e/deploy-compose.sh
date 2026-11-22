@@ -83,7 +83,7 @@ cover() {
 out=$(env -u OMEGACD_VERSION OMEGACD_MODE=agent sh "$ROOT/deploy/install.sh" 2>&1 </dev/null); rc=$?
 check "install.sh's development copy refuses, pointing at a release's (Q266)" '[ $rc -ne 0 ] && echo "$out" | grep -q "development copy: use the install.sh of a release"'
 
-setup $CP "$T/cp" compose.yaml "$T/cp-cover.yaml" OMEGACD_MODE=full OMEGACD_TARGET=compose OMEGACD_DIR="$T/cp" OMEGACD_PORT=18080
+setup $CP "$T/cp" compose.yaml "$T/cp-cover.yaml" OMEGACD_MODE=full OMEGACD_DIR="$T/cp" OMEGACD_PORT=18080
 check "install.sh full brings up deploy/compose.yaml's Control Plane and Source Server, naming the next step (Q233)" \
   'waitfor "curl -sf $API/version >/dev/null" && grep -q "add a Host" "$T/install.out" || { cat "$T/install.out"; false; }'
 check "neither runs as root: the image's omegacd user (Q236)" \
@@ -136,7 +136,7 @@ check "it deploys an Application with a bind-mounted file from Git" '[ $rc -eq 0
 connected() { agentlog | grep -c "connected to the Control Plane, approved"; }
 n=$(connected)
 docker tag $IMAGE omegacd-e2e:compose2 # a newer release, as far as install.sh can tell
-setup $CP "$T/cp" compose.yaml "$T/cp-cover.yaml" OMEGACD_MODE=full OMEGACD_TARGET=compose OMEGACD_DIR="$T/cp" OMEGACD_PORT=18080 OMEGACD_IMAGE=omegacd-e2e:compose2
+setup $CP "$T/cp" compose.yaml "$T/cp-cover.yaml" OMEGACD_MODE=full OMEGACD_DIR="$T/cp" OMEGACD_PORT=18080 OMEGACD_IMAGE=omegacd-e2e:compose2
 check "install.sh full run again moves to the new image, keeping the Master Key (Q267)" \
   '[ "$(docker inspect -f "{{.Config.Image}}" $CP-omegacd-1)" = omegacd-e2e:compose2 ] && [ "$(docker run --rm -v ${CP}_omegacd-keys:/k busybox:1.38 cat /k/age.key | cksum)" = "$MK" ] || { cat "$T/install.out"; false; }'
 check "recreated, the two keep their certificates (Q231)" '[ "$(docker run --rm -v ${CP}_source-tls:/c busybox:1.38 cat /c/ca.pem | cksum)" = "$CA" ]'

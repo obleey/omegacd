@@ -63,13 +63,13 @@ It stays small: one binary — OmegaCD, and on each Host the same binary as its 
 
 OmegaCD (the Control Plane) makes an [age](https://github.com/FiloSottile/age) key at its first start, the Master Key: it seals the registry credentials OmegaCD stores, so **back it up** apart from the data directory. OmegaCD deploys nothing itself: every machine that runs Applications, the one OmegaCD runs on included, is a [Host](#hosts) with an Agent.
 
-**Quick install** — on a Linux server with Docker, or into a Kubernetes cluster with `kubectl`:
+**Quick install** — on a Linux server with Docker:
 
 ```sh
 curl -fsSL https://github.com/obleey/omegacd/releases/latest/download/install.sh | sh
 ```
 
-[`install.sh`](deploy/install.sh) asks **full** (OmegaCD itself) or **agent** (a [Host's](#hosts) Agent). Full mode asks for the port (Compose) or the kubectl context and namespace (Kubernetes, always confirmed), starts OmegaCD and prints the URL and the initial admin password; then open the UI and add a Host. Agent mode takes OmegaCD's address and an invite (Hosts → Add Host shows the line with both filled in) and installs the Agent for the engine it finds (install Docker or Podman first; on Debian with its recommended packages, as apt does by default: a minimal image without them lacks the `docker` command and Podman's networking): the [`.deb`](#option-2-binary--systemd)'s systemd service where apt is there (as its own user with rootful Docker, as you with rootless Docker or Podman), or [in a container](#the-agent-in-a-container). Run it as the user whose Docker or Podman the Agent uses; it asks for `sudo` where it needs root. Each release has its own `install.sh`, which installs that release; running it again upgrades to it and keeps the keys and settings. It runs unattended with the settings listed at its top (`OMEGACD_MODE`, `OMEGACD_TARGET`, `OMEGACD_AGENT_CONTROL_PLANE`, …). The options below do the same by hand.
+[`install.sh`](deploy/install.sh) asks **full** (OmegaCD itself) or **agent** (a [Host's](#hosts) Agent). Full mode asks for the folder and the port, starts OmegaCD with Docker Compose and prints the URL and the initial admin password; then open the UI and add a Host. Agent mode takes OmegaCD's address and an invite (Hosts → Add Host shows the line with both filled in) and installs the Agent for the engine it finds (install Docker or Podman first; on Debian with its recommended packages, as apt does by default: a minimal image without them lacks the `docker` command and Podman's networking): the [`.deb`](#option-2-binary--systemd)'s systemd service where apt is there (as its own user with rootful Docker, as you with rootless Docker or Podman), or [in a container](#the-agent-in-a-container). Run it as the user whose Docker or Podman the Agent uses; it asks for `sudo` where it needs root. Each release has its own `install.sh`, which installs that release; running it again upgrades to it and keeps the keys and settings. It runs unattended with the settings listed at its top (`OMEGACD_MODE`, `OMEGACD_PORT`, `OMEGACD_AGENT_CONTROL_PLANE`, …). The options below do the same by hand.
 
 ### Option 1: Docker Compose (recommended)
 
@@ -124,18 +124,9 @@ by it.
 
 For laptops and CI, download the `darwin_*` or `linux_*` archive from [Releases](https://github.com/obleey/omegacd/releases) and put `omegacd` on your `PATH`. It is the same binary as the server — see [CLI](#cli).
 
-### Option 4: Kubernetes
+### Kubernetes
 
-OmegaCD can run in a cluster as the Control Plane; the [Hosts](#hosts) it deploys to run Docker or Podman, each with an Agent that connects to it (through the Ingress). [`deploy/kubernetes.yaml`](deploy/kubernetes.yaml) has a PersistentVolumeClaim, a single-replica Deployment and a Service:
-
-```sh
-kubectl create namespace omegacd
-kubectl -n omegacd create secret generic omegacd-keys --from-file=age.key --from-file=known_hosts
-kubectl -n omegacd apply -f https://raw.githubusercontent.com/obleey/omegacd/main/deploy/kubernetes.yaml
-kubectl -n omegacd logs deploy/omegacd | grep "initial admin password"
-```
-
-Keep `replicas: 1` (one controller per SQLite database). Add the commented Ingress for your host name, and set `OMEGACD_TRUSTED_PROXIES` to the ingress controller.
+Not in v0.2: OmegaCD is for Docker hosts, and its Control Plane runs on one with Docker Compose. A Kubernetes manifest comes after v0.2 ([ROADMAP](ROADMAP.md)).
 
 ### Versions
 

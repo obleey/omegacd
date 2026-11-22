@@ -3,16 +3,14 @@
 #
 #   curl -fsSL https://github.com/obleey/omegacd/releases/latest/download/install.sh | sh
 #
-# full:  the Control Plane with its Source Server, with Docker Compose or into Kubernetes (Q233).
+# full:  the Control Plane with its Source Server, with Docker Compose (Q233; Kubernetes after v0.2, Q276).
 # agent: a Host's Agent (Q232): the .deb's systemd unit where apt is there, as the docker group's omegacd-agent with
 #        rootful Docker or as you with rootless Docker or Podman (user unit, lingering); or in a container.
 # Run it as the user whose container engine the Agent uses; it calls sudo only for what needs root (Q264).
 #
 # It asks for what it needs; for unattended installs set it instead (Q263):
 #   OMEGACD_MODE                  full | agent
-#   full:   OMEGACD_TARGET        compose | kubernetes
-#           compose:              OMEGACD_DIR (/opt/omegacd), OMEGACD_PORT (8080)
-#           kubernetes:           OMEGACD_KUBE_CONTEXT (required when unattended), OMEGACD_NAMESPACE (omegacd)
+#   full:   OMEGACD_DIR (/opt/omegacd), OMEGACD_PORT (8080)
 #   agent:  OMEGACD_AGENT_CONTROL_PLANE, OMEGACD_AGENT_INVITE   (Add Host fills both in)
 #           OMEGACD_AGENT_INSTALL systemd (the default with apt) | container
 #           OMEGACD_AGENT_ENGINE  docker | rootless-docker | podman (default: the first found, in that order)
@@ -55,21 +53,6 @@ fetch() { # url file
 	if have curl; then curl -fsSL "$1" -o "$2"; elif have wget; then wget -qO "$2" "$1"; else die "need curl or wget"; fi
 }
 
-# keygen file: a new age key, with whatever is at hand; the OmegaCD image needs nothing installed
-keygen() {
-	if have omegacd; then
-		omegacd keygen --out "$1" 2>/dev/null
-	elif have age-keygen; then
-		age-keygen -o "$1" 2>/dev/null
-	elif have docker; then
-		(umask 077 && docker run --rm "$IMAGE" keygen 2>/dev/null >"$1")
-		grep -q '^AGE-SECRET-KEY-1' "$1" || die "could not create the age key with docker"
-	else
-		die "cannot create the age key: install docker, age-keygen or the omegacd binary"
-	fi
-	chmod 600 "$1"
-}
-
 install_compose() {
 	have docker || die "Docker is not installed (https://docs.docker.com/engine/install/)"
 	docker compose version >/dev/null 2>&1 || die "the Docker Compose plugin is missing"
@@ -102,48 +85,6 @@ EOF
 	say "Back up its Master Key (age.key in the omegacd-keys volume) apart from your backups."
 	say "Put OmegaCD behind a TLS reverse proxy before exposing it."
 	say "Next: open the UI and add a Host (Hosts -> Add Host), this machine too if Applications should run on it."
-}
-
-install_kubernetes() {
-	have kubectl || die "kubectl is not installed"
-	ctx=${OMEGACD_KUBE_CONTEXT:-}
-	if [ -z "$ctx" ]; then
-		(: >/dev/tty) 2>/dev/null || die "set OMEGACD_KUBE_CONTEXT for an unattended install (never guessed)"
-		cur=$(kubectl config current-context 2>/dev/null || true)
-		[ -n "$cur" ] || die "no current kubectl context"
-		ask ctx "Install into Kubernetes context" "$cur"
-		ok=
-		printf 'Install OmegaCD into context "%s"? [y/N]: ' "$ctx" >/dev/tty
-		read -r ok </dev/tty || ok=
-		case $ok in y | Y | yes) ;; *) die "aborted" ;; esac
-	fi
-	ask OMEGACD_NAMESPACE "Namespace" omegacd
-	k() { kubectl --context "$ctx" -n "$OMEGACD_NAMESPACE" "$@"; }
-
-	kubectl --context "$ctx" get namespace "$OMEGACD_NAMESPACE" >/dev/null 2>&1 || kubectl --context "$ctx" create namespace "$OMEGACD_NAMESPACE"
-	tmp=$(mktemp -d)
-	trap 'rm -rf "$tmp"' EXIT
-	# kubernetes.yaml mounts the keys Secret read-only, so the Master Key is made here (M6-04 changes both, Q262)
-	if k get secret omegacd-keys >/dev/null 2>&1; then
-		say "Keeping the existing Secret omegacd-keys (Master Key)"
-	else
-		keygen "$tmp/age.key"
-		touch "$tmp/known_hosts"
-		k create secret generic omegacd-keys --from-file=age.key="$tmp/age.key" --from-file=known_hosts="$tmp/known_hosts"
-		backup="$PWD/omegacd-age.key"
-		(umask 077 && cp "$tmp/age.key" "$backup")
-		say "A copy of the new Master Key is in $backup: store it somewhere safe, then delete it here."
-	fi
-	fetch "$RAW/kubernetes.yaml" "$tmp/kubernetes.yaml"
-	sed "s#image: ghcr.io/obleey/omegacd:.*#image: $IMAGE#" "$tmp/kubernetes.yaml" | k apply -f -
-	k rollout status deploy/omegacd --timeout=180s
-
-	pw=$(k logs deploy/omegacd 2>&1 | sed -n 's/.*initial admin password.*initial=\([^ ]*\).*/\1/p' | tail -1)
-	say ""
-	say "OmegaCD $VERSION is running. Reach it with: kubectl --context $ctx -n $OMEGACD_NAMESPACE port-forward svc/omegacd 8080"
-	say "(or add the Ingress at the end of kubernetes.yaml)"
-	if [ -n "$pw" ]; then say "Initial admin password: $pw   (log in as admin; valid until you set a new one on first login)"; fi
-	say "Next: open the UI and add a Host (Hosts -> Add Host): each machine that runs Applications gets an Agent."
 }
 
 # --- agent mode
@@ -300,18 +241,7 @@ install_agent() {
 
 ask OMEGACD_MODE "Install (full: OmegaCD itself / agent: a Host's Agent)" full
 case $OMEGACD_MODE in
-full)
-	if [ -z "${OMEGACD_TARGET:-}" ]; then
-		def=compose
-		have docker || { have kubectl && def=kubernetes; }
-		ask OMEGACD_TARGET "Install with (compose / kubernetes)" "$def"
-	fi
-	case $OMEGACD_TARGET in
-	compose) install_compose ;;
-	kubernetes | k8s) install_kubernetes ;;
-	*) die "OMEGACD_TARGET must be compose or kubernetes" ;;
-	esac
-	;;
+full) install_compose ;;
 agent) install_agent ;;
 *) die "OMEGACD_MODE must be full or agent" ;;
 esac

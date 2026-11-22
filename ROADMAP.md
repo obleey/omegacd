@@ -45,7 +45,7 @@ The plan: [docs/v0.2](docs/v0.2/README.md) (architecture, decisions, 8 milestone
 - **Backup and recovery**: `omegacd backup` while running; restore from it, or recover from nothing: Agents re-enroll, the App of Apps takes their apps over without redeploying; history kept forever or pruned by count or age
 - **Enrollment** with single-use invites, Agent key pairs, fingerprint approval and signed challenges
 - **Rootless** Docker, docker-group users and rootless **Podman** (tested); Agent as a container or a systemd service
-- Install script with full and agent modes; Kubernetes; reverse proxies everywhere
+- Install script with full and agent modes; reverse proxies everywhere
 - UI: Add Host flow, Host cards, engine badges everywhere, offline and queued states; then a polish milestone
 - **Hosts**: Debian 13 and Ubuntu 24.04 on amd64 and arm64, every push tested on all four with the same tests (`make test-linux`, real servers); macOS for development only
 - **Packages**: `.deb` for amd64 and arm64 on every release, with the systemd units; `install.sh` installs it (`.rpm` comes with the RHEL family, after v0.2)
@@ -56,6 +56,7 @@ The plan: [docs/v0.2](docs/v0.2/README.md) (architecture, decisions, 8 milestone
 
 - **Ubuntu 26.04** — the current LTS (newer Docker, Podman, systemd) as a supported Host, tested like 24.04: two more test servers; on GitHub's 26.04 runner rootless Podman can't remove a container's network (`rootless netns: kill network process: permission denied`), cause to find first, then CI moves from `ubuntu-24.04` (Q111, M4-12)
 - **RHEL-family Hosts** — RHEL, Rocky, Alma, Fedora with SELinux enforcing, Podman or Docker CE: install, systemd units with SELinux contexts, `.rpm`, and the test matrix in every push. The test machines for it (Rocky, Fedora, a Rocky VM with SELinux enforcing) were built and removed again, what they taught is in M7-06; v0.2's tickets M6-07 and M7-06 move here
+- **Kubernetes** — the Control Plane and its Source Server in a cluster, separate pods with mTLS between them, installed by `install.sh` too; designed and tried on OrbStack (M6-04, Q270–Q275), deferred until the Linux test runs it in kind (Q276): v0.2 is for Docker hosts
 
 - **Sync hooks** — jobs once per Sync or Rollback, before it (a backup) or after it (`cache:clear`, a smoke test), declared in the Application definition and run by the Agent as one-shots of a project's services, offline too; a failing pre-sync hook stops the Sync, never re-run on a restore or Self-Heal (Q64). Migrations on every start already work with Compose's own one-shot services (v0.2's M2-11). Rollback reverts code, not data (Q65)
 - **Order between Child Applications** — `dependsOn: [caddy]` in a definition: the App of Apps syncs children in that order (e.g. the app that creates a shared network before those that join it), instead of a failed first attempt and a retry; the Control Plane orchestrates, waiting for the Synced and Healthy reports, offline Hosts shown as waited for (Q66)
