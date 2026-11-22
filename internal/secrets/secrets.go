@@ -46,6 +46,10 @@ func formatFor(name string) formats.Format {
 	return formats.Binary
 }
 
+// Encrypted reports whether the file named name is an Encrypted Secret (x.sops.env), not SOPS's own .sops.yaml,
+// which an Application at the repository's root has too.
+func Encrypted(name string) bool { return strings.Contains(name, ".sops.") && name != sopsConfig }
+
 func (Decryptor) DecryptDir(dir string, identities []string) ([]string, error) {
 	var ids sopsage.ParsedIdentities
 	if err := ids.Import(identities...); err != nil {
@@ -56,7 +60,7 @@ func (Decryptor) DecryptDir(dir string, identities []string) ([]string, error) {
 		if err != nil {
 			return err
 		}
-		if !e.Type().IsRegular() || !strings.Contains(e.Name(), ".sops.") {
+		if !e.Type().IsRegular() || !Encrypted(e.Name()) {
 			return nil
 		}
 		out := filepath.Join(filepath.Dir(path), strings.Replace(e.Name(), ".sops.", ".", 1))

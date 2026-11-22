@@ -653,7 +653,7 @@ file encrypted for the Host alone can be opened by no person again.
 Two things the docs say with it: the key list controls who can **read** a Host's secrets, not who can **change**
 them: anyone who can push to the repository can encrypt a new value with the Host's public key, so who may change
 production is decided in Git (branch protection, reviews). And `omegacd keygen` writes a person's key where `sops`
-looks for it (`~/.config/sops/age/keys.txt`) by default.
+looks for it by default (Q290: `~/.config/sops/age/keys.txt` on Linux, `~/Library/Application Support` on macOS).
 
 ## Source Server settings (before M5-05, 2026-11-18)
 
@@ -980,3 +980,41 @@ The design M6-04 was built to, kept for when it comes back (branch `park/m6-04-k
 - **Q285** With Cloudflare Access, the README says to keep it to the UI: a Bypass rule for the Agents'
   `/api/agents/`, `/api/webhooks/` and API-token calls, which can't log in with a browser, or a service token for the
   CLI.
+
+## Secrets helper (before M6-08, 2026-11-22)
+
+Building Q189–Q201:
+
+- **Q286** `omegacd secrets init --host NAME` works in a checkout: the repository is the origin remote (`--repo-url`
+  overrides), and it writes one rule per Application of that Host whose `repoURL` is that repository (compared without
+  scheme, user and `.git`); an App of Apps gets none (its path holds definitions); `--path P` adds `^P/.*\.sops\.`.
+- **Q287** In an existing `.sops.yaml` OmegaCD's rules replace those with the same `path_regex`, and new ones go first
+  (SOPS takes the first match, so a catch-all at the end keeps working); other rules and comments stay.
+- **Q288** `omegacd secrets rekey` needs no `sops` binary: the SOPS library, as `sops updatekeys` (same data key and
+  values), with the person's key read where `sops` reads it (`SOPS_AGE_KEY`, `SOPS_AGE_KEY_FILE`, its keys file).
+  It first refreshes OmegaCD's rules in `.sops.yaml` from the key list, then gives every `*.sops.*` file its rule's
+  recipients; files no rule matches are listed and left.
+- **Q289** A Host Key changes only when its Host enrolls again with a new state dir (reinstall, lost `host.key`);
+  `rekey` with a person's key makes the files deployable again. No command rotates a Host Key. A Host with
+  Applications gets there as Q127 says: its Applications forgotten (`app delete --forget`), the Host deleted and added
+  again, the Applications created again; deleting it takes it off the keys that named it (Q291).
+- **Q290** `omegacd keygen` writes by default where `sops` reads (corrects Q201's path): `$XDG_CONFIG_HOME/sops/age/keys.txt`,
+  else the OS's config dir (`~/.config` on Linux, `~/Library/Application Support` on macOS). A file there with a key
+  already: no new one, its public key printed (`--out FILE` for another, `--out -` stdout).
+- **Q291** The key list: a table of keys (name, public key, all Hosts or not) and one of chosen Hosts per key, renamed
+  and deleted with the Host; a key whose chosen Hosts are all deleted covers none, never all. Adding refuses the Master
+  Key (Q192) and any Host's Host Key (rules get those already).
+- **Q292** CLI: `omegacd secrets key add NAME age1… [--host H]...` (no `--host`: all Hosts; an existing name: changed),
+  `secrets key list`, `secrets key remove NAME` (printing Q193's advice). UI: Settings → Encryption keys: list, add,
+  edit, delete with the same advice, and Q191's warning when the list is empty.
+- **Q293** Q196's warning: the Control Plane sends the expected recipients in the render request (a new optional proto
+  field); the Source Server compares each `*.sops.*` file's recipients with them exactly: a missing key and a removed
+  one both warn, naming the file and "run `omegacd secrets rekey`". None while the Host has no Host Key. A CI key
+  that reads them belongs on the list.
+- **Q294** `omegacd import` encrypts for the Host Key plus the keys allowed for that Host, refusing a Host-only set
+  without `--host-only` (Q194, Q201); `--recipient` still replaces the set. M6-05 moves it to the Agent.
+- **Q295** One small interface per secret source (`Init` writes rules, `Rekey` rekeys); SOPS ships, a dummy second one
+  lives in tests; `--source` takes `sops` only in v0.2.
+- **Q296** The Host card's "Copy .sops.yaml rule" and "for all Hosts" add the keys allowed for each Host, with Q201's
+  warning when none covers it; the copied rule keeps its `apps/<host>/` example path.
+- **Q297** `rekey` rekeys what it can, lists the files it can't open with the fix, and exits 1 when there are any.

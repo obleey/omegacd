@@ -423,10 +423,59 @@ func TestKeygen(t *testing.T) {
 		t.Fatal("existing key changed")
 	}
 
-	// without -o: the key on stdout, a different one each time
-	r1, r2 := run(t, nil, nil, "", "keygen"), run(t, nil, nil, "", "keygen")
+	// --out -: the key on stdout, a different one each time
+	r1, r2 := run(t, nil, nil, "", "keygen", "--out", "-"), run(t, nil, nil, "", "keygen", "--out", "-")
 	if r1.code != 0 || !strings.Contains(r1.stdout, "AGE-SECRET-KEY-1") || r1.stdout == r2.stdout {
 		t.Fatalf("%+v", r1)
+	}
+}
+
+// Without --out the key goes where sops reads it (Q290): $XDG_CONFIG_HOME, else the user's config dir; a key there
+// already is kept and its public key printed.
+func TestKeygenForSops(t *testing.T) {
+	xdg := t.TempDir()
+	r := run(t, nil, map[string]string{"XDG_CONFIG_HOME": xdg}, "", "keygen")
+	path := filepath.Join(xdg, "sops", "age", "keys.txt")
+	id, err := crypto.LoadIdentity(path)
+	if r.code != 0 || err != nil || !strings.Contains(r.stderr, "Written to "+path) ||
+		!strings.Contains(r.stderr, "omegacd secrets key add NAME "+id.Recipient().String()) {
+		t.Fatalf("%+v %v", r, err)
+	}
+	if st, _ := os.Stat(filepath.Dir(path)); st.Mode().Perm() != 0o700 {
+		t.Errorf("its folder: %v", st.Mode().Perm())
+	}
+	b, _ := os.ReadFile(path)
+	r = run(t, nil, map[string]string{"XDG_CONFIG_HOME": xdg}, "", "keygen")
+	if b2, _ := os.ReadFile(path); r.code != 0 || !bytes.Equal(b, b2) || !strings.Contains(r.stderr, "holds a key already") ||
+		!strings.Contains(r.stderr, "Public key: "+id.Recipient().String()) {
+		t.Fatalf("a key there already: %+v", r)
+	}
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := run(t, nil, map[string]string{"XDG_CONFIG_HOME": ""}, "", "keygen"); r.code != 0 || !strings.Contains(r.stderr, filepath.Join(dir, "sops", "age", "keys.txt")) {
+		t.Fatalf("the config dir: %+v", r)
+	}
+	os.WriteFile(filepath.Join(dir, "sops", "age", "keys.txt"), []byte("not a key\n"), 0o600)
+	if r := run(t, nil, map[string]string{"XDG_CONFIG_HOME": ""}, "", "keygen"); r.code != 1 {
+		t.Errorf("a keys file without a key: %+v", r)
+	}
+	t.Setenv("HOME", "")
+	if r := run(t, nil, map[string]string{"XDG_CONFIG_HOME": ""}, "", "keygen"); r.code != 1 || !strings.Contains(r.stderr, "or pass --out FILE") {
+		t.Errorf("no home: %+v", r)
+	}
+	if os.Getuid() == 0 {
+		return // root makes folders whatever the mode
+	}
+	locked := filepath.Join(home, "locked")
+	os.Mkdir(locked, 0o500)
+	if r := run(t, nil, map[string]string{"XDG_CONFIG_HOME": locked}, "", "keygen"); r.code != 1 || !strings.Contains(r.stderr, "permission denied") {
+		t.Errorf("its folder can't be made: %+v", r)
 	}
 }
 
@@ -472,11 +521,11 @@ func gitRepo(t *testing.T) string {
 }
 
 func TestImport(t *testing.T) {
-	id, _ := age.GenerateX25519Identity()
+	id, person := newIdentity(t), newIdentity(t)
 	_, srv := newAPI(t, map[string]any{"GET /api/settings/hosts": []domain.HostView{
 		{Host: domain.Host{Name: "edge", AgeRecipient: "age1edge"}},
 		{Host: domain.Host{Name: "vps", AgeRecipient: id.Recipient().String()}},
-	}})
+	}, "GET /api/settings/encryption-keys": []domain.EncryptionKey{{Name: "ana", Recipient: person.Recipient().String(), AllHosts: true}}})
 	repo := gitRepo(t)
 	withHost := func(c *CLI) { c.ImportHost = func() (importer.Host, error) { return importHost{}, nil } }
 	r := runWith(t, srv, nil, withHost, "import", "--host", "vps")
@@ -491,6 +540,10 @@ func TestImport(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "app.sops.env"), enc, 0o600)
 	if _, err := (secrets.Decryptor{}).DecryptDir(dir, []string{id.String()}); err != nil {
 		t.Fatalf("encrypted for the Host Key looked up on the server? %v", err)
+	}
+	os.WriteFile(filepath.Join(dir, "app.sops.env"), enc, 0o600)
+	if _, err := (secrets.Decryptor{}).DecryptDir(dir, []string{person.String()}); err != nil {
+		t.Fatalf("encrypted for the person's key covering the Host (Q194)? %v", err)
 	}
 	defs, _ := os.ReadFile(filepath.Join(repo, "platform/apps.yaml"))
 	for _, want := range []string{"name: blog", "repoURL: git@github.com:acme/server.git", "path: apps/blog", "targetRevision: main", "host: vps", "adopt: true", "autoSync: false"} {
@@ -524,15 +577,22 @@ func TestImportRecipientFlagAndErrors(t *testing.T) {
 		{[]string{"import", "--host", "edge"}, false, "pass --recipient age1"},      // secrets, not logged in
 		{[]string{"import", "--host", "nope"}, true, "Host nope is not in OmegaCD"}, // unknown Host on the server
 		{[]string{"import", "--host", "new"}, true, "Host new has no Host Key yet"}, // invited, its Agent not enrolled
+		{[]string{"import", "--host", "solo"}, true, "or pass --host-only"},         // nobody could open them again (Q201)
 	} {
 		var srv *httptest.Server
 		if c.srv {
-			_, srv = newAPI(t, map[string]any{"GET /api/settings/hosts": []domain.HostView{{Host: domain.Host{Name: "new"}}}})
+			_, srv = newAPI(t, map[string]any{"GET /api/settings/hosts": []domain.HostView{{Host: domain.Host{Name: "new"}},
+				{Host: domain.Host{Name: "solo", AgeRecipient: id.Recipient().String()}}}, "GET /api/settings/encryption-keys": []domain.EncryptionKey{}})
 		}
 		r := runWith(t, srv, nil, withHost, c.args...)
 		if r.code == 0 || !strings.Contains(r.stdout+r.stderr, c.want) {
 			t.Errorf("%v: %+v, want %q", c.args, r, c.want)
 		}
+	}
+	_, srv := newAPI(t, map[string]any{"GET /api/settings/hosts": []domain.HostView{{Host: domain.Host{Name: "solo", AgeRecipient: id.Recipient().String()}}},
+		"GET /api/settings/encryption-keys": []domain.EncryptionKey{}})
+	if r := runWith(t, srv, nil, withHost, "import", "--host", "solo", "--host-only", "--dry-run"); r.code != 0 {
+		t.Errorf("--host-only: %+v", r)
 	}
 	t.Chdir(t.TempDir()) // not a Git checkout
 	if r := runWith(t, nil, nil, withHost, "import", "--host", "edge", "--recipient", id.Recipient().String()); r.code == 0 || !strings.Contains(r.stderr, "inside your Git repository") {
@@ -659,4 +719,13 @@ func TestImportDetachedHead(t *testing.T) {
 	if r.code != 0 || !strings.Contains(r.stderr, "no current branch (a detached HEAD?): the Applications follow main") {
 		t.Fatalf("%+v", r)
 	}
+}
+
+func newIdentity(t *testing.T) *age.X25519Identity {
+	t.Helper()
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
 }

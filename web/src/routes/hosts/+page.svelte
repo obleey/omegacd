@@ -2,13 +2,13 @@
 	// Hosts (Q152): every machine Applications deploy to, through its Agent; added here (M5-01), one card each (M5-02,
 	// Q161), kept live (Q153).
 	import { onMount } from 'svelte';
-	import { ago, api, enc, errMsg, type HostView } from '#lib/api.ts';
+	import { ago, api, enc, errMsg, get, type EncryptionKey, type HostView } from '#lib/api.ts';
 	import AddHost from '#lib/AddHost.svelte';
 	import Badge from '#lib/Badge.svelte';
 	import Dialog from '#lib/Dialog.svelte';
 	import { when } from '#lib/display.svelte.ts';
 	import Empty from '#lib/Empty.svelte';
-	import { shortKey, sopsYaml } from '#lib/hostkeys.ts';
+	import { peopleFor, shortKey, sopsYaml } from '#lib/hostkeys.ts';
 	import { groupByParent, hostState, hostTone, lastSeen, parseAllowlist, renameBlocked, workDirLabel } from '#lib/hosts.ts';
 	import { hostBadges } from '#lib/badges.ts';
 	import HostBadges from '#lib/HostBadges.svelte';
@@ -19,11 +19,13 @@
 
 	let error = $state('');
 	let adding = $state(false);
+	let keys = $state<EncryptionKey[]>([]); // the people's keys each Host's rule gets too (Q190)
 	onMount(() => {
 		loadHosts().catch((e) => (error = errMsg(e)));
+		get<EncryptionKey[]>('/settings/encryption-keys').then((k) => (keys = k ?? [])).catch((e) => (error = errMsg(e)));
 	});
 	let hosts = $derived(Object.values(live.hosts).sort((a, b) => a.name.localeCompare(b.name)));
-	let allSops = $derived(sopsYaml(hosts.map((h) => ({ name: h.name, recipient: h.ageRecipient ?? '' }))));
+	let allSops = $derived(sopsYaml(hosts.map((h) => ({ name: h.name, recipient: h.ageRecipient ?? '' })), keys));
 	const path = (h: string, action = '') => `/settings/hosts/${enc(h)}${action && '/' + action}`;
 
 	async function copyText(text: string, what: string) {
@@ -116,7 +118,8 @@
 	<div>
 		<h1>Hosts</h1>
 		<p class="muted small sub">The servers your Applications run on. Each runs an Agent that connects out to OmegaCD.
-			Encrypt secrets for a Host with its Host Key, copied from its card into <code>.sops.yaml</code>: only that Host can decrypt them.</p>
+			Encrypt a Host's secrets for its Host Key and the people's keys covering it (<a href="/settings#encryption-keys">Settings → Encryption keys</a>):
+			copy its rule into <code>.sops.yaml</code>, or run <code>omegacd secrets init --host NAME</code> in your checkout.</p>
 	</div>
 	<div class="row">
 		{#if hosts.length}<button onclick={() => copyText(allSops, '.sops.yaml')}><Icon name="file-text" size={15} />Copy .sops.yaml for all Hosts</button>{/if}
@@ -199,9 +202,13 @@
 							<code title={h.ageRecipient}>{shortKey(h.ageRecipient)}</code>
 							<div class="row copies">
 								<button class="sm" onclick={() => copyText(h.ageRecipient!, `Public key of ${h.name}`)} aria-label="Copy the public key of {h.name}">Copy key</button>
-								<button class="sm" onclick={() => copyText(sopsYaml([{ name: h.name, recipient: h.ageRecipient! }]), `.sops.yaml rule for ${h.name}`)}
+								<button class="sm" onclick={() => copyText(sopsYaml([{ name: h.name, recipient: h.ageRecipient! }], keys), `.sops.yaml rule for ${h.name}`)}
 									aria-label="Copy the .sops.yaml rule for {h.name}">Copy .sops.yaml rule</button>
 							</div>
+							{#if !peopleFor(h.name, keys).length}
+								<p class="warn small" role="note"><Icon name="alert" size={14} /><span>No person's key covers this Host: files encrypted for it alone
+									can't be opened or edited by anyone, and are lost with it. <a href="/settings#encryption-keys">Add yours</a>.</span></p>
+							{/if}
 						{:else}
 							<span class="muted">when its Agent enrolls</span>
 						{/if}
@@ -261,6 +268,7 @@
 
 <style>
 	.head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.2rem; }
+	.warn { color: var(--yellow); display: flex; align-items: flex-start; gap: 0.4rem; margin: 0.4rem 0 0; }
 	.sub { margin: 0.15rem 0 0; max-width: 70ch; }
 	.grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(min(100%, 24rem), 1fr)); }
 	/* the status bar on the left, as an Application's tile has */

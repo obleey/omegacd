@@ -43,6 +43,7 @@ type fakeStore struct {
 	mu           sync.Mutex
 	fail         map[string]error // the methods named fail with their error (breaks)
 	regs         []domain.RegistryCredential
+	keys         []domain.EncryptionKey
 	backupErr    error // the backup fails with it
 	hash         string
 	mustChange   bool
@@ -334,6 +335,32 @@ type env struct {
 	ctrl  *fakeController
 	c     *http.Client
 	log   *strings.Builder // ponytail: unlocked, read only after the request it logged returned
+}
+
+func (s *fakeStore) ListEncryptionKeys(context.Context) ([]domain.EncryptionKey, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.keys), s.broken("ListEncryptionKeys")
+}
+
+func (s *fakeStore) SaveEncryptionKey(_ context.Context, k domain.EncryptionKey) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.broken("SaveEncryptionKey"); err != nil {
+		return err
+	}
+	s.keys = append(slices.DeleteFunc(s.keys, func(x domain.EncryptionKey) bool { return x.Name == k.Name }), k)
+	return nil
+}
+
+func (s *fakeStore) DeleteEncryptionKey(_ context.Context, name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := len(s.keys)
+	if s.keys = slices.DeleteFunc(s.keys, func(x domain.EncryptionKey) bool { return x.Name == name }); len(s.keys) == n {
+		return domain.ErrNotFound
+	}
+	return nil
 }
 
 func (s *fakeStore) ListRegistryCredentials(context.Context) ([]domain.RegistryCredential, error) {
@@ -938,6 +965,45 @@ func TestRepoCredentialsUsedBy(t *testing.T) {
 	}
 	if len(got) != 2 || strings.Join(got[0].UsedBy, ",") != "c" || strings.Join(got[1].UsedBy, ",") != "a,b" {
 		t.Fatalf("%+v", got)
+	}
+}
+
+// People's keys (Q189, Q292): any login reads them; a name, a public key and either all Hosts or a list are required;
+// saving and removing are logged (public keys only); the store refusing one says why.
+func TestEncryptionKeysAPI(t *testing.T) {
+	e := newEnv(t, false)
+	e.expect("GET", "/api/settings/encryption-keys", "", 401)
+	e.login()
+	id, _ := age.GenerateX25519Identity()
+	pub := id.Recipient().String()
+	if b := e.expect("PUT", "/api/settings/encryption-keys/ana", `{"recipient":" `+pub+` ","hosts":["web"]}`, 200); !strings.Contains(b, `"recipient":"`+pub+`"`) {
+		t.Fatal(b)
+	}
+	if b := e.expect("GET", "/api/settings/encryption-keys", "", 200); !strings.Contains(b, `"name":"ana"`) || !strings.Contains(b, `"hosts":["web"]`) {
+		t.Fatal(b)
+	}
+	for body, says := range map[string]string{
+		`{"recipient":"` + id.String() + `","allHosts":true}`:         "never the private key",
+		`{"recipient":"` + pub + `"}`:                                 "one of them",
+		`{"recipient":"` + pub + `","allHosts":true,"hosts":["web"]}`: "one of them",
+		"not json": "",
+	} {
+		if b := e.expect("PUT", "/api/settings/encryption-keys/ana", body, 400); !strings.Contains(b, says) || strings.Contains(b, id.String()) {
+			t.Errorf("%s: %s", body, b)
+		}
+	}
+	if b := e.expect("PUT", "/api/settings/encryption-keys/%20", `{"recipient":"`+pub+`","allHosts":true}`, 400); !strings.Contains(b, "needs a name") {
+		t.Error(b)
+	}
+	e.store.breaks("SaveEncryptionKey", fmt.Errorf("%w: that's the Host Key of web", domain.ErrInvalid))
+	if b := e.expect("PUT", "/api/settings/encryption-keys/ana", `{"recipient":"`+pub+`","allHosts":true}`, 400); !strings.Contains(b, "Host Key of web") {
+		t.Error(b)
+	}
+	e.store.breaks("SaveEncryptionKey", nil)
+	e.expect("DELETE", "/api/settings/encryption-keys/ana", "", 204)
+	e.expect("DELETE", "/api/settings/encryption-keys/ana", "", 404)
+	if l := e.log.String(); strings.Contains(l, id.String()) || !strings.Contains(l, `msg="encryption key saved" name=ana key=`+pub) || !strings.Contains(l, `msg="encryption key removed" name=ana`) {
+		t.Errorf("log:\n%s", l)
 	}
 }
 

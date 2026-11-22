@@ -11,6 +11,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/obleey/omegacd/internal/crypto"
 	"github.com/obleey/omegacd/internal/importer"
 	"github.com/obleey/omegacd/internal/logging"
 	"github.com/obleey/omegacd/internal/source"
@@ -77,41 +78,46 @@ var commands map[string]command
 
 func init() { // init breaks the cycle commands → run funcs → flags → commands
 	commands = map[string]command{
-		"login":         {"login --server URL --token TOKEN", (*CLI).login},
-		"logout":        {"logout", (*CLI).logout},
-		"version":       {"version", (*CLI).version},
-		"backup":        {"backup FILE", (*CLI).backup},
-		"keygen":        {"keygen [--out FILE]   (a new age key like age-keygen; the public key also goes to stderr)", (*CLI).keygen},
-		"source-certs":  {"source-certs [--out DIR] [--host NAME]...   (mTLS certificates for a standalone Source Server; --host: the names the Control Plane dials it by)", (*CLI).sourceCerts},
-		"import":        {"import --host NAME [STACK]... [--recipient age1…] [--apps-dir apps] [--definitions platform/apps.yaml] [--dry-run] [--force]\n    (run on the Host, in your repository checkout: writes the Compose stacks running on this machine into it as Applications for Host NAME)", (*CLI).importStacks},
-		"app list":      {"app list", (*CLI).appList},
-		"app get":       {"app get NAME", (*CLI).appGet},
-		"app create":    {"app create NAME --repo URL [--path P] [--revision R] [--file F]... [--profile P]... [--host H] [--kind apps] [--auto-sync] [--self-heal] [--prune [--prune-volumes]] [--adopt] [--work-dir PATH]\n  app create -f app.yaml", (*CLI).appCreate},
-		"app delete":    {"app delete NAME [--cascade=false | --volumes | --forget] [--yes]", (*CLI).appDelete},
-		"app sync":      {"app sync NAME [--prune] [--wait] [--no-health] [--timeout 10m]", (*CLI).appSync},
-		"app refresh":   {"app refresh NAME", (*CLI).appRefresh},
-		"app diff":      {"app diff NAME", (*CLI).appDiff},
-		"app history":   {"app history NAME", (*CLI).appHistory},
-		"app cancel":    {"app cancel NAME   (the Sync waiting for its offline Host: it won't run when the Host is back)", (*CLI).appCancel},
-		"app rollback":  {"app rollback NAME OP_ID [--wait] [--no-health] [--timeout 10m]", (*CLI).appRollback},
-		"app wait":      {"app wait NAME [--sync] [--health] [--timeout 10m]", (*CLI).appWait},
-		"app logs":      {"app logs NAME [CONTAINER_OR_SERVICE] [-f] [--tail N]", (*CLI).appLogs},
-		"app export":    {"app export NAME", (*CLI).appExport},
-		"host list":     {"host list", (*CLI).hostList},
-		"host add":      {"host add NAME   (a Host reached through an Agent: prints the command that enrolls it, with a single-use invite valid an hour; again: a new invite)", (*CLI).hostAdd},
-		"host approve":  {"host approve NAME FINGERPRINT   (after comparing it with the fingerprint the Agent printed)", (*CLI).hostApprove},
-		"host rotate":   {"host rotate NAME   (the Host's connected Agent makes a new signing key; prints its fingerprint)", (*CLI).hostRotate},
-		"host allow":    {"host allow NAME [CIDR]...   (the addresses its Agent may connect from, e.g. 203.0.113.7 or 10.0.0.0/8; none: anywhere)", (*CLI).hostAllow},
-		"host rename":   {"host rename NAME NEW   (only while no Application uses it; its Agent reconnects under the new name)", (*CLI).hostRename},
-		"host unlock":   {"host unlock NAME   (a Host locked by two connections with its key: when the second had a harmless cause)", (*CLI).hostUnlock},
-		"host delete":   {"host delete NAME   (revokes its Agent's key and closes its connection; a key that may be stolen: delete, then add the Host again)", (*CLI).hostDelete},
-		"host key show": {"host key show HOST", (*CLI).hostKeyShow},
+		"login":              {"login --server URL --token TOKEN", (*CLI).login},
+		"logout":             {"logout", (*CLI).logout},
+		"version":            {"version", (*CLI).version},
+		"backup":             {"backup FILE", (*CLI).backup},
+		"keygen":             {"keygen [--out FILE]   (a new age key like age-keygen; the public key also goes to stderr)", (*CLI).keygen},
+		"source-certs":       {"source-certs [--out DIR] [--host NAME]...   (mTLS certificates for a standalone Source Server; --host: the names the Control Plane dials it by)", (*CLI).sourceCerts},
+		"import":             {"import --host NAME [STACK]... [--recipient age1…] [--apps-dir apps] [--definitions platform/apps.yaml] [--dry-run] [--force]\n    (run on the Host, in your repository checkout: writes the Compose stacks running on this machine into it as Applications for Host NAME)", (*CLI).importStacks},
+		"app list":           {"app list", (*CLI).appList},
+		"app get":            {"app get NAME", (*CLI).appGet},
+		"app create":         {"app create NAME --repo URL [--path P] [--revision R] [--file F]... [--profile P]... [--host H] [--kind apps] [--auto-sync] [--self-heal] [--prune [--prune-volumes]] [--adopt] [--work-dir PATH]\n  app create -f app.yaml", (*CLI).appCreate},
+		"app delete":         {"app delete NAME [--cascade=false | --volumes | --forget] [--yes]", (*CLI).appDelete},
+		"app sync":           {"app sync NAME [--prune] [--wait] [--no-health] [--timeout 10m]", (*CLI).appSync},
+		"app refresh":        {"app refresh NAME", (*CLI).appRefresh},
+		"app diff":           {"app diff NAME", (*CLI).appDiff},
+		"app history":        {"app history NAME", (*CLI).appHistory},
+		"app cancel":         {"app cancel NAME   (the Sync waiting for its offline Host: it won't run when the Host is back)", (*CLI).appCancel},
+		"app rollback":       {"app rollback NAME OP_ID [--wait] [--no-health] [--timeout 10m]", (*CLI).appRollback},
+		"app wait":           {"app wait NAME [--sync] [--health] [--timeout 10m]", (*CLI).appWait},
+		"app logs":           {"app logs NAME [CONTAINER_OR_SERVICE] [-f] [--tail N]", (*CLI).appLogs},
+		"app export":         {"app export NAME", (*CLI).appExport},
+		"host list":          {"host list", (*CLI).hostList},
+		"host add":           {"host add NAME   (a Host reached through an Agent: prints the command that enrolls it, with a single-use invite valid an hour; again: a new invite)", (*CLI).hostAdd},
+		"host approve":       {"host approve NAME FINGERPRINT   (after comparing it with the fingerprint the Agent printed)", (*CLI).hostApprove},
+		"host rotate":        {"host rotate NAME   (the Host's connected Agent makes a new signing key; prints its fingerprint)", (*CLI).hostRotate},
+		"host allow":         {"host allow NAME [CIDR]...   (the addresses its Agent may connect from, e.g. 203.0.113.7 or 10.0.0.0/8; none: anywhere)", (*CLI).hostAllow},
+		"host rename":        {"host rename NAME NEW   (only while no Application uses it; its Agent reconnects under the new name)", (*CLI).hostRename},
+		"host unlock":        {"host unlock NAME   (a Host locked by two connections with its key: when the second had a harmless cause)", (*CLI).hostUnlock},
+		"host delete":        {"host delete NAME   (revokes its Agent's key and closes its connection; a key that may be stolen: delete, then add the Host again)", (*CLI).hostDelete},
+		"host key show":      {"host key show HOST", (*CLI).hostKeyShow},
+		"secrets init":       {"secrets init --host NAME [--path DIR]... [--repo-url URL] [--host-only] [--source sops]\n    (in your repository checkout: a .sops.yaml rule per Application of the Host, for its Host Key and the people's keys covering it)", (*CLI).secretsInit},
+		"secrets rekey":      {"secrets rekey [--host-only] [--source sops]   (in your checkout: the rules OmegaCD wrote refreshed from the current keys, every secret file rekeyed with your key)", (*CLI).secretsRekey},
+		"secrets key add":    {"secrets key add NAME age1… [--host H]...   (a person's public key the Hosts' secrets are encrypted for; no --host: all Hosts; an existing NAME: changed)", (*CLI).secretsKeyAdd},
+		"secrets key list":   {"secrets key list", (*CLI).secretsKeyList},
+		"secrets key remove": {"secrets key remove NAME   (then omegacd secrets rekey, and change the secrets it could read)", (*CLI).secretsKeyRemove},
 	}
 }
 
 var order = []string{"login", "logout", "version", "keygen", "source-certs", "import", "app list", "app get", "app create", "app delete", "app sync", "app refresh",
 	"app diff", "app history", "app cancel", "app rollback", "app wait", "app logs", "app export", "host list", "host add", "host approve", "host rotate", "host allow", "host unlock", "host rename", "host delete",
-	"host key show"}
+	"host key show", "secrets init", "secrets rekey", "secrets key add", "secrets key list", "secrets key remove"}
 
 func (c *CLI) usage() {
 	fmt.Fprintln(c.Stderr, "Usage: omegacd [server]        run the server\n       omegacd source-server  run a standalone Source Server\n       omegacd agent          run the Agent on this Host (omegacd agent --help: its settings)\n       omegacd COMMAND        talk to a server\n\nCommands:")
@@ -126,10 +132,10 @@ func (c *CLI) Run(ctx context.Context, args []string) int {
 	name, rest := "", args
 	if len(args) > 0 {
 		name, rest = args[0], args[1:]
-		if (name == "app" || name == "host") && len(rest) > 0 {
+		if (name == "app" || name == "host" || name == "secrets") && len(rest) > 0 {
 			name, rest = name+" "+rest[0], rest[1:]
 		}
-		if name == "host key" && len(rest) > 0 {
+		if (name == "host key" || name == "secrets key") && len(rest) > 0 {
 			name, rest = name+" "+rest[0], rest[1:]
 		}
 	}
@@ -322,25 +328,42 @@ func (c *CLI) version(ctx context.Context, args []string) error {
 	return nil
 }
 
-// keygen writes a new age identity in age-keygen's format, so installing OmegaCD needs no age tools.
-// It works offline and never overwrites a file: losing the Master Key loses every sealed credential.
+// keygen writes a new age identity in age-keygen's format, so installing OmegaCD needs no age tools. By default it
+// goes where sops reads keys (Q290): a person's key, for the files the Hosts' secrets are in. It works offline and
+// never overwrites a file: losing a key loses what only it can open.
 func (c *CLI) keygen(ctx context.Context, args []string) error {
 	var o opts
 	fs := c.flags("keygen", &o)
-	out := fs.String("out", "", "write the key to FILE (mode 0600) instead of stdout")
+	out := fs.String("out", "", "write the key to FILE (mode 0600), - for stdout (default: sops's keys file, $XDG_CONFIG_HOME or your config dir + sops/age/keys.txt)")
 	if _, err := parse(fs, args, 0, 0); err != nil {
 		return err
+	}
+	path := *out
+	if path == "" {
+		var err error
+		if path, err = sopsKeysFile(c.Getenv); err != nil {
+			return fmt.Errorf("find sops's keys file: %w (or pass --out FILE)", err)
+		}
+		if id, err := crypto.LoadIdentity(path); err == nil {
+			fmt.Fprintf(c.Stderr, "%s holds a key already: no new one (--out FILE for another).\nPublic key: %s\n", path, id.Recipient())
+			return nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return err
+		}
 	}
 	id, err := age.GenerateX25519Identity()
 	if err != nil { // coverage: unreachable, generating reads the system's randomness, which doesn't fail
 		return err
 	}
 	key := fmt.Sprintf("# created: %s\n# public key: %s\n%s\n", time.Now().Format(time.RFC3339), id.Recipient(), id)
-	if *out == "" {
+	if path == "-" {
 		_, err = io.WriteString(c.Stdout, key)
 	} else {
 		var f *os.File
-		if f, err = os.OpenFile(*out, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600); err != nil {
+		if f, err = os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600); err != nil {
 			return err
 		}
 		if _, err = f.WriteString(key); err == nil {
@@ -353,7 +376,23 @@ func (c *CLI) keygen(ctx context.Context, args []string) error {
 		return err
 	}
 	fmt.Fprintln(c.Stderr, "Public key: "+id.Recipient().String())
+	if *out == "" {
+		fmt.Fprintf(c.Stderr, "Written to %s, where sops reads it. Your OmegaCD's admin adds the public key: omegacd secrets key add NAME %s\n", path, id.Recipient())
+	}
 	return nil
+}
+
+// sopsKeysFile is where sops reads age keys by default: $XDG_CONFIG_HOME, which it honors on macOS too, else the
+// user's config dir (~/.config, ~/Library/Application Support), then sops/age/keys.txt.
+func sopsKeysFile(getenv func(string) string) (string, error) {
+	dir := getenv("XDG_CONFIG_HOME")
+	if dir == "" {
+		var err error
+		if dir, err = os.UserConfigDir(); err != nil {
+			return "", err
+		}
+	}
+	return filepath.Join(dir, "sops", "age", "keys.txt"), nil
 }
 
 // sourceCerts writes the CA, server and client certificates for omegacd source-server and the Control Plane.

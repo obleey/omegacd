@@ -42,6 +42,7 @@ type fakeStore struct {
 	createOpErr  error                         // CreateOp fails with it
 	statusErr    error                         // AgentStatus fails with it
 	fail         map[string]error              // the methods named fail with their error (breaks)
+	keys         []domain.EncryptionKey        // people's keys (Q189)
 	mu           sync.Mutex
 	apps         map[string]domain.Application
 	ops          []domain.SyncOperation
@@ -259,6 +260,9 @@ func (s *fakeStore) Render(_ context.Context, tree string) ([]domain.File, error
 	}
 	return files, nil
 }
+func (s *fakeStore) ListEncryptionKeys(context.Context) ([]domain.EncryptionKey, error) {
+	return s.keys, s.broken("ListEncryptionKeys")
+}
 func (s *fakeStore) ListRegistryCredentials(context.Context) ([]domain.RegistryCredential, error) {
 	return nil, nil
 }
@@ -278,6 +282,7 @@ type fakeSource struct {
 	blobErr       error             // Blob fails with it
 	badHash       bool              // Render names files by a hash that isn't hex
 	warnings      []string          // Render's
+	recipients    []string          // the last Render's
 	diffErr       error             // Diff fails with it
 }
 
@@ -292,6 +297,7 @@ func (g *fakeSource) Render(_ context.Context, spec domain.RenderSpec) (domain.R
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	r := domain.Rendered{Checksum: "tree-" + spec.Revision, Warnings: g.warnings}
+	g.recipients = spec.Recipients
 	if g.renderErr != nil && (g.renderErrRev == "" || g.renderErrRev == spec.Revision) {
 		return r, g.renderErr
 	}
@@ -346,6 +352,41 @@ func (g *fakeSource) define(sha, defs string) {
 	g.mu.Lock()
 	g.sha, g.files = sha, map[string]string{"apps.yaml": defs}
 	g.mu.Unlock()
+}
+
+// A Compose Application's render names its Host's key and the people's keys covering that Host (Q190, Q293); none
+// before the Host has a Host Key, none for an App of Apps; the store failing fails the render.
+func TestRenderRecipients(t *testing.T) {
+	r := newRig(t)
+	ctx := t.Context()
+	r.st.keys = []domain.EncryptionKey{{Name: "ana", Recipient: "age1ana", AllHosts: true},
+		{Name: "bo", Recipient: "age1bo", Hosts: []string{"edge"}}, {Name: "cy", Recipient: "age1cy", Hosts: []string{"other"}}}
+	a := app("web")
+	a.Host = "edge"
+	if _, err := r.c.render(ctx, a, "aaaaaaaa"); err != nil || r.g.recipients != nil {
+		t.Fatalf("no Host Key: %v %v", r.g.recipients, err)
+	}
+	r.st.hosts["edge"] = domain.Host{Name: "edge", AgeRecipient: "age1edge"}
+	if _, err := r.c.render(ctx, a, "aaaaaaaa"); err != nil || !slices.Equal(r.g.recipients, []string{"age1edge", "age1ana", "age1bo"}) {
+		t.Fatalf("got %v %v", r.g.recipients, err)
+	}
+	a.Host = "gone"
+	if _, err := r.c.render(ctx, a, "aaaaaaaa"); err != nil || r.g.recipients != nil {
+		t.Fatalf("a Host not there: %v %v", r.g.recipients, err)
+	}
+	apps := app("platform")
+	apps.Kind = domain.KindApps
+	r.g.files = map[string]string{}
+	if _, err := r.c.render(ctx, apps, "aaaaaaaa"); err != nil || r.g.recipients != nil {
+		t.Fatalf("an App of Apps: %v %v", r.g.recipients, err)
+	}
+	a.Host = "edge"
+	for _, m := range []string{"ListEncryptionKeys", "GetHost"} {
+		r.st.fail = map[string]error{m: errors.New("disk")}
+		if _, err := r.c.render(ctx, a, "aaaaaaaa"); err == nil || !strings.Contains(err.Error(), "the keys of Host edge") {
+			t.Errorf("%s failing: %v", m, err)
+		}
+	}
 }
 
 type rig struct {

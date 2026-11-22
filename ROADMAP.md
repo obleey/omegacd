@@ -50,7 +50,7 @@ The plan: [docs/v0.2](docs/v0.2/README.md) (architecture, decisions, 8 milestone
 - **Hosts**: Debian 13 and Ubuntu 24.04 on amd64 and arm64, every push tested on all four with the same tests (`make test-linux`, real servers); macOS for development only
 - **Packages**: `.deb` for amd64 and arm64 on every release, with the systemd units; `install.sh` installs it (`.rpm` comes with the RHEL family, after v0.2)
 - **Logging everywhere**: error, warn, info and debug for every decision the code makes, one Sync followable across Control Plane, Source Server and Agent, json or text; never a secret in a log
-- **Secrets helpers**: `omegacd secrets init` writes `.sops.yaml` for a Host, and a clear "this Host can't decrypt it" when a file was encrypted for other keys; built per secret source, ready for KeePass, 1Password, Ansible Vault, OpenBao and others later
+- **Secrets helpers**: a list of the people's keys (each for all Hosts or chosen ones) besides each Host Key, `omegacd secrets init` writing `.sops.yaml` rules for a Host's Applications, `omegacd secrets rekey` after the keys change, a warning for files encrypted for an outdated set, and a clear "this Host can't decrypt it"; built per secret source, ready for KeePass, 1Password, Ansible Vault, OpenBao and others later
 
 ## After v0.2 — trustworthy for real sites (to be re-planned)
 

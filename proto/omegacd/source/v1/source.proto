@@ -41,6 +41,7 @@ message RenderRequest {
   repeated string compose_files = 4;
   repeated string profiles = 5;
   bool apps = 6; // an App of Apps: read its definitions
+  repeated string recipients = 7; // the keys its *.sops.* files should be encrypted for, exactly; none: not checked
 }
 
 message RenderResponse {

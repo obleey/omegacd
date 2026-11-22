@@ -157,7 +157,7 @@ survives a reboot offline and self-heals, with no SELinux denial in the audit lo
 Podman and for Docker CE.
 
 ### M6-08 · Secrets helper for a repository
-**Status:** todo
+**Status:** done (2026-11-22, PR #162)
 **Depends on:** M3-02, M2-05
 
 `omegacd secrets init --host NAME [--path PATH] [--source sops]` prepares a repository for a Host's secrets, so
@@ -173,8 +173,13 @@ the Host's key plus the keys allowed for it (the Host card, `secrets init` with 
 import). `secrets init` and `import` refuse a Host-only rule without `--host-only`; the Host card warns. `secrets
 rekey` rekeys every file it can and lists the ones it can't open. An Application warns when its files are encrypted
 for an outdated set of keys. The Master Key is never a recipient. `omegacd keygen` writes a person's key to
-`~/.config/sops/age/keys.txt` by default. The docs say the key list governs reading, not changing (that's Git's
+where `sops` reads it by default (Q290).  The docs say the key list governs reading, not changing (that's Git's
 branch protection), and to change secret values when someone leaves.
+
+Settled before it (Q286–Q297): rules per Application from the checkout's origin, marked `# omegacd: Host NAME` so a
+rekey refreshes them; rekey with the SOPS library, no `sops` binary; the warning compared on the Source Server from
+the recipients the Control Plane sends; `keygen` where `sops` reads keys. A Host with Applications gets a new Host Key
+through `app delete --forget`, `host delete` and `host add` (Q127, Q289).
 
 **Done when:** a repository prepared with it deploys a SOPS secret to that Host, and the people's keys allowed for it open
 and edit it; a Host-only rule is refused without `--host-only`; a file encrypted for an outdated set of keys shows its

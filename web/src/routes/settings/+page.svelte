@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api, ago, errMsg, get, type APIToken, type RegistryCredential, type RepoCredential, type SourceStatus } from '#lib/api.ts';
+	import { api, ago, enc, errMsg, get, type APIToken, type EncryptionKey, type HostView, type RegistryCredential, type RepoCredential, type SourceStatus } from '#lib/api.ts';
+	import { shortKey } from '#lib/hostkeys.ts';
 	import { bytes } from '#lib/size.ts';
 	import { type DateFormat, dateFormats, formatDate } from '#lib/datetime.ts';
 	import { display, setDateFormat } from '#lib/display.svelte.ts';
@@ -10,6 +11,8 @@
 	let repos = $state<RepoCredential[]>([]);
 	let regs = $state<RegistryCredential[]>([]);
 	let tokens = $state<APIToken[]>([]);
+	let keys = $state<EncryptionKey[]>([]);
+	let hostNames = $state<string[]>([]);
 	let source = $state<SourceStatus | null>(null);
 	let sourceBusy = $state(false);
 	async function loadSource() {
@@ -29,17 +32,22 @@
 	const blankReg = () => ({ id: 0, registry: '', username: '', password: '' });
 	let repoForm = $state(blankRepo());
 	let regForm = $state(blankReg());
+	// a person's public key (Q189, Q292): editing keeps its name, the key and the Hosts it covers change
+	const blankKey = () => ({ editing: false, name: '', recipient: '', allHosts: true, hosts: [] as string[] });
+	let keyForm = $state(blankKey());
 	let tokenName = $state('');
 	let newToken = $state('');
 	let copied = $state(false);
 
 	async function load() {
 		try {
-			[repos, regs, tokens] = await Promise.all([
+			[repos, regs, tokens, keys] = await Promise.all([
 				get<RepoCredential[]>('/settings/repo-credentials'),
 				get<RegistryCredential[]>('/settings/registry-credentials'),
-				get<APIToken[]>('/settings/tokens')
-			]).then((r) => r.map((x) => x ?? []) as [RepoCredential[], RegistryCredential[], APIToken[]]);
+				get<APIToken[]>('/settings/tokens'),
+				get<EncryptionKey[]>('/settings/encryption-keys')
+			]).then((r) => r.map((x) => x ?? []) as [RepoCredential[], RegistryCredential[], APIToken[], EncryptionKey[]]);
+			hostNames = ((await get<HostView[]>('/settings/hosts')) ?? []).map((h) => h.name).sort();
 		} catch (e) {
 			error = errMsg(e);
 		}
@@ -75,6 +83,18 @@
 	function del(kind: string, id: number, what: string) {
 		if (confirm(`Delete ${what}?`)) run(() => api('DELETE', `/settings/${kind}/${id}`));
 	}
+	async function saveKey(e: SubmitEvent) {
+		e.preventDefault();
+		const k = keyForm;
+		const body = { recipient: k.recipient.trim(), allHosts: k.allHosts, hosts: k.allHosts ? [] : k.hosts };
+		if (await run(() => api('PUT', `/settings/encryption-keys/${enc(k.name.trim())}`, body))) keyForm = blankKey();
+	}
+	function delKey(k: EncryptionKey) {
+		if (confirm(`Remove ${k.name}?\n\nFiles stay encrypted for it until omegacd secrets rekey in each repository, and old commits stay readable to it: change the values of the secrets it could read.`))
+			run(() => api('DELETE', `/settings/encryption-keys/${enc(k.name)}`));
+	}
+	const covers = (k: EncryptionKey) => (k.allHosts ? 'All Hosts' : k.hosts.join(', ') || 'No Host');
+
 	async function createToken(e: SubmitEvent) {
 		e.preventDefault();
 		copied = false;
@@ -227,6 +247,59 @@
 	</form>
 </section>
 
+<section class="card" id="encryption-keys">
+	<h2><span class="hicon"><Icon name="lock" size={17} /></span>Encryption keys <span class="muted small">— the people who can open and edit the Hosts' secrets</span></h2>
+	<p class="muted small">Public age keys only (<code>age1…</code>): make yours with <code>omegacd keygen</code> and add its public half here. Each Host's
+		secrets are encrypted for its Host Key and the keys covering it, by <code>omegacd secrets init</code>, the Host card's rule and the import;
+		after a change, run <code>omegacd secrets rekey</code> in each repository. Keep one key offline for recovery. This list decides who can
+		<em>read</em> the secrets; who may <em>change</em> them is decided in Git (branch protection, reviews).</p>
+	{#if keys.length}
+		<div class="scroll-x"><table>
+			<thead><tr><th>Name</th><th>Public key</th><th>Hosts</th><th><span class="sr-only">Actions</span></th></tr></thead>
+			<tbody>
+				{#each keys as k (k.name)}
+					<tr>
+						<td>{k.name}</td>
+						<td class="mono" title={k.recipient}>{shortKey(k.recipient)}</td>
+						<td>{covers(k)}</td>
+						<td class="right">
+							<button onclick={() => (keyForm = { editing: true, name: k.name, recipient: k.recipient, allHosts: k.allHosts, hosts: [...k.hosts] })}>Edit</button>
+							<button class="danger" onclick={() => delKey(k)}>Remove</button>
+						</td>
+					</tr>
+				{/each}
+			</tbody>
+		</table></div>
+	{:else}
+		<p class="warn small" role="note"><Icon name="alert" size={14} />No keys: only the Hosts can decrypt their secrets, so nobody can edit them and a lost Host loses them. Add yours.</p>
+	{/if}
+	<form onsubmit={saveKey}>
+		<h3>{keyForm.editing ? `Edit ${keyForm.name}` : 'Add key'}</h3>
+		<div class="grid">
+			<div class="field">
+				<label for="ek-name">Name</label>
+				<input id="ek-name" bind:value={keyForm.name} required readonly={keyForm.editing} placeholder="Ana's laptop" autocomplete="off" />
+			</div>
+			<div class="field">
+				<label for="ek-key">Public key</label>
+				<input id="ek-key" class="mono" bind:value={keyForm.recipient} required pattern="\s*age1[0-9a-z]+\s*" title="An age public key, age1…: never the private key (AGE-SECRET-KEY-1…)" placeholder="age1…" autocomplete="off" />
+			</div>
+		</div>
+		<fieldset class="hosts">
+			<legend class="small">Hosts it covers</legend>
+			<label><input type="radio" name="ek-all" checked={keyForm.allHosts} onchange={() => (keyForm.allHosts = true)} />All Hosts</label>
+			<label><input type="radio" name="ek-all" checked={!keyForm.allHosts} onchange={() => (keyForm.allHosts = false)} />These Hosts:</label>
+			{#each hostNames as h (h)}
+				<label><input type="checkbox" value={h} bind:group={keyForm.hosts} disabled={keyForm.allHosts} />{h}</label>
+			{/each}
+		</fieldset>
+		<div class="row">
+			<button class="primary" type="submit" disabled={!keyForm.allHosts && !keyForm.hosts.length}>{keyForm.editing ? 'Save' : 'Add'}</button>
+			{#if keyForm.editing}<button type="button" onclick={() => (keyForm = blankKey())}>Cancel</button>{/if}
+		</div>
+	</form>
+</section>
+
 <section class="card">
 	<h2><span class="hicon"><Icon name="key" size={17} /></span>API tokens</h2>
 	<p class="muted small">Use as <code>Authorization: Bearer &lt;token&gt;</code>.</p>
@@ -284,4 +357,7 @@
 	.ok { color: var(--green); }
 	.bad { color: var(--red); }
 	.warn { color: var(--yellow); display: flex; align-items: center; gap: 0.4rem; }
+	.hosts { border: 0; padding: 0; margin: 0 0 0.8rem; display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; align-items: center; }
+	.hosts legend { padding: 0; margin-bottom: 0.3rem; color: var(--subtext0); width: 100%; }
+	.hosts label { display: inline-flex; align-items: center; gap: 0.35rem; }
 </style>

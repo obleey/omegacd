@@ -68,7 +68,7 @@ func (g *grpcServer) Invalidate(_ context.Context, r *sourcev1.InvalidateRequest
 
 func (g *grpcServer) Render(ctx context.Context, r *sourcev1.RenderRequest) (*sourcev1.RenderResponse, error) {
 	out, err := g.s.Render(ctx, domain.RenderSpec{RepoURL: r.RepoUrl, Revision: r.Revision, Path: r.Path,
-		ComposeFiles: r.ComposeFiles, Profiles: r.Profiles, Apps: r.Apps})
+		ComposeFiles: r.ComposeFiles, Profiles: r.Profiles, Apps: r.Apps, Recipients: r.Recipients})
 	if err != nil {
 		return nil, g.toStatus(ctx, err)
 	}
@@ -230,7 +230,7 @@ func (c *Client) Invalidate(repoURL string) {
 
 func (c *Client) Render(ctx context.Context, spec domain.RenderSpec) (domain.Rendered, error) {
 	r, err := c.c.Render(ctx, &sourcev1.RenderRequest{RepoUrl: spec.RepoURL, Revision: spec.Revision, Path: spec.Path,
-		ComposeFiles: spec.ComposeFiles, Profiles: spec.Profiles, Apps: spec.Apps})
+		ComposeFiles: spec.ComposeFiles, Profiles: spec.Profiles, Apps: spec.Apps, Recipients: spec.Recipients})
 	if err != nil {
 		return domain.Rendered{}, fromStatus(err)
 	}

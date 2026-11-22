@@ -64,6 +64,9 @@ type Sealer struct {
 
 func NewSealer(id *age.X25519Identity) *Sealer { return &Sealer{id: id} }
 
+// Recipient is the Master Key's public key, which no secret file may be encrypted for (Q192).
+func (s *Sealer) Recipient() string { return s.id.Recipient().String() }
+
 func (s *Sealer) Seal(plaintext string) (string, error) {
 	if plaintext == "" {
 		return "", nil

@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -346,6 +347,33 @@ type RegistryCredential struct {
 	HasPassword bool   `json:"hasPassword"`
 }
 
+// EncryptionKey is a person's age public key that Hosts' secrets are encrypted for besides each Host Key (Q189):
+// the people who can open and edit them. Never a private key.
+type EncryptionKey struct {
+	Name      string   `json:"name"`
+	Recipient string   `json:"recipient"` // age1...
+	AllHosts  bool     `json:"allHosts"`
+	Hosts     []string `json:"hosts"` // the Hosts it covers when not AllHosts; renamed and deleted with them (Q291)
+}
+
+// Covers reports whether k is a recipient of host's secrets (Q190).
+func (k EncryptionKey) Covers(host string) bool { return k.AllHosts || slices.Contains(k.Hosts, host) }
+
+// Recipients are the keys host's secrets are encrypted for: its Host Key, then the people's keys covering it (Q190);
+// none while it has no Host Key.
+func Recipients(hostKey, host string, keys []EncryptionKey) []string {
+	if hostKey == "" {
+		return nil
+	}
+	out := []string{hostKey}
+	for _, k := range keys {
+		if k.Covers(host) {
+			out = append(out, k.Recipient)
+		}
+	}
+	return out
+}
+
 type APIToken struct {
 	ID        int64     `json:"id"`
 	Name      string    `json:"name"`
@@ -491,6 +519,10 @@ type Store interface {
 	ListRegistryCredentials(ctx context.Context) ([]RegistryCredential, error)
 	SaveRegistryCredential(ctx context.Context, c RegistryCredential) (int64, error)
 	DeleteRegistryCredential(ctx context.Context, id int64) error
+	ListEncryptionKeys(ctx context.Context) ([]EncryptionKey, error)
+	// SaveEncryptionKey adds k, or changes the one named k.Name; ErrInvalid for the Master Key or a Host Key (Q291).
+	SaveEncryptionKey(ctx context.Context, k EncryptionKey) error
+	DeleteEncryptionKey(ctx context.Context, name string) error
 
 	// Hosts: secrets are sealed at rest; empty secret fields on save keep the old value.
 	ListHosts(ctx context.Context) ([]Host, error)
@@ -608,6 +640,8 @@ type RenderSpec struct {
 	RepoURL, Revision, Path string
 	ComposeFiles, Profiles  []string
 	Apps                    bool // an App of Apps: read its definitions instead of compose files
+	// Recipients are the keys its *.sops.* files should be encrypted for, exactly (Q196, Q293); none: not checked
+	Recipients []string
 }
 
 // Rendered is an Application's Desired State at a Revision.
