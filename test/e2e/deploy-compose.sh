@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# End-to-end: deploy/compose.yaml and deploy/agent.yaml as an operator runs them (M6-02), with the image the Dockerfile
-# makes around this checkout's binary: the Control Plane and its standalone Source Server, never root, their mTLS pair
+# End-to-end: deploy/compose.yaml and deploy/agent.yaml as install.sh sets them up (M6-02, M6-01, Q269), with the image
+# the Dockerfile makes around this checkout's binary: the Control Plane and its standalone Source Server, never root, their mTLS pair
 # made once (Q231, Q236); the Agent in a container on host networking, as the omegacd user in the socket's group,
 # reaching the Control Plane over loopback (Q238), finding its container without its hostname (Q235), taking back a
 # work dir Docker made as root (Q237), refusing one mounted at another path (Q21); and, with the user's rootless
 # Podman and rootless Docker (over https, Q252), the rootless variant as container root (Q240). The binary is
-# OMEGACD_BIN on Linux; elsewhere a Linux build.
+# OMEGACD_BIN on Linux; elsewhere a Linux build. install.sh is this checkout's, fetching from it; running it again
+# moves to another image and keeps the keys (Q267); its development copy refuses to run.
 set -u # no pipefail: grep -q closing the pipe early must not fail a check
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 BIN=${OMEGACD_BIN:-$ROOT/bin/omegacd}
@@ -17,21 +18,27 @@ mkdir -p "$REPO/web" "$T/bc"
 fail=0
 check() { if eval "$2"; then echo "PASS  $1"; else echo "FAIL  $1"; fail=1; fi; }
 gitc() { git -C "$REPO" -c user.name=e2e -c user.email=e2e@local "$@"; }
-cp_() { docker compose -p $CP -f "$ROOT/deploy/compose.yaml" -f "$T/cp-cover.yaml" "$@"; }
-ag() { docker compose -p $AG -f "$ROOT/deploy/agent.yaml" -f "$T/agent-cover.yaml" --env-file "$T/agent.env" "$@"; }
+cp_() { docker compose -p $CP -f "$T/cp/compose.yaml" -f "$T/cp-cover.yaml" "$@"; }
+ag() { docker compose -p $AG -f "$T/agent/agent.yaml" -f "$T/agent-cover.yaml" "$@"; }
+# setup PROJECT DIR FILE OVERRIDES SETTING=VALUE…: install.sh, this checkout's, its compose project and overrides given
+setup() {
+  local p=$1 d=$2 f=$3 o=$4; shift 4
+  env COMPOSE_PROJECT_NAME="$p" COMPOSE_FILE="$d/$f:$o" OMEGACD_VERSION=v0.0.0-e2e OMEGACD_RAW="file://$ROOT/deploy" \
+    OMEGACD_IMAGE=$IMAGE "$@" sh "$ROOT/deploy/install.sh" > "$T/install.out" 2>&1 </dev/null
+}
 agentlog() { docker logs $AG-agent-1 2>&1; }
 waitfor() { for _ in $(seq $((${2:-30} * 5))); do eval "$1" && return 0; sleep 0.2; done; return 1; } # CMD [SECONDS]
 PODMAN=unix://${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock DOCKERR=unix://${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/docker.sock
 cleanup() {
   "$BIN" app delete web --yes >/dev/null 2>&1; "$BIN" app delete webp --yes >/dev/null 2>&1
   for p in web e2e-parity; do docker rm -f $(docker ps -aq --filter label=com.docker.compose.project=$p) >/dev/null 2>&1; done
-  ag down -v >/dev/null 2>&1; cp_ down -v >/dev/null 2>&1
+  ag down -v >/dev/null 2>&1; cp_ down -v >/dev/null 2>&1; docker rmi omegacd-e2e:compose2 >/dev/null 2>&1
   "$BIN" app delete webd --yes >/dev/null 2>&1; docker rm -f e2e-tlsfront >/dev/null 2>&1
   for sock in "$PODMAN" "$DOCKERR"; do # the rootless variants: the user's Podman (p) and Docker (d)
     [ -S "${sock#unix://}" ] || continue
     n=p; [ "$sock" = "$DOCKERR" ] && n=d
     DOCKER_HOST=$sock docker rm -f $(DOCKER_HOST=$sock docker ps -aq --filter label=com.docker.compose.project=web$n) >/dev/null 2>&1
-    DOCKER_HOST=$sock docker compose -p e2e-agent$n -f "$ROOT/deploy/agent.yaml" --env-file "$T/agent$n.env" down -v >/dev/null 2>&1
+    DOCKER_HOST=$sock docker compose -p e2e-agent$n -f "$T/agent$n/agent.yaml" down -v >/dev/null 2>&1
     DOCKER_HOST=$sock docker rmi $IMAGE >/dev/null 2>&1
     rm -rf "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/omegacd-e2e$n"
   done
@@ -68,34 +75,40 @@ cover() {
     "$PW" "${GOCOVERDIR:+, GOCOVERDIR: $GOCOVERDIR}"
   [ -z "${GOCOVERDIR:-}" ] || printf '    volumes: ["%s:%s"]\n' "$GOCOVERDIR" "$GOCOVERDIR"
 } > "$T/cp-cover.yaml"
-{ echo "services:"; echo "  agent:"; cover; } > "$T/agent-cover.yaml"
-[ -n "${GOCOVERDIR:-}" ] || echo "services: {}" > "$T/agent-cover.yaml"
+{
+  printf 'services:\n  agent:\n    environment: {OMEGACD_LOG_LEVEL: debug%s}\n' "${GOCOVERDIR:+, GOCOVERDIR: $GOCOVERDIR}"
+  [ -z "${GOCOVERDIR:-}" ] || printf '    volumes: ["%s:%s"]\n' "$GOCOVERDIR" "$GOCOVERDIR"
+} > "$T/agent-cover.yaml"
 
-export OMEGACD_IMAGE=$IMAGE OMEGACD_PORT=18080
-cp_ up -d --wait >/dev/null 2>&1
-check "deploy/compose.yaml brings up the Control Plane and the Source Server" 'waitfor "curl -sf $API/version >/dev/null"'
+out=$(env -u OMEGACD_VERSION OMEGACD_MODE=agent sh "$ROOT/deploy/install.sh" 2>&1 </dev/null); rc=$?
+check "install.sh's development copy refuses, pointing at a release's (Q266)" '[ $rc -ne 0 ] && echo "$out" | grep -q "development copy: use the install.sh of a release"'
+
+setup $CP "$T/cp" compose.yaml "$T/cp-cover.yaml" OMEGACD_MODE=full OMEGACD_TARGET=compose OMEGACD_DIR="$T/cp" OMEGACD_PORT=18080
+check "install.sh full brings up deploy/compose.yaml's Control Plane and Source Server, naming the next step (Q233)" \
+  'waitfor "curl -sf $API/version >/dev/null" && grep -q "add a Host" "$T/install.out" || { cat "$T/install.out"; false; }'
 check "neither runs as root: the image's omegacd user (Q236)" \
   '[ "$(docker exec $CP-omegacd-1 id -u)" = 10001 ] && [ "$(docker exec $CP-source-server-1 id -u)" = 10001 ]'
 check "the Control Plane uses the standalone Source Server (Q231)" 'cp_ logs omegacd 2>&1 | grep -q "using the standalone source server.*url=https://source-server:9090"'
 check "and made its Master Key itself, in its keys volume (Q115)" 'cp_ logs omegacd 2>&1 | grep -q "created the Master Key.*path=/etc/omegacd/age.key"'
 CA=$(docker run --rm -v ${CP}_source-tls:/c busybox:1.38 cat /c/ca.pem | cksum)
+MK=$(docker run --rm -v ${CP}_omegacd-keys:/k busybox:1.38 cat /k/age.key | cksum)
 
 curl -sf -c "$T/j" -H 'Content-Type: application/json' -d "{\"username\":\"admin\",\"password\":\"$PW\"}" $API/auth/login >/dev/null
 export OMEGACD_SERVER=http://127.0.0.1:18080
 export OMEGACD_TOKEN=$(curl -sf -b "$T/j" -H 'Content-Type: application/json' -H 'X-Requested-With: omegacd' \
   -d '{"name":"e2e"}' $API/settings/tokens | python3 -c 'import json,sys; print(json.load(sys.stdin)["plaintext"])')
 
-# the Agent as the file's comment says: a .env with the Control Plane, the invite and the socket's group
+# the Agent in a container, through install.sh: a .env with the Control Plane, the invite and the socket's group (the
+# engine's view of it: OrbStack's differs from macOS's)
 INVITE=$("$BIN" host add box | grep -o 'omegacd-invite-[0-9a-f]*' | head -1)
 GID=$(docker run --rm -v /var/run/docker.sock:/s busybox:1.38 stat -c %g /s)
-cat > "$T/agent.env" <<EOF
-OMEGACD_AGENT_CONTROL_PLANE=http://127.0.0.1:18080
-OMEGACD_AGENT_INVITE=$INVITE
-OMEGACD_DOCKER_GID=$GID
-OMEGACD_AGENT_WORKDIR=$T/work
-OMEGACD_LOG_LEVEL=debug
-EOF
-ag up -d >/dev/null 2>&1
+agent() { # SETTING=VALUE…: install.sh agent, the container on rootful Docker
+  setup $AG "$T/agent" agent.yaml "$T/agent-cover.yaml" OMEGACD_MODE=agent OMEGACD_AGENT_INSTALL=container \
+    OMEGACD_AGENT_ENGINE=docker OMEGACD_AGENT_DIR="$T/agent" OMEGACD_DOCKER_GID="$GID" OMEGACD_AGENT_WORKDIR="$T/work" "$@"
+}
+agent OMEGACD_AGENT_CONTROL_PLANE=http://127.0.0.1:18080 OMEGACD_AGENT_INVITE="$INVITE"
+check "install.sh agent writes the .env and prints the Agent's fingerprint" \
+  'grep -qx "OMEGACD_AGENT_INVITE=$INVITE" "$T/agent/.env" && grep -q "if its fingerprint is: SHA256:" "$T/install.out" || { cat "$T/install.out"; false; }'
 check "deploy/agent.yaml starts the Agent, on host networking, and it enrolls over loopback (Q238)" 'waitfor "agentlog | grep -q \"waiting for an admin to approve\""'
 FP=$(agentlog | grep -o 'fingerprint=SHA256:[A-Za-z0-9+/]*' | head -1 | cut -d= -f2)
 "$BIN" host approve box "$FP" >/dev/null
@@ -122,7 +135,10 @@ check "it deploys an Application with a bind-mounted file from Git" '[ $rc -eq 0
 
 connected() { agentlog | grep -c "connected to the Control Plane, approved"; }
 n=$(connected)
-cp_ up -d --force-recreate --wait >/dev/null 2>&1
+docker tag $IMAGE omegacd-e2e:compose2 # a newer release, as far as install.sh can tell
+setup $CP "$T/cp" compose.yaml "$T/cp-cover.yaml" OMEGACD_MODE=full OMEGACD_TARGET=compose OMEGACD_DIR="$T/cp" OMEGACD_PORT=18080 OMEGACD_IMAGE=omegacd-e2e:compose2
+check "install.sh full run again moves to the new image, keeping the Master Key (Q267)" \
+  '[ "$(docker inspect -f "{{.Config.Image}}" $CP-omegacd-1)" = omegacd-e2e:compose2 ] && [ "$(docker run --rm -v ${CP}_omegacd-keys:/k busybox:1.38 cat /k/age.key | cksum)" = "$MK" ] || { cat "$T/install.out"; false; }'
 check "recreated, the two keep their certificates (Q231)" '[ "$(docker run --rm -v ${CP}_source-tls:/c busybox:1.38 cat /c/ca.pem | cksum)" = "$CA" ]'
 # a Sync while the Agent is still reconnecting is queued, and --wait doesn't wait for that; its backoff, not reset by a
 # connection shorter than a minute, can be some 40 s by now
@@ -130,10 +146,9 @@ waitfor "[ \$(connected) -gt $n ]" 90
 out=$("$BIN" app sync web --wait --timeout 3m 2>&1); rc=$?
 check "and still trust each other: a Sync renders through the Source Server" '[ $rc -eq 0 ] || { echo "$out" >&2; false; }'
 
-n=$(connected)
-ag restart >/dev/null 2>&1
-check "restarted with its used invite still in .env, it reconnects by its key" \
-  'waitfor "[ \$(connected) -gt $n ]" 90'
+agent OMEGACD_IMAGE=omegacd-e2e:compose2 # run again without the settings: the new image, the .env's used invite kept
+check "install.sh agent run again moves to the new image; with its used invite still in .env, it reconnects by its key" \
+  'waitfor "[ \$(connected) -gt 0 ]" 90 && [ "$(docker inspect -f "{{.Config.Image}}" $AG-agent-1)" = omegacd-e2e:compose2 ] && grep -qx "OMEGACD_AGENT_INVITE=$INVITE" "$T/agent/.env" || { cat "$T/install.out"; false; }'
 
 # Q237: after a reboot its RAM work dir is gone and Docker makes the bind mount's source again, owned by root
 ag stop >/dev/null 2>&1
@@ -170,16 +185,18 @@ check "and where it can't ask the engine whether it's rootless, logged" 'echo "$
 
 # Q240: the rootless variant, as container root, with the user's own rootless Podman and rootless Docker
 RT=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
-# rootless ENGINE N SOCKET URL [OVERRIDE]: agent.yaml's Agent as container root there, approved, deploying
+# rootless ENGINE N SOCKET URL INSTALL-ENGINE [OVERRIDE]: install.sh's Agent as container root there, approved, deploying
 rootless() {
-  local engine=$1 n=$2 sock=$3 url=$4 extra=${5:-}
+  local engine=$1 n=$2 sock=$3 url=$4 ie=$5 extra=${6:-}
   docker save $IMAGE | DOCKER_HOST=$sock docker load >/dev/null 2>&1
   local invite; invite=$("$BIN" host add box$n | grep -o 'omegacd-invite-[0-9a-f]*' | head -1)
-  printf '%s\n' "OMEGACD_AGENT_CONTROL_PLANE=$url" "OMEGACD_AGENT_INVITE=$invite" OMEGACD_AGENT_USER=0:0 OMEGACD_DOCKER_GID=0 \
-    "OMEGACD_DOCKER_SOCK=${sock#unix://}" "OMEGACD_AGENT_WORKDIR=$RT/omegacd-e2e$n" OMEGACD_LOG_LEVEL=debug > "$T/agent$n.env"
-  agr() { DOCKER_HOST=$sock docker compose -p e2e-agent$n -f "$ROOT/deploy/agent.yaml" -f "$T/agent-cover.yaml" ${extra:+-f "$extra"} --env-file "$T/agent$n.env" "$@"; }
+  agr() { DOCKER_HOST=$sock docker compose -p e2e-agent$n -f "$T/agent$n/agent.yaml" -f "$T/agent-cover.yaml" ${extra:+-f "$extra"} "$@"; }
   rlog() { agr logs agent 2>&1; }
-  agr up -d >/dev/null 2>&1
+  setup e2e-agent$n "$T/agent$n" agent.yaml "$T/agent-cover.yaml${extra:+:$extra}" OMEGACD_MODE=agent OMEGACD_AGENT_INSTALL=container \
+    OMEGACD_AGENT_ENGINE=$ie OMEGACD_AGENT_DIR="$T/agent$n" OMEGACD_AGENT_WORKDIR="$RT/omegacd-e2e$n" \
+    OMEGACD_AGENT_CONTROL_PLANE="$url" OMEGACD_AGENT_INVITE="$invite"
+  check "$engine: install.sh writes the rootless values, container root and the user's socket (Q240, Q265)" \
+    'grep -qx OMEGACD_AGENT_USER=0:0 "$T/agent$n/.env" && grep -qx "OMEGACD_DOCKER_SOCK=${sock#unix://}" "$T/agent$n/.env" || { cat "$T/install.out"; false; }'
   check "$engine: the Agent runs as container root, the user on the Host (Q240)" \
     'waitfor "rlog | grep -q \"running as root in a rootless engine.s container\"" && waitfor "rlog | grep -q \"waiting for an admin to approve\"" 90 || { rlog | tail -8 >&2; false; }'
   "$BIN" host approve box$n "$(rlog | grep -o 'fingerprint=SHA256:[A-Za-z0-9+/]*' | head -1 | cut -d= -f2)" >/dev/null
@@ -189,7 +206,7 @@ rootless() {
   check "$engine: and deploys through the user's engine" '[ $rc -eq 0 ] && [ -f "$RT/omegacd-e2e$n/web$n/conf.txt" ] || { echo "$out" >&2; rlog | tail -5 >&2; false; }'
 }
 if [ "$(uname)" = Linux ] && { [ -S "${PODMAN#unix://}" ] || [ -n "${OMEGACD_TEST_ALL:-}" ]; }; then
-  rootless "rootless Podman" p "$PODMAN" http://127.0.0.1:18080
+  rootless "rootless Podman" p "$PODMAN" http://127.0.0.1:18080 podman
 fi
 # Q252: rootless Docker's host network has a loopback of its own, so its Agent takes the Control Plane's https:// URL,
 # here a TLS front on this server's own address with a private CA
@@ -205,15 +222,19 @@ if [ "$(uname)" = Linux ] && { [ -S "${DOCKERR#unix://}" ] || [ -n "${OMEGACD_TE
     "openssl-listen:18443,bind=$IP,fork,reuseaddr,cert=/tls/front.pem,verify=0" tcp:127.0.0.1:18080 >/dev/null 2>&1
   waitfor "curl -sf --cacert $T/tls/ca.pem https://$IP:18443/api/version >/dev/null" # listening, before the Agent dials
   printf 'services:\n  agent:\n    environment: {OMEGACD_AGENT_CA_FILE: /etc/omegacd-ca.pem}\n    volumes: ["%s:/etc/omegacd-ca.pem:ro"]\n' "$T/tls/ca.pem" > "$T/agentd-ca.yaml"
-  rootless "rootless Docker" d "$DOCKERR" "https://$IP:18443" "$T/agentd-ca.yaml"
+  out=$(env OMEGACD_VERSION=v0.0.0-e2e OMEGACD_MODE=agent OMEGACD_AGENT_INSTALL=container OMEGACD_AGENT_ENGINE=rootless-docker \
+    OMEGACD_AGENT_DIR="$T/agentx" OMEGACD_AGENT_CONTROL_PLANE=http://127.0.0.1:18080 sh "$ROOT/deploy/install.sh" 2>&1 </dev/null); rc=$?
+  check "rootless Docker: install.sh refuses a Control Plane on loopback for the container, naming the user unit (Q252)" \
+    '[ $rc -ne 0 ] && echo "$out" | grep -q "can.t reach http://127.0.0.1:18080.*OMEGACD_AGENT_INSTALL=systemd" && [ ! -e "$T/agentx" ]'
+  rootless "rootless Docker" d "$DOCKERR" "https://$IP:18443" rootless-docker "$T/agentd-ca.yaml"
 fi
 
 check "no password in the logs (Q62)" '! { cp_ logs 2>&1; agentlog; } | grep -qF "$PW"'
 
 [ $fail -eq 0 ] && echo "ALL PASSED" || {
   echo "--- agent log"; agentlog | tail -15; echo "--- control plane log"; cp_ logs omegacd 2>&1 | tail -10
-  for n in p d; do [ ! -f "$T/agent$n.env" ] || { echo "--- rootless agent $n"; [ $n = p ] && sock=$PODMAN || sock=$DOCKERR
-    DOCKER_HOST=$sock docker compose -p e2e-agent$n -f "$ROOT/deploy/agent.yaml" --env-file "$T/agent$n.env" logs agent 2>&1 | tail -15; }; done
+  for n in p d; do [ ! -f "$T/agent$n/.env" ] || { echo "--- rootless agent $n"; [ $n = p ] && sock=$PODMAN || sock=$DOCKERR
+    DOCKER_HOST=$sock docker compose -p e2e-agent$n -f "$T/agent$n/agent.yaml" logs agent 2>&1 | tail -15; }; done
   docker logs e2e-tlsfront 2>&1 | tail -5
 }
 exit $fail

@@ -1,5 +1,5 @@
-// Add Host's commands (Q151, Q159, Q160): what enrolls a Host's Agent with its invite; M6's installers add theirs
-// (deploy/agent.yaml here; install.sh and systemd to come).
+// Add Host's commands (Q151, Q159, Q160): what enrolls a Host's Agent with its invite: install.sh (M6-01), deploy/agent.yaml
+// (M6-02) and the command line.
 
 /** The image tag of this Control Plane's version: v0.2.0 → 0.2.0; a development build (no release tag) → latest. */
 export function imageTag(version: string): string {
@@ -10,6 +10,14 @@ export function imageTag(version: string): string {
 /** The Agent's command line on the Host, as omegacd host add prints it. */
 export function agentCommand(url: string, invite: string): string {
 	return `OMEGACD_AGENT_CONTROL_PLANE=${url} OMEGACD_AGENT_INVITE=${invite} omegacd agent`;
+}
+
+/** install.sh of this release in agent mode (Q268): systemd from the .deb, or a container, for whichever engine the
+ * Host has; "" for a development build, which no release has. */
+export function installAgent(url: string, invite: string, version: string): string {
+	const tag = imageTag(version);
+	if (tag === 'latest') return '';
+	return `curl -fsSL https://github.com/obleey/omegacd/releases/download/v${tag}/install.sh | OMEGACD_MODE=agent OMEGACD_AGENT_CONTROL_PLANE=${url} OMEGACD_AGENT_INVITE=${invite} sh`;
 }
 
 /** The Agent in a container with deploy/agent.yaml (M6-02, Q238): the file of this version, and a .env with the
