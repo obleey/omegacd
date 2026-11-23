@@ -1,7 +1,8 @@
-// Package importer writes the Compose stacks running on a Docker host into a Git checkout as OmegaCD
-// Applications (omegacd import): config goes to Git, data stays on the host, secrets are encrypted for the
-// Host Key, and each stack gets a definition with adopt: true so OmegaCD takes it over. It never changes the
-// running stacks, and never commits.
+// Package importer writes the Compose stacks running on a Host into a Git checkout as OmegaCD Applications (omegacd
+// import): config goes to Git, data stays on the host, secrets are encrypted, and each stack gets a definition with
+// adopt: true so OmegaCD takes it over. It never changes the running stacks, and never commits. It runs in two halves
+// (Q230, Q317): Plan on the Host's Agent reads the stacks and returns finished files, every secret already encrypted;
+// Write in the CLI puts them into the checkout.
 package importer
 
 import (
@@ -55,61 +56,109 @@ type Host interface {
 	// Read returns the regular files at or under paths relative to dir, keyed by their path relative to dir, and what
 	// it left out there (anything else but a folder: a symlink, a device, a file too big to copy).
 	Read(ctx context.Context, dir string, paths []string) (files map[string][]byte, skipped []string, err error)
+	// Storage is where container engines keep data of their own, by the volume it is (Q325): a mountpoint → its name.
+	Storage(ctx context.Context) (map[string]string, error)
 }
 
-type Options struct {
-	Repo        string // root of the Git checkout
-	AppsDir     string // where each stack goes, relative to Repo: apps
-	Definitions string // the App of Apps file to append to, relative to Repo: platform/apps.yaml
-	RepoURL     string
-	Revision    string
-	HostName    string // the Host's name in OmegaCD, whose Agent runs the stacks
-	// Recipients returns the age public keys to encrypt secrets for; asked only when a stack has secrets.
-	Recipients func() ([]string, error)
-	Only       []string // stack names; empty imports every stack not managed by OmegaCD yet
-	Force      bool     // overwrite an existing apps/<name>
-	DryRun     bool     // report only
-	Out        io.Writer
+// Request is what the CLI asks the Agent for.
+type Request struct {
+	AppsDir  string   // where each stack goes, relative to the repository's root: apps
+	RepoURL  string   // for the definitions
+	Revision string   // the branch the definitions follow
+	HostName string   // the Host's name in OmegaCD, whose Agent runs the stacks
+	Only     []string // stack names; empty imports every stack not managed by OmegaCD yet
+	Defined  []string // Application names already in the checkout's definitions: skipped
+	// Recipients are the age public keys secrets are encrypted for; Refuse, when set, says why they may not be used
+	// (a Host-only set without --host-only, Q201): a stack with secrets fails with it, one without imports (Q320).
+	Recipients []string
+	Refuse     string
 }
 
-// Run imports the stacks and reports per stack what it did. A stack that can't be imported is reported and
-// skipped; the error is non-nil if any was.
-func Run(ctx context.Context, h Host, o Options) error {
+// Result is one stack's import, as the Agent returns it.
+type Result struct {
+	Name       string
+	Skip       string // not imported, not a failure: "managed" (by OmegaCD already) or "defined" (in the checkout)
+	Error      string // why it can't be imported
+	Report     Report
+	Definition []byte            `json:",omitempty"`
+	Files      map[string][]byte `json:",omitempty"` // relative to the Application's folder; on the Agent's connection beside the JSON (Q319)
+}
+
+// MaxStack is the most one stack's files may come to: its answer is one frame on the Agent's connection (Q319).
+// ponytail: one frame per stack; chunk it as blobs if real stacks ever need more.
+const MaxStack = 6 << 20
+
+// Plan imports the stacks on h, calling each with every stack's result in name order. An error is one that ends the
+// whole import (the stacks can't be listed, one asked for isn't there).
+func Plan(ctx context.Context, h Host, req Request, each func(Result) error) error {
 	stacks, err := h.Stacks(ctx)
 	if err != nil {
 		return err
 	}
-	for _, name := range o.Only {
+	for _, name := range req.Only {
 		if !slices.ContainsFunc(stacks, func(s Stack) bool { return s.Name == name }) {
 			return fmt.Errorf("no Compose stack %q on the host", name)
 		}
 	}
-	defs, err := existingNames(filepath.Join(o.Repo, o.Definitions))
-	if err != nil {
-		return err
+	var storage map[string]string
+	for _, s := range stacks {
+		if len(req.Only) > 0 && !slices.Contains(req.Only, s.Name) {
+			continue
+		}
+		r := Result{Name: s.Name}
+		switch {
+		case s.Managed:
+			r.Skip = "managed"
+		case slices.Contains(req.Defined, s.Name):
+			r.Skip = "defined"
+		default:
+			if storage == nil {
+				if storage, err = h.Storage(ctx); err != nil {
+					return err
+				}
+			}
+			var err error
+			r.Report, r.Files, r.Definition, err = planStack(ctx, h, req, s, storage)
+			if err != nil {
+				r.Error = err.Error()
+			}
+		}
+		if err := each(r); err != nil {
+			return err
+		}
 	}
+	return nil
+}
+
+// Options is how Write puts the results into the checkout.
+type Options struct {
+	Repo        string // root of the Git checkout
+	AppsDir     string // as in the Request
+	Definitions string // the App of Apps file to append to, relative to Repo: platform/apps.yaml
+	Force       bool   // overwrite an existing apps/<name>
+	DryRun      bool   // report only
+	Out         io.Writer
+}
+
+// Write puts the stacks' results into the checkout and reports per stack what it did. A stack that can't be imported
+// is reported and skipped; the error is non-nil if any was.
+func Write(o Options, results []Result) error {
 	var failed []string
 	done := 0
-	for _, s := range stacks {
-		if len(o.Only) > 0 && !slices.Contains(o.Only, s.Name) {
-			continue
+	for _, r := range results {
+		err := write(o, r)
+		switch {
+		case r.Skip == "managed":
+			fmt.Fprintf(o.Out, "· %s: already managed by OmegaCD, skipped\n", r.Name)
+		case r.Skip == "defined":
+			fmt.Fprintf(o.Out, "· %s: already defined in %s, skipped\n", r.Name, o.Definitions)
+		case err != nil:
+			fmt.Fprintf(o.Out, "✗ %s: %v\n", r.Name, err)
+			failed = append(failed, r.Name)
+		default:
+			r.Report.print(o.Out, o.DryRun)
+			done++
 		}
-		if s.Managed {
-			fmt.Fprintf(o.Out, "· %s: already managed by OmegaCD, skipped\n", s.Name)
-			continue
-		}
-		if defs[s.Name] {
-			fmt.Fprintf(o.Out, "· %s: already defined in %s, skipped\n", s.Name, o.Definitions)
-			continue
-		}
-		r, err := importStack(ctx, h, o, s)
-		if err != nil {
-			fmt.Fprintf(o.Out, "✗ %s: %v\n", s.Name, err)
-			failed = append(failed, s.Name)
-			continue
-		}
-		r.print(o.Out, o)
-		done++
 	}
 	switch {
 	case len(failed) > 0:
@@ -121,6 +170,48 @@ func Run(ctx context.Context, h Host, o Options) error {
 			"Imported Applications have Auto-Sync off: check each one's Diff, then Sync it to take the stack over.\n", path.Dir(o.Definitions))
 	}
 	return nil
+}
+
+// write puts one stack's files into the checkout and appends its definition; skipped stacks are left alone.
+func write(o Options, r Result) error {
+	if r.Skip != "" {
+		return nil
+	}
+	if r.Error != "" {
+		return errors.New(r.Error)
+	}
+	dir := path.Join(o.AppsDir, r.Name)
+	dest := filepath.Join(o.Repo, filepath.FromSlash(dir))
+	if _, err := os.Stat(dest); err == nil && !o.Force {
+		return fmt.Errorf("%s exists already (--force overwrites it)", dir)
+	}
+	if o.DryRun {
+		return nil
+	}
+	if o.Force {
+		if err := os.RemoveAll(dest); err != nil {
+			return err
+		}
+	}
+	for _, rel := range slices.Sorted(maps.Keys(r.Files)) {
+		p := filepath.Join(dest, filepath.FromSlash(rel))
+		if !strings.HasPrefix(p, dest+string(filepath.Separator)) { // the Agent's answer is input like any other
+			return fmt.Errorf("the Agent sent %q, outside %s", rel, dir)
+		}
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(p, r.Files[rel], 0o644); err != nil { // coverage: unreachable, into the folder just made above
+			return err
+		}
+	}
+	return appendDefinition(filepath.Join(o.Repo, filepath.FromSlash(o.Definitions)), r.Definition)
+}
+
+// ExistingNames are the Application names defined in file already, for Request.Defined.
+func ExistingNames(file string) ([]string, error) {
+	m, err := existingNames(file)
+	return slices.Sorted(maps.Keys(m)), err
 }
 
 func existingNames(file string) (map[string]bool, error) {
@@ -138,47 +229,48 @@ func existingNames(file string) (map[string]bool, error) {
 	return names, nil
 }
 
-// report is what importing one stack did, for the summary.
-type report struct {
-	name, appDir    string
-	services        int
-	config, data    []string // "path" / "path → /abs/path"
-	encrypted       []string // "file → file.sops.ext"
-	moved           []string // "service: KEY"
-	warnings        []string
-	recreate        bool // the takeover recreates containers (they mount files that now come from Git)
-	recipientsShort string
+// Report is what importing one stack did, for the summary.
+type Report struct {
+	AppDir          string
+	Services        int
+	Config, Data    []string `json:",omitempty"` // "path" / "path → /abs/path"
+	Encrypted       []string `json:",omitempty"` // "file → file.sops.ext"
+	Moved           []string `json:",omitempty"` // "service: KEY"
+	Warnings        []string `json:",omitempty"`
+	Recreate        bool     // the takeover recreates containers (they mount files that now come from Git)
+	RecipientsShort string   `json:",omitempty"`
 }
 
 // leftOut says what Read left out: the takeover won't have it unless it is copied by hand.
-func (r *report) leftOut(skipped []string) {
+func (r *Report) leftOut(skipped []string) {
 	for _, f := range skipped {
-		r.warnings = append(r.warnings, fmt.Sprintf("%s left out: not a regular file (a symlink?) or too big to copy; put it in the repository by hand if the stack needs it", f))
+		r.Warnings = append(r.Warnings, fmt.Sprintf("%s left out: not a regular file (a symlink?) or too big to copy; put it in the repository by hand if the stack needs it", f))
 	}
 }
 
-func (r report) print(w io.Writer, o Options) {
+func (r Report) print(w io.Writer, dryRun bool) {
 	verb := "→"
-	if o.DryRun {
+	if dryRun {
 		verb = "would go to"
 	}
-	fmt.Fprintf(w, "✓ %s %s %s (%d service%s)\n", r.name, verb, r.appDir, r.services, map[bool]string{true: "", false: "s"}[r.services == 1])
-	for _, c := range r.config {
+	name := path.Base(r.AppDir)
+	fmt.Fprintf(w, "✓ %s %s %s (%d service%s)\n", name, verb, r.AppDir, r.Services, map[bool]string{true: "", false: "s"}[r.Services == 1])
+	for _, c := range r.Config {
 		fmt.Fprintf(w, "    config   %s\n", c)
 	}
-	for _, d := range r.data {
+	for _, d := range r.Data {
 		fmt.Fprintf(w, "    data     %s (stays on the host)\n", d)
 	}
-	for _, e := range r.encrypted {
-		fmt.Fprintf(w, "    secret   %s, encrypted for %s\n", e, r.recipientsShort)
+	for _, e := range r.Encrypted {
+		fmt.Fprintf(w, "    secret   %s, encrypted for %s\n", e, r.RecipientsShort)
 	}
-	for _, m := range r.moved {
+	for _, m := range r.Moved {
 		fmt.Fprintf(w, "    moved    %s from the compose file into the encrypted .sops.env\n", m)
 	}
-	for _, x := range r.warnings {
+	for _, x := range r.Warnings {
 		fmt.Fprintf(w, "    ! %s\n", x)
 	}
-	if r.recreate {
+	if r.Recreate {
 		fmt.Fprintln(w, "    takeover recreates its containers once (they mount files that now come from Git)")
 	} else {
 		fmt.Fprintln(w, "    takeover keeps its containers running")
@@ -194,37 +286,37 @@ type mount struct {
 	config   bool // a Compose config's file
 }
 
-func importStack(ctx context.Context, h Host, o Options, s Stack) (report, error) {
-	r := report{name: s.Name, appDir: path.Join(o.AppsDir, s.Name)}
+// enginePaths are where engines keep their own data, whatever volumes exist now (Q325).
+var enginePaths = []string{"/var/lib/docker/volumes/", "/var/lib/containers/storage/"}
+
+// planStack imports one stack: its files, every secret encrypted, and its definition.
+func planStack(ctx context.Context, h Host, req Request, s Stack, storage map[string]string) (Report, map[string][]byte, []byte, error) {
+	r := Report{AppDir: path.Join(req.AppsDir, s.Name)}
 	if !validName(s.Name) {
-		return r, fmt.Errorf("%q is not a valid Application name (lowercase letters, digits, - and _)", s.Name)
+		return r, nil, nil, fmt.Errorf("%q is not a valid Application name (lowercase letters, digits, - and _)", s.Name)
 	}
 	if len(s.Files) == 0 {
-		return r, errors.New("its compose files are not in its folder on the host")
-	}
-	dest := filepath.Join(o.Repo, filepath.FromSlash(r.appDir))
-	if _, err := os.Stat(dest); err == nil && !o.Force {
-		return r, fmt.Errorf("%s exists already (--force overwrites it)", r.appDir)
+		return r, nil, nil, errors.New("its compose files are not in its folder on the host")
 	}
 
 	// 1. the compose files and .env, parsed as written
 	files, skipped, err := h.Read(ctx, s.Dir, append(slices.Clone(s.Files), ".env"))
 	if err != nil {
-		return r, err
+		return r, nil, nil, err
 	}
 	r.leftOut(skipped)
 	for _, f := range s.Files {
 		if _, ok := files[f]; !ok {
-			return r, fmt.Errorf("compose file %s not found in %s", f, s.Dir)
+			return r, nil, nil, fmt.Errorf("compose file %s not found in %s", f, s.Dir)
 		}
 	}
 	p, err := loadProject(s, files)
 	if err != nil {
-		return r, fmt.Errorf("read compose files: %w", err)
+		return r, nil, nil, fmt.Errorf("read compose files: %w", err)
 	}
-	r.services = len(p.Services) + len(p.DisabledServices)
+	r.Services = len(p.Services) + len(p.DisabledServices)
 
-	// 2. what the services mount and read from the stack's folder
+	// 2. what the services mount and read by a relative path, in the stack's folder or beside it (../)
 	refs := map[string]*mount{}
 	add := func(raw string, m mount) {
 		m.rel = path.Clean(strings.TrimPrefix(raw, "./"))
@@ -240,7 +332,7 @@ func importStack(ctx context.Context, h Host, o Options, s Stack) (report, error
 	for _, name := range slices.Sorted(maps.Keys(all)) {
 		svc := all[name]
 		if svc.Build != nil {
-			r.warnings = append(r.warnings, fmt.Sprintf("%s uses build: — OmegaCD only runs pre-built images; push the image to a registry and use image:", name))
+			r.Warnings = append(r.Warnings, fmt.Sprintf("%s uses build: — OmegaCD only runs pre-built images; push the image to a registry and use image:", name))
 		}
 		for _, v := range svc.Volumes {
 			if v.Type == types.VolumeTypeBind && relative(v.Source) {
@@ -266,21 +358,19 @@ func importStack(ctx context.Context, h Host, o Options, s Stack) (report, error
 	rels := slices.Sorted(maps.Keys(refs))
 	info, err := h.Info(ctx, s.Dir, rels)
 	if err != nil {
-		return r, err
+		return r, nil, nil, err
 	}
 
-	// 3. decide: config into Git, data stays (absolute path), secrets encrypted
-	out := map[string][]byte{}      // relative path in the app dir -> content
+	// 3. decide: config into Git, data stays (absolute path), secrets encrypted; the same beside the stack's folder as in
+	// it, a copy going into the Application without its ../ (Q323, Q324)
 	absolute := map[string]string{} // mount source as cleaned -> absolute path on the host
 	var toRead []string
 	for _, rel := range rels {
 		m, in := refs[rel], info[rel]
 		switch {
-		case strings.HasPrefix(rel, "../"):
-			absolute[rel] = path.Join(s.Dir, rel)
 		case m.env || m.secret || m.config:
 			if in.Kind != 'f' {
-				r.warnings = append(r.warnings, fmt.Sprintf("%s is referenced but not on the host", rel))
+				r.Warnings = append(r.Warnings, fmt.Sprintf("%s is referenced but not on the host", rel))
 				continue
 			}
 			toRead = append(toRead, rel)
@@ -290,71 +380,101 @@ func importStack(ctx context.Context, h Host, o Options, s Stack) (report, error
 			absolute[rel] = path.Join(s.Dir, rel)
 		}
 	}
+	for _, rel := range slices.Sorted(maps.Keys(absolute)) {
+		if where := inStorage(absolute[rel], storage); where != "" {
+			return r, nil, nil, fmt.Errorf("%s is %s, inside %s: it would go with that tool's data after the takeover; "+
+				"move the data out of it (or mount the volume by name), then import again", rel, absolute[rel], where)
+		}
+		r.Data = append(r.Data, fmt.Sprintf("%s → %s", rel, absolute[rel]))
+	}
 	read, skipped, err := h.Read(ctx, s.Dir, toRead)
 	if err != nil {
-		return r, err
+		return r, nil, nil, err
 	}
 	r.leftOut(skipped)
+	out := map[string][]byte{}  // relative path in the app dir -> content
+	from := map[string]string{} // and where on the host it came from, relative to the stack's folder
+	put := func(key, src string, b []byte) error {
+		if prev, ok := from[key]; ok && prev != src {
+			return fmt.Errorf("%s and %s would both be %s in the Application: rename one, then import again", prev, src, key)
+		}
+		out[key], from[key] = b, src
+		return nil
+	}
+	refOf := map[string]*mount{}      // a referenced file's path in the app dir -> its reference
+	relocated := map[string]string{}  // a ../ reference as cleaned -> its copy, relative to the app dir
 	secretConfig := map[string]bool{} // bind-mounted files that hold a key or credential: encrypted, never in Git as is
 	for _, rel := range toRead {
 		m := refs[rel]
+		refOf[local(rel)] = m
+		if local(rel) != rel {
+			relocated[rel] = "./" + local(rel)
+		}
 		if !m.env && !m.secret && !m.config {
-			r.recreate = true // a bind mount now points at OmegaCD's copy of the file
-			r.config = append(r.config, rel)
+			r.Recreate = true // a bind mount now points at OmegaCD's copy of the file
+			r.Config = append(r.Config, rel)
 			for f, b := range read {
 				if (f == rel || strings.HasPrefix(f, rel+"/")) && (secretFile(f) || secretContent(b)) {
-					secretConfig[f] = true
+					secretConfig[local(f)] = true
 				}
 			}
 		} else if m.config {
-			r.recreate = true // its content hash is new
+			r.Recreate = true // its content hash is new
 		}
 		if m.secret {
-			r.recreate = true
+			r.Recreate = true
 		}
-		for f, b := range read {
+		for _, f := range slices.Sorted(maps.Keys(read)) {
 			if f == rel || strings.HasPrefix(f, rel+"/") {
-				out[f] = b
+				if err := put(local(f), f, read[f]); err != nil {
+					return r, nil, nil, err
+				}
 			}
 		}
-	}
-	for _, rel := range slices.Sorted(maps.Keys(absolute)) {
-		r.data = append(r.data, fmt.Sprintf("%s → %s", rel, absolute[rel]))
 	}
 
 	// 4. secrets written in the compose files move into .env (filled in again with ${KEY})
 	dotenvPlain := string(files[".env"])
 	compose := map[string][]byte{}
 	for _, f := range s.Files {
-		b, moved, extra, warns, err := rewrite(files[f], absolute, envKeys(dotenvPlain))
+		b, moved, extra, warns, err := rewrite(files[f], absolute, relocated, envKeys(dotenvPlain))
 		if err != nil { // coverage: unreachable, compose-go just loaded the same YAML
-			return r, fmt.Errorf("%s: %w", f, err)
+			return r, nil, nil, fmt.Errorf("%s: %w", f, err)
 		}
 		compose[f] = b
-		r.moved = append(r.moved, moved...)
-		r.warnings = append(r.warnings, warns...)
+		r.Moved = append(r.Moved, moved...)
+		r.Warnings = append(r.Warnings, warns...)
 		dotenvPlain += extra
 	}
 	if dotenvPlain != "" {
-		out[".env"] = []byte(dotenvPlain)
+		if err := put(".env", ".env", []byte(dotenvPlain)); err != nil {
+			return r, nil, nil, err
+		}
 	}
-	maps.Copy(out, compose)
+	for _, f := range s.Files {
+		if err := put(f, f, compose[f]); err != nil {
+			return r, nil, nil, err
+		}
+	}
 
 	// 5. encrypt env files with secrets, Compose secret files, bind-mounted files holding secrets, and .env when it holds any
 	var recipients []string
 	encrypt := func(rel string) error {
 		enc := sopsName(rel)
 		if enc == "" {
-			r.warnings = append(r.warnings, fmt.Sprintf("%s holds secrets but has no file extension, so it can't be encrypted as *.sops.*: left out — rename it (e.g. %s.env) and import again", rel, rel))
+			r.Warnings = append(r.Warnings, fmt.Sprintf("%s holds secrets but has no file extension, so it can't be encrypted as *.sops.*: left out — rename it (e.g. %s.env) and import again", rel, rel))
 			delete(out, rel)
 			return nil
 		}
 		if recipients == nil {
-			var err error
-			if recipients, err = o.Recipients(); err != nil {
-				return err
+			switch {
+			case req.Refuse != "":
+				return errors.New(req.Refuse)
+			case len(req.Recipients) == 0:
+				return errors.New("secrets found, but no key to encrypt them for")
 			}
-			r.recipientsShort = short(recipients)
+			recipients = req.Recipients
+			r.RecipientsShort = short(recipients)
 		}
 		b, err := secrets.Encrypt(out[rel], enc, recipients)
 		if err != nil {
@@ -362,55 +482,73 @@ func importStack(ctx context.Context, h Host, o Options, s Stack) (report, error
 		}
 		delete(out, rel)
 		out[enc] = b
-		r.encrypted = append(r.encrypted, fmt.Sprintf("%s → %s", rel, enc))
+		r.Encrypted = append(r.Encrypted, fmt.Sprintf("%s → %s", rel, enc))
 		return nil
 	}
 	for _, rel := range slices.Sorted(maps.Keys(out)) {
-		m := refs[rel]
+		m := refOf[rel]
 		needs := secretConfig[rel] || m != nil && m.secret
 		if !needs && (rel == ".env" || m != nil && m.env) {
 			var err error
 			if needs, err = hasSecrets(string(out[rel])); err != nil {
-				r.warnings = append(r.warnings, fmt.Sprintf("%s can't be read as an env file (%v): encrypted, as it may hold secrets", rel, err))
+				r.Warnings = append(r.Warnings, fmt.Sprintf("%s can't be read as an env file (%v): encrypted, as it may hold secrets", rel, err))
 			}
 		}
 		if needs {
 			if err := encrypt(rel); err != nil {
-				return r, err
+				return r, nil, nil, err
 			}
 		}
 	}
+	size := 0
+	for _, b := range out {
+		size += len(b)
+	}
+	if size > MaxStack {
+		return r, nil, nil, fmt.Errorf("its files come to %.1f MB, more than the %d MB an import through the Agent carries: "+
+			"mount the biggest as data instead, or copy them into the repository by hand", float64(size)/(1<<20), MaxStack>>20)
+	}
 
-	// 6. write the app folder and append the definition
+	// 6. its definition
 	composeFiles := s.Files
 	if len(composeFiles) == 1 && composeFiles[0] == "compose.yaml" {
 		composeFiles = nil
 	}
 	def, err := appdef.MarshalAdopting(domain.Application{
-		Name: s.Name, RepoURL: o.RepoURL, Path: r.appDir, TargetRevision: o.Revision,
-		ComposeFiles: composeFiles, Host: o.HostName,
+		Name: s.Name, RepoURL: req.RepoURL, Path: r.AppDir, TargetRevision: req.Revision,
+		ComposeFiles: composeFiles, Host: req.HostName,
 	})
 	if err != nil { // coverage: unreachable, a definition is strings, lists and booleans: it always encodes as YAML
-		return r, err
+		return r, nil, nil, err
 	}
-	if o.DryRun {
-		return r, nil
+	return r, out, def, nil
+}
+
+// local is where a referenced file goes in the Application: its path in the stack's folder, or beside it without the
+// leading ../ (Q323).
+func local(rel string) string {
+	for strings.HasPrefix(rel, "../") {
+		rel = rel[3:]
 	}
-	if o.Force {
-		if err := os.RemoveAll(dest); err != nil {
-			return r, err
+	if rel == ".." { // the folder above the stack's, as a whole
+		return "."
+	}
+	return rel
+}
+
+// inStorage names the engine storage p is in, or "".
+func inStorage(p string, storage map[string]string) string {
+	for mp, name := range storage {
+		if p == mp || strings.HasPrefix(p, strings.TrimSuffix(mp, "/")+"/") {
+			return "the volume " + name
 		}
 	}
-	for _, rel := range slices.Sorted(maps.Keys(out)) {
-		p := filepath.Join(dest, filepath.FromSlash(rel))
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			return r, err
-		}
-		if err := os.WriteFile(p, out[rel], 0o644); err != nil { // coverage: unreachable, into the folder just made above
-			return r, err
+	for _, e := range enginePaths {
+		if strings.HasPrefix(p+"/", e) {
+			return "the engine's storage " + strings.TrimSuffix(e, "/")
 		}
 	}
-	return r, appendDefinition(filepath.Join(o.Repo, filepath.FromSlash(o.Definitions)), def)
+	return ""
 }
 
 func appendDefinition(file string, def []byte) error {
@@ -463,17 +601,47 @@ func loadProject(s Stack, files map[string][]byte) (*types.Project, error) {
 	return opts.LoadProject(context.Background())
 }
 
-// rewrite turns relative data mounts into absolute host paths and moves secrets written in environment:
-// into dotenv lines (returned in extra) referenced as ${KEY}. Unchanged files come back byte for byte.
-func rewrite(src []byte, absolute map[string]string, known map[string]string) (out []byte, moved []string, extra string, warnings []string, err error) {
+// rewrite turns relative data mounts into absolute host paths, points ../ references at their copies in the
+// Application (relocated), and moves secrets written in environment: into dotenv lines (returned in extra) referenced
+// as ${KEY}. Unchanged files come back byte for byte.
+func rewrite(src []byte, absolute, relocated map[string]string, known map[string]string) (out []byte, moved []string, extra string, warnings []string, err error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(src, &doc); err != nil { // coverage: unreachable, compose-go just loaded the same YAML
 		return nil, nil, "", nil, err
 	}
 	changed := false
+	// to points a relative path at its copy; the node is a scalar holding the path alone
+	to := func(n *yaml.Node) {
+		if n != nil && n.Kind == yaml.ScalarNode && relative(n.Value) {
+			if c, ok := relocated[path.Clean(strings.TrimPrefix(n.Value, "./"))]; ok {
+				n.Value, changed = c, true
+			}
+		}
+	}
+	for _, top := range []string{"secrets", "configs"} {
+		if m := mapValue(docRoot(&doc), top); m != nil {
+			for i := 1; i < len(m.Content); i += 2 {
+				if m.Content[i].Kind == yaml.MappingNode {
+					to(mapValue(m.Content[i], "file"))
+				}
+			}
+		}
+	}
 	services := mapValue(docRoot(&doc), "services")
 	for i := 0; services != nil && i+1 < len(services.Content); i += 2 {
 		name, svc := services.Content[i].Value, services.Content[i+1]
+		switch ef := mapValue(svc, "env_file"); {
+		case ef == nil:
+		case ef.Kind == yaml.SequenceNode:
+			for _, e := range ef.Content {
+				if e.Kind == yaml.MappingNode {
+					e = mapValue(e, "path")
+				}
+				to(e)
+			}
+		default:
+			to(ef)
+		}
 		if vols := mapValue(svc, "volumes"); vols != nil && vols.Kind == yaml.SequenceNode {
 			for _, v := range vols.Content {
 				src := v
@@ -493,7 +661,11 @@ func rewrite(src []byte, absolute map[string]string, known map[string]string) (o
 					}
 					continue
 				}
-				abs, ok := absolute[path.Clean(strings.TrimPrefix(head, "./"))]
+				clean := path.Clean(strings.TrimPrefix(head, "./"))
+				abs, ok := absolute[clean]
+				if c, copied := relocated[clean]; copied {
+					abs, ok = c, true
+				}
 				if !ok || !relative(head) {
 					continue
 				}

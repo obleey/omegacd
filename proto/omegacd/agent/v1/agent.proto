@@ -36,6 +36,8 @@ message Envelope {
     LogsStop logs_stop = 33;
     DiffRequest diff_request = 34;
     DiffResult diff_result = 35;
+    ImportRequest import_request = 36;
+    ImportResult import_result = 37;
   }
 }
 
@@ -253,6 +255,22 @@ message DiffRequest {
 message DiffResult {
   bytes services = 1;
   string error = 2;
+}
+
+// ImportRequest asks the Agent to import the Compose stacks running on its Host (M6-05, Q317): request is JSON
+// importer.Request (the recipients, the stacks wanted, the names already defined). It answers with one ImportResult per
+// stack, then one with done set.
+message ImportRequest {
+  bytes request = 1;
+}
+
+// ImportResult is one stack's import: result is JSON importer.Result without its files, which are in files, every
+// secret already encrypted (Q230); or, with done, the end of the answer, error saying why it stopped early.
+message ImportResult {
+  bytes result = 1;
+  map<string, bytes> files = 2;
+  bool done = 3;
+  string error = 4;
 }
 
 // OutboxAck tells the Agent the Control Plane has its entries up to seq: it deletes them. An entry sent again (no ack

@@ -29,6 +29,17 @@ func compatible(cp, agent string) error {
 	}
 }
 
+// canImport is nil when an Agent of version agent answers an ImportRequest: from v0.2 on (M6-05), so one a minor behind
+// a v0.2 Control Plane is told to upgrade instead of left to time out (Q322). An Agent as new as its Control Plane is let
+// through, as are development builds without a version.
+func canImport(cp, agent string) error {
+	if !semver.IsValid(cp) || !semver.IsValid(agent) || semver.Compare(semver.MajorMinor(agent), semver.MajorMinor(cp)) >= 0 ||
+		semver.Compare(semver.MajorMinor(agent), "v0.2") >= 0 {
+		return nil
+	}
+	return fmt.Errorf("its Agent is %s, which can't import: upgrade it to v0.2 or later", agent)
+}
+
 // outdated is an Agent older than its Control Plane, both releases (Q163): served, if compatible, but to upgrade.
 func outdated(cp, agent string) bool {
 	release := func(v string) bool { return semver.IsValid(v) && semver.Prerelease(v) == "" && semver.Build(v) == "" }

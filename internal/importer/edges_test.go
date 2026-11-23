@@ -30,6 +30,13 @@ func (h *brokenHost) Stacks(ctx context.Context) ([]Stack, error) {
 	return h.fakeHost.Stacks(ctx)
 }
 
+func (h *brokenHost) Storage(ctx context.Context) (map[string]string, error) {
+	if h.fail["Storage"] {
+		return nil, errHost
+	}
+	return h.fakeHost.Storage(ctx)
+}
+
 func (h *brokenHost) Info(ctx context.Context, dir string, paths []string) (map[string]Info, error) {
 	if h.fail["Info"] {
 		return nil, errHost
@@ -84,13 +91,22 @@ func TestStackNotImported(t *testing.T) {
 		"config it can't read":     {&brokenHost{fakeHost: one("shop", map[string]string{"compose.yaml": compose}), fail: map[string]bool{"Read": true}, failSecond: true}, "the host went away"},
 		"secrets it can't encrypt": {withSecret, "✗ shop"},
 	} {
-		report, err := run(t, tc.host, Options{HostName: "vps", Recipients: func() ([]string, error) { return []string{"not a recipient"}, nil }})
+		report, err := run(t, tc.host, opts{HostName: "vps", Recipients: func() ([]string, error) { return []string{"not a recipient"}, nil }})
 		if err == nil || !strings.Contains(err.Error(), "not imported: ") || !strings.Contains(report, tc.want) {
 			t.Errorf("%s: %v\n%s", name, err, report)
 		}
 	}
-	if _, err := run(t, &brokenHost{fakeHost: &fakeHost{}, fail: map[string]bool{"Stacks": true}}, Options{}); !errors.Is(err, errHost) {
+	if _, err := run(t, &brokenHost{fakeHost: &fakeHost{}, fail: map[string]bool{"Stacks": true}}, opts{}); !errors.Is(err, errHost) {
 		t.Errorf("stacks: %v", err)
+	}
+	if _, err := run(t, &brokenHost{fakeHost: one("shop", map[string]string{"compose.yaml": compose}), fail: map[string]bool{"Storage": true}}, opts{}); !errors.Is(err, errHost) {
+		t.Errorf("the engine's volumes: %v", err)
+	}
+	// the Agent's connection gone while it answers: no more stacks are read
+	stop, read := errors.New("connection closed"), 0
+	h := &fakeHost{stacks: []Stack{{Name: "a", Managed: true}, {Name: "b", Managed: true}}}
+	if err := Plan(t.Context(), h, Request{}, func(Result) error { read++; return stop }); err != stop || read != 1 {
+		t.Errorf("each failing: %v after %d", err, read)
 	}
 }
 
@@ -99,7 +115,7 @@ func TestDefinitionsUnreadable(t *testing.T) {
 	repo := t.TempDir()
 	os.MkdirAll(filepath.Join(repo, "platform"), 0o755)
 	os.WriteFile(filepath.Join(repo, "platform", "apps.yaml"), []byte("name: [\n"), 0o644)
-	if _, err := run(t, shopHost(), Options{Repo: repo, Recipients: recipient(t)}); err == nil {
+	if _, err := run(t, shopHost(), opts{Repo: repo, Recipients: recipient(t)}); err == nil {
 		t.Fatal("imported next to definitions it can't read")
 	}
 }
@@ -139,7 +155,7 @@ configs:
 		"broken.env":   "A='open\n",
 	}, "compose.yaml", "extra.yaml")
 	repo := t.TempDir()
-	report, err := run(t, h, Options{Repo: repo, HostName: "vps", Recipients: recipient(t)})
+	report, err := run(t, h, opts{Repo: repo, HostName: "vps", Recipients: recipient(t)})
 	if err != nil {
 		t.Fatalf("%v\n%s", err, report)
 	}
@@ -168,7 +184,7 @@ func TestDefinitionsAppended(t *testing.T) {
 	repo := t.TempDir()
 	os.MkdirAll(filepath.Join(repo, "platform"), 0o755)
 	os.WriteFile(filepath.Join(repo, "platform", "apps.yaml"), []byte("name: old\nrepoURL: x\nhost: vps"), 0o644)
-	if report, err := run(t, one("web", map[string]string{"compose.yaml": "services:\n  web:\n    image: x\n"}), Options{Repo: repo, HostName: "vps"}); err != nil {
+	if report, err := run(t, one("web", map[string]string{"compose.yaml": "services:\n  web:\n    image: x\n"}), opts{Repo: repo, HostName: "vps"}); err != nil {
 		t.Fatalf("%v\n%s", err, report)
 	}
 	b, _ := os.ReadFile(filepath.Join(repo, "platform", "apps.yaml"))
@@ -188,7 +204,7 @@ func TestDefinitionsAppended(t *testing.T) {
 	ro := t.TempDir()
 	os.Chmod(ro, 0o500)
 	t.Cleanup(func() { os.Chmod(ro, 0o755) })
-	if _, err := run(t, one("web", map[string]string{"compose.yaml": "services:\n  web:\n    image: x\n"}), Options{Repo: ro, HostName: "vps"}); err == nil {
+	if _, err := run(t, one("web", map[string]string{"compose.yaml": "services:\n  web:\n    image: x\n"}), opts{Repo: ro, HostName: "vps"}); err == nil {
 		t.Error("imported into a checkout it can't write")
 	}
 	repo = t.TempDir()
@@ -197,7 +213,7 @@ func TestDefinitionsAppended(t *testing.T) {
 	os.WriteFile(filepath.Join(app, "old"), nil, 0o644)
 	os.Chmod(app, 0o500)
 	t.Cleanup(func() { os.Chmod(app, 0o755) })
-	if _, err := run(t, one("web", map[string]string{"compose.yaml": "services:\n  web:\n    image: x\n"}), Options{Repo: repo, HostName: "vps", Force: true}); err == nil {
+	if _, err := run(t, one("web", map[string]string{"compose.yaml": "services:\n  web:\n    image: x\n"}), opts{Repo: repo, HostName: "vps", Force: true}); err == nil {
 		t.Error("overwrote a folder it can't delete")
 	}
 }
@@ -205,7 +221,7 @@ func TestDefinitionsAppended(t *testing.T) {
 // Compose files are loaded from a temporary folder: one that can't be made fails the stack.
 func TestNoTempFolder(t *testing.T) {
 	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "gone"))
-	report, err := run(t, one("web", map[string]string{"compose.yaml": "services:\n  web:\n    image: x\n"}), Options{HostName: "vps"})
+	report, err := run(t, one("web", map[string]string{"compose.yaml": "services:\n  web:\n    image: x\n"}), opts{HostName: "vps"})
 	if err == nil || !strings.Contains(report, "read compose files") {
 		t.Fatalf("%v\n%s", err, report)
 	}
@@ -221,7 +237,7 @@ func TestUnreadableAndLeftOut(t *testing.T) {
 	})
 	h.skipped = []string{"conf/link.conf"}
 	repo := t.TempDir()
-	report, err := run(t, h, Options{Repo: repo, HostName: "vps", Recipients: recipient(t)})
+	report, err := run(t, h, opts{Repo: repo, HostName: "vps", Recipients: recipient(t)})
 	if err != nil {
 		t.Fatalf("%v\n%s", err, report)
 	}

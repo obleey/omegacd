@@ -18,7 +18,8 @@ import (
 
 // Faulty starts a proxy to the engine at DOCKER_HOST (the default socket when unset) and returns its address, for
 // DOCKER_HOST. answer gets every request and returns the status to fail it with, or 0 to pass it on; 200 fails it
-// inside its stream, as a pull that broke off does. It stops with t.
+// inside its stream, as a pull that broke off does; 101 upgrades an attach and sends what no stream starts with. It
+// stops with t.
 func Faulty(t testing.TB, answer func(*http.Request) int) string {
 	t.Helper()
 	network, addr, _ := strings.Cut(cmp.Or(os.Getenv("DOCKER_HOST"), "unix:///var/run/docker.sock"), "://")
@@ -30,7 +31,15 @@ func Faulty(t testing.TB, answer func(*http.Request) int) string {
 		FlushInterval: -1, // event and log streams go through as they come
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if status := answer(r); status != 0 {
+		status := answer(r)
+		if status == http.StatusSwitchingProtocols {
+			conn, buf, _ := http.NewResponseController(w).Hijack()
+			buf.WriteString("HTTP/1.1 101 UPGRADED\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n\r\n\x09not a stream frame")
+			buf.Flush()
+			conn.Close()
+			return
+		}
+		if status != 0 {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(status)
 			msg := fmt.Sprintf("enginetest: %s %s failed on purpose", r.Method, r.URL.Path)

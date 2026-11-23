@@ -1056,7 +1056,7 @@ Building Q189–Q201:
   config, data and secrets, rewrites the compose files and encrypts, and returns per stack its files, definition and
   report; the CLI's half checks for an existing `apps/<name>`, applies `--force` and `--dry-run`, writes the files and
   appends the definitions. The CLI sends the names already defined, so the Agent skips those stacks.
-- **Q318** The CLI calls `POST /api/hosts/{name}/import`; the Control Plane relays an `ImportRequest` to that Host's
+- **Q318** The CLI calls `POST /api/settings/hosts/{name}/import` (beside the other Host actions); the Control Plane relays an `ImportRequest` to that Host's
   Agent and waits for its answer, as `Diff` does; an offline or unapproved Host gets the usual error. `--timeout`
   (default 5m) bounds the wait.
 - **Q319** One answer per stack; a stack whose files pass 6 MB fails ("too big to import through the Agent") instead

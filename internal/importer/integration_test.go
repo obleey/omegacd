@@ -4,11 +4,12 @@ package importer
 
 import (
 	"bytes"
-	"context"
+	"maps"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -95,16 +96,12 @@ func checkImported(t *testing.T, repo, name, hostDir, report string, id *age.X25
 func importInto(t *testing.T, h Host, name, hostName string, id *age.X25519Identity) (string, string) {
 	t.Helper()
 	repo := t.TempDir()
-	var out bytes.Buffer
-	err := Run(context.Background(), h, Options{
-		Repo: repo, AppsDir: "apps", Definitions: "platform/apps.yaml", RepoURL: "https://example.com/r.git", Revision: "main",
-		HostName: hostName, Only: []string{name}, Out: &out,
-		Recipients: func() ([]string, error) { return []string{id.Recipient().String()}, nil },
-	})
+	out, err := run(t, h, opts{Repo: repo, HostName: hostName, Only: []string{name},
+		Recipients: func() ([]string, error) { return []string{id.Recipient().String()}, nil }})
 	if err != nil {
-		t.Fatalf("%v\n%s", err, out.String())
+		t.Fatalf("%v\n%s", err, out)
 	}
-	return repo, out.String()
+	return repo, out
 }
 
 func TestImportLocal(t *testing.T) {
@@ -170,7 +167,24 @@ func TestDockerHostFails(t *testing.T) {
 		strings.Join(skipped, ",") != "conf/link.conf" {
 		t.Fatalf("a folder: %v, skipped %v, %v", got, skipped, err)
 	}
-	if _, err := h.Info(ctx, filepath.Join(dir, "conf", "a.conf"), []string{"x"}); err == nil || !strings.Contains(err.Error(), "helper container exited") {
+	// beside the folder: the helper mounts the one above both (Q323)
+	os.MkdirAll(filepath.Join(dir, "shared"), 0o755)
+	os.WriteFile(filepath.Join(dir, "shared", "b.env"), []byte("B=1\n"), 0o644)
+	if info, err := h.Info(ctx, filepath.Join(dir, "conf"), []string{"../shared/b.env", ".."}); err != nil ||
+		info["../shared/b.env"] != (Info{'f', 4}) || info[".."].Kind != 'd' {
+		t.Fatalf("beside: %v %v", info, err)
+	}
+	if got, _, err := h.Read(ctx, filepath.Join(dir, "conf"), []string{"../shared/b.env"}); err != nil || string(got["../shared/b.env"]) != "B=1\n" {
+		t.Fatalf("read beside: %v %v", got, err)
+	}
+	if _, err := docker("volume", "create", "omegacd-it-storage"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { docker("volume", "rm", "omegacd-it-storage") })
+	if st, err := h.Storage(ctx); err != nil || !slices.Contains(slices.Collect(maps.Values(st)), "omegacd-it-storage") {
+		t.Fatalf("storage: %v %v", st, err)
+	}
+	if _, err := h.Info(ctx, filepath.Join(dir, "conf", "a.conf"), []string{"x"}); err == nil || !strings.Contains(err.Error(), "exited 2: sh: cd: line 0: can't cd to /src: Not a directory") {
 		t.Errorf("a folder that is a file: %v", err)
 	}
 	h.Close()
@@ -185,12 +199,14 @@ func TestDockerHostFails(t *testing.T) {
 		answer     func(*http.Request) int
 	}{
 		{"the stacks", "list containers", fail("GET", "/containers/json", 500)},
+		{"the volumes", "list volumes", fail("GET", "/volumes", 500)},
 		{"the pull refused", "pull " + helperImage, func(r *http.Request) int { return max(noImage(r), fail("POST", "/images/create", 500)(r)) }},
 		{"the pull broken off", "pull " + helperImage, func(r *http.Request) int { return max(noImage(r), fail("POST", "/images/create", 200)(r)) }},
 		{"its container", "create helper container", fail("POST", "/containers/create", 500)},
 		{"started", "start helper container", fail("POST", "/containers/*/start", 500)},
 		{"waited for", "helper container", fail("POST", "/containers/*/wait", 500)},
-		{"its output", "copy from helper container", fail("GET", "/containers/*/archive", 500)},
+		{"attached to", "attach to helper container", fail("POST", "/containers/*/attach", 500)},
+		{"its output broken", "read helper container", fail("POST", "/containers/*/attach", 101)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("DOCKER_HOST", enginetest.Faulty(t, tc.answer))
@@ -199,10 +215,15 @@ func TestDockerHostFails(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer h.Close()
-			if tc.name == "the stacks" {
+			switch {
+			case tc.name == "the stacks":
 				_, err = h.Stacks(ctx)
-			} else if _, err = h.Info(ctx, dir, []string{"conf"}); err == nil {
-				_, _, err = h.Read(ctx, dir, []string{"conf"})
+			case tc.name == "the volumes":
+				_, err = h.Storage(ctx)
+			default:
+				if _, err = h.Info(ctx, dir, []string{"conf"}); err == nil {
+					_, _, err = h.Read(ctx, dir, []string{"conf"})
+				}
 			}
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("%v", err)

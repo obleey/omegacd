@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/obleey/omegacd/internal/domain"
-	"github.com/obleey/omegacd/internal/importer"
 )
 
 // every command with arguments it takes, for what all of them do alike
@@ -307,14 +306,29 @@ func TestImportEdges(t *testing.T) {
 	if r := run(t, srv, nil, "", "import", "--host", "vps"); r.code != 1 || !strings.Contains(r.stderr, "no origin remote") {
 		t.Errorf("no origin: %+v", r)
 	}
-	gitRepo(t)
-	noDocker := func(c *CLI) { c.ImportHost = func() (importer.Host, error) { return nil, errors.New("no socket") } }
-	if r := runWith(t, srv, nil, noDocker, "import", "--host", "vps"); r.code != 1 || !strings.Contains(r.stderr, "connect to Docker: no socket") {
-		t.Errorf("no Docker: %+v", r)
-	}
-	withHost := func(c *CLI) { c.ImportHost = func() (importer.Host, error) { return importHost{}, nil } }
-	if r := runWith(t, srv, nil, withHost, "import", "--host", "vps"); r.code != 1 || !strings.Contains(r.stdout, "look up the keys of vps") {
+	repo := gitRepo(t)
+	if r := run(t, srv, nil, "", "import", "--host", "vps"); r.code != 1 || !strings.Contains(r.stderr, "look up the keys of vps") {
 		t.Errorf("the server can't say: %+v", r)
+	}
+	id := newIdentity(t).Recipient().String()
+	_, srv = newAPI(t, map[string]any{
+		"POST /api/settings/hosts/off/import": http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"error":"host off: no Agent connected"}`))
+		}),
+		"POST /api/settings/hosts/slow/import": http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-r.Context().Done() }),
+	})
+	if r := run(t, srv, nil, "", "import", "--host", "off", "--recipient", id); r.code != 1 || !strings.Contains(r.stderr, "host off: no Agent connected") {
+		t.Errorf("the Agent can't be asked: %+v", r)
+	}
+	if r := run(t, srv, nil, "", "import", "--host", "slow", "--recipient", id, "--timeout", "50ms"); r.code != 1 ||
+		!strings.Contains(r.stderr, "the Agent on slow didn't answer within 50ms (--timeout)") {
+		t.Errorf("no answer: %+v", r)
+	}
+	os.MkdirAll(filepath.Join(repo, "platform"), 0o755)
+	os.WriteFile(filepath.Join(repo, "platform", "apps.yaml"), []byte("not: [a definition"), 0o644)
+	if r := run(t, srv, nil, "", "import", "--host", "off", "--recipient", id); r.code != 1 || r.stderr == "" {
+		t.Errorf("definitions it can't read: %+v", r)
 	}
 }
 

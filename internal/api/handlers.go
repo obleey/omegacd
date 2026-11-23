@@ -19,6 +19,7 @@ import (
 	"github.com/obleey/omegacd/internal/agents"
 	"github.com/obleey/omegacd/internal/appdef"
 	"github.com/obleey/omegacd/internal/domain"
+	"github.com/obleey/omegacd/internal/importer"
 	"github.com/obleey/omegacd/internal/source"
 	"github.com/obleey/omegacd/internal/version"
 )
@@ -428,6 +429,24 @@ func (s *server) rotateHost(w http.ResponseWriter, r *http.Request) {
 		err = fmt.Errorf("%w: %v", domain.ErrInvalid, err)
 	}
 	respond(w, http.StatusOK, map[string]string{"fingerprint": fingerprint}, err)
+}
+
+// importHost has the Host's Agent import the Compose stacks running there (M6-05): the body is importer.Request, the
+// answer every stack's importer.Result with its files, secrets encrypted on the Host (Q230).
+func (s *server) importHost(w http.ResponseWriter, r *http.Request) {
+	var req importer.Request
+	if err := decode(w, r, &req); err != nil {
+		writeError(w, err)
+		return
+	}
+	if s.noAgents(w) {
+		return
+	}
+	results, err := s.Agents.Import(r.Context(), r.PathValue("name"), req)
+	if errors.Is(err, agents.ErrOffline) || errors.Is(err, agents.ErrNotApproved) {
+		err = fmt.Errorf("%w: %v", domain.ErrInvalid, err)
+	}
+	respond(w, http.StatusOK, results, err)
 }
 
 // unlockHost lets a Host locked by two connections with its key connect again (Q75).

@@ -117,7 +117,7 @@ OrbStack; still to do there: the run in kind on the Linux servers and CI, the RE
 **Done when:** installs in OrbStack's Kubernetes and in kind on every Linux target, and manages a remote Agent.
 
 ### M6-05 · import through the Agent
-**Status:** todo
+**Status:** done (2026-11-23, PR #168)
 **Depends on:** M4-01
 
 `omegacd import --host NAME` asks that Host's Agent to import its running Compose stacks: the Agent runs the importer
@@ -129,7 +129,7 @@ The import encrypts for the Host's key plus the people's keys allowed for it, an
 `--host-only` (Q194, Q201; the key list is M6-08's, done before this ticket, Q229).
 
 Decided in the grilling before it (Q317–Q326): the importer splits into the Agent's half (read, decide, rewrite,
-encrypt) and the CLI's (overwrite check, `--force`, `--dry-run`, write); `POST /api/hosts/{name}/import` relays it as
+encrypt) and the CLI's (overwrite check, `--force`, `--dry-run`, write); `POST /api/settings/hosts/{name}/import` relays it as
 Diff does, `--timeout` 5m; one answer per stack, at most 6 MB; Host-only refused by the Agent only when a stack has
 secrets; no local path; an Agent too old to import is told at once; `../` files copied in with the `../` dropped,
 `../` bind mounts by the inside rules; data inside another tool's storage fails the stack.

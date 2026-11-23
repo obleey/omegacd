@@ -963,6 +963,10 @@ func TestEnrollmentAPI(t *testing.T) {
 	if b := e.expect("POST", "/api/settings/hosts/web/rotate", "", 400); !strings.Contains(b, "not connected") {
 		t.Fatal(b)
 	}
+	if b := e.expect("POST", "/api/settings/hosts/web/import", `{"HostName":"web"}`, 400); !strings.Contains(b, "not connected") {
+		t.Fatal(b)
+	}
+	e.expect("POST", "/api/settings/hosts/web/import", `{`, 400)
 	e.expect("POST", "/api/settings/hosts/web/unlock", "", 204)
 }
 

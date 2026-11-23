@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/obleey/omegacd/internal/importer"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -36,6 +37,14 @@ type Agent struct {
 	recorded  chan struct{} // an outbox entry was recorded: send it now if connected (M3-06)
 	reports   *reporter     // status reports to the Control Plane (M4-02)
 	deploying sync.Map      // the ops of Desired States being deployed: one sent again (a resync) isn't deployed twice
+
+	importHost func() (importHost, error) // the engine omegacd import reads the stacks from (M6-05)
+}
+
+// importHost is the engine an import reads, closed after it.
+type importHost interface {
+	importer.Host
+	Close() error
 }
 
 // lock takes the Agent's lock: mu within this process, and an flock on agent.lock next to the database, held by
@@ -58,7 +67,7 @@ func (ag *Agent) lock() (unlock func(), err error) {
 // New is the Agent; log nil logs nothing.
 func New(db *DB, cache *Cache, work *WorkDir, secrets *Secrets, engine domain.Engine, log *slog.Logger) *Agent {
 	ag := &Agent{db: db, cache: cache, work: work, secrets: secrets, engine: engine, log: cmp.Or(log, logging.Discard),
-		recorded: make(chan struct{}, 1)}
+		recorded: make(chan struct{}, 1), importHost: func() (importHost, error) { return importer.Dial() }}
 	if inContainer() {
 		ag.self = self()
 	}

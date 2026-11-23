@@ -172,6 +172,7 @@ func TestWithoutAgentsOrWebhooks(t *testing.T) {
 		{"POST", "/api/settings/hosts/edge/approve", `{"fingerprint":"x"}`},
 		{"POST", "/api/settings/hosts/edge/rotate", ""},
 		{"POST", "/api/settings/hosts/edge/unlock", ""},
+		{"POST", "/api/settings/hosts/edge/import", "{}"},
 		{"PUT", "/api/settings/hosts/edge/allow-ips", `{"allowIPs":[]}`},
 	} {
 		if b := e.expect(tc.method, tc.path, tc.body, 400); !strings.Contains(b, "accepts no Agents") {

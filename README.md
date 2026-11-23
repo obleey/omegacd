@@ -609,11 +609,11 @@ Pass the server and token as environment variables, and let `--wait` fail the jo
 
 ### Moving an existing server to OmegaCD
 
-Stacks you started by hand with `docker compose up` can move into Git without downtime planning. `omegacd import` runs **on the server, in a checkout of your repository**, and reads the stacks running there — nothing on the server changes (reading another Host's stacks through its Agent comes later, [Roadmap](ROADMAP.md)):
+Stacks you started by hand with `docker compose up` can move into Git without downtime planning. Install the server's Agent first (`install.sh agent`, then approve it: [Hosts and keys](#hosts-and-keys)). Then `omegacd import`, run **in a checkout of your repository** on any machine logged in to your OmegaCD, has that Agent read the stacks running there and send back the files, secrets already encrypted on the server — nothing on the server changes:
 
 ```sh
 cd ~/server-apps                           # your (possibly brand-new) Git repo
-omegacd import --host vps --dry-run        # see what would happen; vps: this server's name in OmegaCD
+omegacd import --host vps --dry-run        # see what would happen; vps: the server's name in OmegaCD
 omegacd import --host vps                  # write it
 ```
 
@@ -631,12 +631,13 @@ omegacd import --host vps                  # write it
 For each stack it:
 
 - copies the compose files and the **config** they mount (files up to 1 MB, read-only folders up to 1 MB) into `apps/<name>/`; what in them isn't a regular file (a symlink) is left out with a warning, to copy by hand;
-- leaves **data** where it is: writable or big folders become absolute paths on the server (`./wp-content` → `/opt/stacks/blog/wp-content`), named volumes stay as they are;
-- **encrypts secrets** with the server's Host Key: env files with password-like keys, and any it can't read as an env file (with a warning), become `*.sops.env`, Compose secret files and bind-mounted files that hold a key or credential (by name, or by content: private keys, age keys, `password:`/`token=` settings) `*.sops.*` — never as is; one without a file extension is left out with a warning — and passwords written in `environment:` move into an encrypted `.sops.env` (the compose file then says `${WORDPRESS_DB_PASSWORD}`). The keys are the Host Key and the people's keys covering it (see [Secrets](#secrets)), looked up on your OmegaCD by `--host` (the Host's Agent must have enrolled), or given with `--recipient age1…`;
+- leaves **data** where it is: writable or big folders become absolute paths on the server (`./wp-content` → `/opt/stacks/blog/wp-content`), named volumes stay as they are; a stack whose data would be inside another tool's storage (a Docker or Podman volume, e.g. another deploy tool's checkout) is refused, naming it: move the data out first;
+- treats what a stack reads from **beside its folder** (`env_file: ../shared/app.env`, `../traefik/site.conf:/etc/site.conf:ro`) the same way, the copy going into `apps/<name>/` without the `../` (`shared/app.env`) and the compose file pointing at it;
+- **encrypts secrets** with the server's Host Key: env files with password-like keys, and any it can't read as an env file (with a warning), become `*.sops.env`, Compose secret files and bind-mounted files that hold a key or credential (by name, or by content: private keys, age keys, `password:`/`token=` settings) `*.sops.*` — never as is; one without a file extension is left out with a warning — and passwords written in `environment:` move into an encrypted `.sops.env` (the compose file then says `${WORDPRESS_DB_PASSWORD}`). The keys are the Host Key and the people's keys covering it (see [Secrets](#secrets)), looked up on your OmegaCD by `--host`, or given with `--recipient age1…`; with no person's key covering the Host a stack with secrets is refused unless you pass `--host-only`;
 - adds a definition to `platform/apps.yaml` with `host: vps` and `adopt: true`, Auto-Sync **off**;
 - says what the takeover will do: containers that only use images and volumes keep running; those mounting files from the stack's folder are recreated once.
 
-Then review with `git diff`, commit and push, and create an App of Apps with path `platform`. Check each Application's Diff and Sync it to take its stack over. Name stacks (`omegacd import blog uptime`) to import only those. Stacks already managed by OmegaCD or already defined are skipped, and an existing `apps/<name>` is only overwritten with `--force`.
+Then review with `git diff`, commit and push, and create an App of Apps with path `platform`. Check each Application's Diff and Sync it to take its stack over. Name stacks (`omegacd import blog uptime`) to import only those. Stacks already managed by OmegaCD or already defined are skipped, and an existing `apps/<name>` is only overwritten with `--force`. One stack's files go to the Agent's connection in one piece, at most 6 MB; `--timeout` (default 5m) bounds the wait for the Agent's answer.
 
 ### Hosts and keys
 
@@ -672,7 +673,7 @@ omegacd secrets rekey                      # in your checkout: rules and secret 
 | `app logs NAME [CONTAINER_OR_SERVICE] [-f] [--tail N]` | |
 | `app export NAME` | Application definition YAML |
 | `app delete NAME [--cascade=false \| --volumes \| --forget] [--yes]` | asks first on a terminal; `--cascade=false` keeps the containers; `--volumes` also deletes the volumes and their data; its Host's Agent deletes, and to an offline Host the delete waits for it; `--forget` removes it from OmegaCD only, for an Application whose Host is gone for good |
-| `import --host NAME [STACK]... [--recipient age1…] [--host-only] [--apps-dir apps] [--definitions platform/apps.yaml] [--repo-url URL] [--dry-run] [--force]` | run in your repository's checkout — see [Moving an existing server](#moving-an-existing-server-to-omegacd) |
+| `import --host NAME [STACK]... [--recipient age1…] [--host-only] [--apps-dir apps] [--definitions platform/apps.yaml] [--repo-url URL] [--dry-run] [--force] [--timeout 5m]` | run in your repository's checkout; Host NAME's Agent reads the stacks — see [Moving an existing server](#moving-an-existing-server-to-omegacd) |
 | `host list` | |
 | `host add NAME`, `host approve NAME FINGERPRINT` | enrolls a Host's Agent with a single-use invite (valid an hour), approved by its key's fingerprint; Applications on it then deploy through the Agent, which decrypts their secrets and reports their Health, containers, resources and logs (a Sync to it while it's offline waits for it; offline, the app shows its last known state and since when the Host is gone). The Agent connects over https only, except to its own machine; `OMEGACD_AGENT_CA_FILE` trusts a private CA |
 | `host allow NAME [CIDR]...` | the addresses the Host's Agent may connect from (behind a reverse proxy: set `OMEGACD_TRUSTED_PROXIES`); none: anywhere |

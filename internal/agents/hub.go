@@ -26,6 +26,7 @@ import (
 	"filippo.io/age"
 
 	"github.com/obleey/omegacd/internal/domain"
+	"github.com/obleey/omegacd/internal/importer"
 	"github.com/obleey/omegacd/internal/logging"
 	agentv1 "github.com/obleey/omegacd/internal/proto/agent/v1"
 	"github.com/obleey/omegacd/internal/version"
@@ -105,8 +106,16 @@ type session struct {
 	removes map[uint64]chan *agentv1.AppRemoved // RemoveApps waiting for their answer, by envelope id
 	logs    map[uint64]chan *agentv1.LogChunk   // LogsRequests being answered, by envelope id
 	diffs   map[uint64]chan *agentv1.DiffResult // DiffRequests waiting for their answer, by envelope id
+	imports map[uint64]importWait               // ImportRequests being answered, by envelope id
+	version string                              // the Agent's, from its Hello
 	sent    map[uint64]*agentv1.DesiredState    // in flight, by op: a resync re-sends one the Agent doesn't have
 	files   map[string]bool
+}
+
+// importWait is an Import reading its answers; stop is closed once it no longer does, so the reader never waits on it.
+type importWait struct {
+	answers chan *agentv1.ImportResult
+	stop    chan struct{}
 }
 
 type rotateReply struct {
@@ -183,7 +192,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	s := &session{conn: c, at: domain.AgentConnection{Address: addr, Since: h.now()}, approved: make(chan struct{}), key: key,
 		deploys: map[uint64]chan *agentv1.SyncOperationReport{}, removes: map[uint64]chan *agentv1.AppRemoved{}, logs: map[uint64]chan *agentv1.LogChunk{},
-		diffs: map[uint64]chan *agentv1.DiffResult{}, sent: map[uint64]*agentv1.DesiredState{}, files: map[string]bool{}}
+		diffs: map[uint64]chan *agentv1.DiffResult{}, imports: map[uint64]importWait{}, version: hello.AgentVersion, sent: map[uint64]*agentv1.DesiredState{}, files: map[string]bool{}}
 	if host.Approved {
 		s.once.Do(func() { close(s.approved) })
 	}
@@ -261,6 +270,17 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			s.mu.Unlock()
 			if wait != nil {
 				wait <- e.GetDiffResult()
+			}
+		case e.GetImportResult() != nil:
+			s.mu.Lock()
+			w, ok := s.imports[e.ReplyTo]
+			s.mu.Unlock()
+			if ok {
+				select {
+				case w.answers <- e.GetImportResult():
+				case <-w.stop:
+				case <-ctx.Done():
+				}
 			}
 		case e.GetStatusReport() != nil:
 			h.status(ctx, host.Name, e.GetStatusReport())
@@ -792,6 +812,57 @@ func (h *Hub) Diff(ctx context.Context, host string, ds *agentv1.DesiredState) (
 		return nil, fmt.Errorf("host %s: %w", host, ErrDisconnected)
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	}
+}
+
+// Import has the Host's Agent import the Compose stacks running there (M6-05) and returns every stack's result, its
+// secrets encrypted on the Host (Q230). ErrOffline and ErrNotApproved without an Agent to ask, an Agent too old to
+// import says so at once (Q322); ErrDisconnected when the connection dropped meanwhile.
+func (h *Hub) Import(ctx context.Context, host string, req importer.Request) ([]importer.Result, error) {
+	s, err := h.approved(host)
+	if err != nil {
+		return nil, err
+	}
+	if err := canImport(h.version, s.version); err != nil {
+		return nil, fmt.Errorf("host %s: %w", host, err)
+	}
+	b, _ := json.Marshal(req) // strings and lists: it always encodes
+	e := &agentv1.Envelope{Body: &agentv1.Envelope_ImportRequest{ImportRequest: &agentv1.ImportRequest{Request: b}}}
+	w := importWait{answers: make(chan *agentv1.ImportResult), stop: make(chan struct{})}
+	s.mu.Lock() // registered before an answer can be read
+	err = s.conn.Send(ctx, e)
+	s.imports[e.Id] = w
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.imports, e.Id)
+		s.mu.Unlock()
+		close(w.stop)
+	}()
+	if err != nil {
+		return nil, fmt.Errorf("host %s: %w", host, ErrDisconnected)
+	}
+	results := []importer.Result{}
+	for {
+		select {
+		case r := <-w.answers:
+			switch {
+			case r.Done && r.Error != "":
+				return nil, errors.New(r.Error)
+			case r.Done:
+				return results, nil
+			}
+			var res importer.Result
+			if err := json.Unmarshal(r.Result, &res); err != nil {
+				return nil, fmt.Errorf("host %s: the Agent's import: %w", host, err)
+			}
+			res.Files = r.Files
+			results = append(results, res)
+		case <-s.conn.Done():
+			return nil, fmt.Errorf("host %s: %w", host, ErrDisconnected)
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 }
 

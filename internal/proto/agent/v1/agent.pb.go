@@ -56,6 +56,8 @@ type Envelope struct {
 	//	*Envelope_LogsStop
 	//	*Envelope_DiffRequest
 	//	*Envelope_DiffResult
+	//	*Envelope_ImportRequest
+	//	*Envelope_ImportResult
 	Body          isEnvelope_Body `protobuf_oneof:"body"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -346,6 +348,24 @@ func (x *Envelope) GetDiffResult() *DiffResult {
 	return nil
 }
 
+func (x *Envelope) GetImportRequest() *ImportRequest {
+	if x != nil {
+		if x, ok := x.Body.(*Envelope_ImportRequest); ok {
+			return x.ImportRequest
+		}
+	}
+	return nil
+}
+
+func (x *Envelope) GetImportResult() *ImportResult {
+	if x != nil {
+		if x, ok := x.Body.(*Envelope_ImportResult); ok {
+			return x.ImportResult
+		}
+	}
+	return nil
+}
+
 type isEnvelope_Body interface {
 	isEnvelope_Body()
 }
@@ -454,6 +474,14 @@ type Envelope_DiffResult struct {
 	DiffResult *DiffResult `protobuf:"bytes,35,opt,name=diff_result,json=diffResult,proto3,oneof"`
 }
 
+type Envelope_ImportRequest struct {
+	ImportRequest *ImportRequest `protobuf:"bytes,36,opt,name=import_request,json=importRequest,proto3,oneof"`
+}
+
+type Envelope_ImportResult struct {
+	ImportResult *ImportResult `protobuf:"bytes,37,opt,name=import_result,json=importResult,proto3,oneof"`
+}
+
 func (*Envelope_Hello) isEnvelope_Body() {}
 
 func (*Envelope_Challenge) isEnvelope_Body() {}
@@ -505,6 +533,10 @@ func (*Envelope_LogsStop) isEnvelope_Body() {}
 func (*Envelope_DiffRequest) isEnvelope_Body() {}
 
 func (*Envelope_DiffResult) isEnvelope_Body() {}
+
+func (*Envelope_ImportRequest) isEnvelope_Body() {}
+
+func (*Envelope_ImportResult) isEnvelope_Body() {}
 
 // Hello comes before the ChallengeResponse; the Control Plane records it and serves Agents of its minor version and
 // one behind (Q41).
@@ -2224,6 +2256,123 @@ func (x *DiffResult) GetError() string {
 	return ""
 }
 
+// ImportRequest asks the Agent to import the Compose stacks running on its Host (M6-05, Q317): request is JSON
+// importer.Request (the recipients, the stacks wanted, the names already defined). It answers with one ImportResult per
+// stack, then one with done set.
+type ImportRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Request       []byte                 `protobuf:"bytes,1,opt,name=request,proto3" json:"request,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ImportRequest) Reset() {
+	*x = ImportRequest{}
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ImportRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ImportRequest) ProtoMessage() {}
+
+func (x *ImportRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ImportRequest.ProtoReflect.Descriptor instead.
+func (*ImportRequest) Descriptor() ([]byte, []int) {
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *ImportRequest) GetRequest() []byte {
+	if x != nil {
+		return x.Request
+	}
+	return nil
+}
+
+// ImportResult is one stack's import: result is JSON importer.Result without its files, which are in files, every
+// secret already encrypted (Q230); or, with done, the end of the answer, error saying why it stopped early.
+type ImportResult struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Result        []byte                 `protobuf:"bytes,1,opt,name=result,proto3" json:"result,omitempty"`
+	Files         map[string][]byte      `protobuf:"bytes,2,rep,name=files,proto3" json:"files,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Done          bool                   `protobuf:"varint,3,opt,name=done,proto3" json:"done,omitempty"`
+	Error         string                 `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ImportResult) Reset() {
+	*x = ImportResult{}
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ImportResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ImportResult) ProtoMessage() {}
+
+func (x *ImportResult) ProtoReflect() protoreflect.Message {
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ImportResult.ProtoReflect.Descriptor instead.
+func (*ImportResult) Descriptor() ([]byte, []int) {
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *ImportResult) GetResult() []byte {
+	if x != nil {
+		return x.Result
+	}
+	return nil
+}
+
+func (x *ImportResult) GetFiles() map[string][]byte {
+	if x != nil {
+		return x.Files
+	}
+	return nil
+}
+
+func (x *ImportResult) GetDone() bool {
+	if x != nil {
+		return x.Done
+	}
+	return false
+}
+
+func (x *ImportResult) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
 // OutboxAck tells the Agent the Control Plane has its entries up to seq: it deletes them. An entry sent again (no ack
 // arrived) is acknowledged again but applied once (M3-06).
 type OutboxAck struct {
@@ -2235,7 +2384,7 @@ type OutboxAck struct {
 
 func (x *OutboxAck) Reset() {
 	*x = OutboxAck{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[27]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2247,7 +2396,7 @@ func (x *OutboxAck) String() string {
 func (*OutboxAck) ProtoMessage() {}
 
 func (x *OutboxAck) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[27]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2260,7 +2409,7 @@ func (x *OutboxAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OutboxAck.ProtoReflect.Descriptor instead.
 func (*OutboxAck) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{27}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *OutboxAck) GetSeq() uint64 {
@@ -2279,7 +2428,7 @@ type Error struct {
 
 func (x *Error) Reset() {
 	*x = Error{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[28]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2291,7 +2440,7 @@ func (x *Error) String() string {
 func (*Error) ProtoMessage() {}
 
 func (x *Error) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[28]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2304,7 +2453,7 @@ func (x *Error) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Error.ProtoReflect.Descriptor instead.
 func (*Error) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{28}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *Error) GetMessage() string {
@@ -2318,7 +2467,7 @@ var File_omegacd_agent_v1_agent_proto protoreflect.FileDescriptor
 
 const file_omegacd_agent_v1_agent_proto_rawDesc = "" +
 	"\n" +
-	"\x1comegacd/agent/v1/agent.proto\x12\x10omegacd.agent.v1\"\x87\x0e\n" +
+	"\x1comegacd/agent/v1/agent.proto\x12\x10omegacd.agent.v1\"\x98\x0f\n" +
 	"\bEnvelope\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x04R\x02id\x12\x19\n" +
 	"\breply_to\x18\x02 \x01(\x04R\areplyTo\x12/\n" +
@@ -2354,7 +2503,9 @@ const file_omegacd_agent_v1_agent_proto_rawDesc = "" +
 	"\tlogs_stop\x18! \x01(\v2\x1a.omegacd.agent.v1.LogsStopH\x00R\blogsStop\x12B\n" +
 	"\fdiff_request\x18\" \x01(\v2\x1d.omegacd.agent.v1.DiffRequestH\x00R\vdiffRequest\x12?\n" +
 	"\vdiff_result\x18# \x01(\v2\x1c.omegacd.agent.v1.DiffResultH\x00R\n" +
-	"diffResultB\x06\n" +
+	"diffResult\x12H\n" +
+	"\x0eimport_request\x18$ \x01(\v2\x1f.omegacd.agent.v1.ImportRequestH\x00R\rimportRequest\x12E\n" +
+	"\rimport_result\x18% \x01(\v2\x1e.omegacd.agent.v1.ImportResultH\x00R\fimportResultB\x06\n" +
 	"\x04body\"\xb3\x02\n" +
 	"\x05Hello\x12#\n" +
 	"\ragent_version\x18\x01 \x01(\tR\fagentVersion\x12)\n" +
@@ -2484,7 +2635,18 @@ const file_omegacd_agent_v1_agent_proto_rawDesc = "" +
 	"\n" +
 	"DiffResult\x12\x1a\n" +
 	"\bservices\x18\x01 \x01(\fR\bservices\x12\x14\n" +
-	"\x05error\x18\x02 \x01(\tR\x05error\"\x1d\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\")\n" +
+	"\rImportRequest\x12\x18\n" +
+	"\arequest\x18\x01 \x01(\fR\arequest\"\xcb\x01\n" +
+	"\fImportResult\x12\x16\n" +
+	"\x06result\x18\x01 \x01(\fR\x06result\x12?\n" +
+	"\x05files\x18\x02 \x03(\v2).omegacd.agent.v1.ImportResult.FilesEntryR\x05files\x12\x12\n" +
+	"\x04done\x18\x03 \x01(\bR\x04done\x12\x14\n" +
+	"\x05error\x18\x04 \x01(\tR\x05error\x1a8\n" +
+	"\n" +
+	"FilesEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01\"\x1d\n" +
 	"\tOutboxAck\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x04R\x03seq\"!\n" +
 	"\x05Error\x12\x18\n" +
@@ -2502,7 +2664,7 @@ func file_omegacd_agent_v1_agent_proto_rawDescGZIP() []byte {
 	return file_omegacd_agent_v1_agent_proto_rawDescData
 }
 
-var file_omegacd_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 30)
+var file_omegacd_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 33)
 var file_omegacd_agent_v1_agent_proto_goTypes = []any{
 	(*Envelope)(nil),            // 0: omegacd.agent.v1.Envelope
 	(*Hello)(nil),               // 1: omegacd.agent.v1.Hello
@@ -2531,9 +2693,12 @@ var file_omegacd_agent_v1_agent_proto_goTypes = []any{
 	(*SyncProgress)(nil),        // 24: omegacd.agent.v1.SyncProgress
 	(*DiffRequest)(nil),         // 25: omegacd.agent.v1.DiffRequest
 	(*DiffResult)(nil),          // 26: omegacd.agent.v1.DiffResult
-	(*OutboxAck)(nil),           // 27: omegacd.agent.v1.OutboxAck
-	(*Error)(nil),               // 28: omegacd.agent.v1.Error
-	nil,                         // 29: omegacd.agent.v1.Resync.ChecksumsEntry
+	(*ImportRequest)(nil),       // 27: omegacd.agent.v1.ImportRequest
+	(*ImportResult)(nil),        // 28: omegacd.agent.v1.ImportResult
+	(*OutboxAck)(nil),           // 29: omegacd.agent.v1.OutboxAck
+	(*Error)(nil),               // 30: omegacd.agent.v1.Error
+	nil,                         // 31: omegacd.agent.v1.Resync.ChecksumsEntry
+	nil,                         // 32: omegacd.agent.v1.ImportResult.FilesEntry
 }
 var file_omegacd_agent_v1_agent_proto_depIdxs = []int32{
 	1,  // 0: omegacd.agent.v1.Envelope.hello:type_name -> omegacd.agent.v1.Hello
@@ -2548,12 +2713,12 @@ var file_omegacd_agent_v1_agent_proto_depIdxs = []int32{
 	15, // 9: omegacd.agent.v1.Envelope.logs_request:type_name -> omegacd.agent.v1.LogsRequest
 	16, // 10: omegacd.agent.v1.Envelope.log_chunk:type_name -> omegacd.agent.v1.LogChunk
 	18, // 11: omegacd.agent.v1.Envelope.outbox_entry:type_name -> omegacd.agent.v1.OutboxEntry
-	28, // 12: omegacd.agent.v1.Envelope.error:type_name -> omegacd.agent.v1.Error
+	30, // 12: omegacd.agent.v1.Envelope.error:type_name -> omegacd.agent.v1.Error
 	4,  // 13: omegacd.agent.v1.Envelope.enroll:type_name -> omegacd.agent.v1.Enroll
 	5,  // 14: omegacd.agent.v1.Envelope.enrollment_status:type_name -> omegacd.agent.v1.EnrollmentStatus
 	6,  // 15: omegacd.agent.v1.Envelope.rotate_key:type_name -> omegacd.agent.v1.RotateKey
 	7,  // 16: omegacd.agent.v1.Envelope.key_rotation:type_name -> omegacd.agent.v1.KeyRotation
-	27, // 17: omegacd.agent.v1.Envelope.outbox_ack:type_name -> omegacd.agent.v1.OutboxAck
+	29, // 17: omegacd.agent.v1.Envelope.outbox_ack:type_name -> omegacd.agent.v1.OutboxAck
 	19, // 18: omegacd.agent.v1.Envelope.remove_app:type_name -> omegacd.agent.v1.RemoveApp
 	20, // 19: omegacd.agent.v1.Envelope.app_removed:type_name -> omegacd.agent.v1.AppRemoved
 	21, // 20: omegacd.agent.v1.Envelope.registry_auth_request:type_name -> omegacd.agent.v1.RegistryAuthRequest
@@ -2562,17 +2727,20 @@ var file_omegacd_agent_v1_agent_proto_depIdxs = []int32{
 	17, // 23: omegacd.agent.v1.Envelope.logs_stop:type_name -> omegacd.agent.v1.LogsStop
 	25, // 24: omegacd.agent.v1.Envelope.diff_request:type_name -> omegacd.agent.v1.DiffRequest
 	26, // 25: omegacd.agent.v1.Envelope.diff_result:type_name -> omegacd.agent.v1.DiffResult
-	9,  // 26: omegacd.agent.v1.DesiredState.files:type_name -> omegacd.agent.v1.File
-	29, // 27: omegacd.agent.v1.Resync.checksums:type_name -> omegacd.agent.v1.Resync.ChecksumsEntry
-	14, // 28: omegacd.agent.v1.OutboxEntry.sync_operation_report:type_name -> omegacd.agent.v1.SyncOperationReport
-	20, // 29: omegacd.agent.v1.OutboxEntry.app_removed:type_name -> omegacd.agent.v1.AppRemoved
-	23, // 30: omegacd.agent.v1.RegistryAuth.credentials:type_name -> omegacd.agent.v1.SealedCredential
-	8,  // 31: omegacd.agent.v1.DiffRequest.desired_state:type_name -> omegacd.agent.v1.DesiredState
-	32, // [32:32] is the sub-list for method output_type
-	32, // [32:32] is the sub-list for method input_type
-	32, // [32:32] is the sub-list for extension type_name
-	32, // [32:32] is the sub-list for extension extendee
-	0,  // [0:32] is the sub-list for field type_name
+	27, // 26: omegacd.agent.v1.Envelope.import_request:type_name -> omegacd.agent.v1.ImportRequest
+	28, // 27: omegacd.agent.v1.Envelope.import_result:type_name -> omegacd.agent.v1.ImportResult
+	9,  // 28: omegacd.agent.v1.DesiredState.files:type_name -> omegacd.agent.v1.File
+	31, // 29: omegacd.agent.v1.Resync.checksums:type_name -> omegacd.agent.v1.Resync.ChecksumsEntry
+	14, // 30: omegacd.agent.v1.OutboxEntry.sync_operation_report:type_name -> omegacd.agent.v1.SyncOperationReport
+	20, // 31: omegacd.agent.v1.OutboxEntry.app_removed:type_name -> omegacd.agent.v1.AppRemoved
+	23, // 32: omegacd.agent.v1.RegistryAuth.credentials:type_name -> omegacd.agent.v1.SealedCredential
+	8,  // 33: omegacd.agent.v1.DiffRequest.desired_state:type_name -> omegacd.agent.v1.DesiredState
+	32, // 34: omegacd.agent.v1.ImportResult.files:type_name -> omegacd.agent.v1.ImportResult.FilesEntry
+	35, // [35:35] is the sub-list for method output_type
+	35, // [35:35] is the sub-list for method input_type
+	35, // [35:35] is the sub-list for extension type_name
+	35, // [35:35] is the sub-list for extension extendee
+	0,  // [0:35] is the sub-list for field type_name
 }
 
 func init() { file_omegacd_agent_v1_agent_proto_init() }
@@ -2607,6 +2775,8 @@ func file_omegacd_agent_v1_agent_proto_init() {
 		(*Envelope_LogsStop)(nil),
 		(*Envelope_DiffRequest)(nil),
 		(*Envelope_DiffResult)(nil),
+		(*Envelope_ImportRequest)(nil),
+		(*Envelope_ImportResult)(nil),
 	}
 	file_omegacd_agent_v1_agent_proto_msgTypes[18].OneofWrappers = []any{
 		(*OutboxEntry_SyncOperationReport)(nil),
@@ -2618,7 +2788,7 @@ func file_omegacd_agent_v1_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_omegacd_agent_v1_agent_proto_rawDesc), len(file_omegacd_agent_v1_agent_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   30,
+			NumMessages:   33,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

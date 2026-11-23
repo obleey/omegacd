@@ -3,6 +3,7 @@ package importer
 import (
 	"bytes"
 	"context"
+	"errors"
 	"math"
 	"os"
 	"path"
@@ -24,9 +25,12 @@ type fakeHost struct {
 	files   map[string]string // absolute path -> content
 	big     map[string]bool   // absolute paths reported larger than MaxConfig
 	skipped []string          // what Read says it left out
+	volumes map[string]string // Storage: a mountpoint → its volume
 }
 
 func (h *fakeHost) Stacks(context.Context) ([]Stack, error) { return h.stacks, nil }
+
+func (h *fakeHost) Storage(context.Context) (map[string]string, error) { return h.volumes, nil }
 
 func (h *fakeHost) Info(_ context.Context, dir string, paths []string) (map[string]Info, error) {
 	out := map[string]Info{}
@@ -56,7 +60,8 @@ func (h *fakeHost) Read(_ context.Context, dir string, paths []string) (map[stri
 		abs := path.Join(dir, p)
 		for f, c := range h.files {
 			if f == abs || strings.HasPrefix(f, abs+"/") {
-				out[strings.TrimPrefix(f, dir+"/")] = []byte(c)
+				r, _ := filepath.Rel(dir, f)
+				out[r] = []byte(c)
 			}
 		}
 	}
@@ -126,16 +131,39 @@ func shopHost() *fakeHost {
 	}
 }
 
-func run(t *testing.T, h Host, o Options) (string, error) {
+// opts is what a test asks of an import: the Request's and the Options' fields in one.
+type opts struct {
+	Repo, HostName string
+	Recipients     func() ([]string, error) // nil: none; an error: they are refused with it (Q320)
+	Only           []string
+	Force, DryRun  bool
+}
+
+// run imports as omegacd import does: Plan on the Host (the Agent's half), then Write into the checkout (the CLI's).
+func run(t *testing.T, h Host, o opts) (string, error) {
 	t.Helper()
-	var out bytes.Buffer
-	o.Out = &out
 	if o.Repo == "" {
 		o.Repo = t.TempDir()
 	}
-	o.AppsDir, o.Definitions = "apps", "platform/apps.yaml"
-	o.RepoURL, o.Revision = "git@github.com:acme/server.git", "main"
-	err := Run(context.Background(), h, o)
+	req := Request{AppsDir: "apps", RepoURL: "git@github.com:acme/server.git", Revision: "main", HostName: o.HostName, Only: o.Only}
+	if o.Recipients != nil {
+		r, err := o.Recipients()
+		if err != nil {
+			req.Refuse = err.Error()
+		}
+		req.Recipients = r
+	}
+	defined, err := ExistingNames(filepath.Join(o.Repo, "platform", "apps.yaml"))
+	if err != nil {
+		return "", err
+	}
+	req.Defined = defined
+	var results []Result
+	if err := Plan(context.Background(), h, req, func(r Result) error { results = append(results, r); return nil }); err != nil {
+		return "", err
+	}
+	var out bytes.Buffer
+	err = Write(Options{Repo: o.Repo, AppsDir: "apps", Definitions: "platform/apps.yaml", Force: o.Force, DryRun: o.DryRun, Out: &out}, results)
 	return out.String(), err
 }
 
@@ -143,7 +171,7 @@ func TestImport(t *testing.T) {
 	id, _ := age.GenerateX25519Identity()
 	repo := t.TempDir()
 	asked := 0
-	report, err := run(t, shopHost(), Options{Repo: repo, HostName: "vps", Recipients: func() ([]string, error) {
+	report, err := run(t, shopHost(), opts{Repo: repo, HostName: "vps", Recipients: func() ([]string, error) {
 		asked++
 		return []string{id.Recipient().String()}, nil
 	}})
@@ -242,19 +270,20 @@ func TestImport(t *testing.T) {
 	}
 
 	// importing again: already defined, nothing overwritten
-	again, err := run(t, shopHost(), Options{Repo: repo, Recipients: func() ([]string, error) { return nil, nil }})
+	again, err := run(t, shopHost(), opts{Repo: repo, Recipients: func() ([]string, error) { return nil, nil }})
 	if err != nil || !strings.Contains(again, "shop: already defined in platform/apps.yaml, skipped") {
 		t.Fatalf("second import: %v\n%s", err, again)
 	}
 }
 
+// Without secrets a Host-only refusal doesn't matter: nothing is encrypted (Q320).
 func TestImportKeepsContainersWithoutFileMounts(t *testing.T) {
 	h := &fakeHost{
 		stacks: []Stack{{Name: "cache", Dir: "/opt/cache", Files: []string{"docker-compose.yml"}}},
 		files:  map[string]string{"/opt/cache/docker-compose.yml": "services:\n  redis:\n    image: redis:7\n    volumes: [data:/data, ./state:/state]\nvolumes:\n  data: {}\n"},
 	}
 	repo := t.TempDir()
-	report, err := run(t, h, Options{Repo: repo, HostName: "box", Recipients: func() ([]string, error) { t.Fatal("asked for recipients without secrets"); return nil, nil }})
+	report, err := run(t, h, opts{Repo: repo, HostName: "box", Recipients: func() ([]string, error) { return nil, errors.New("no person's key covers Host box") }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,30 +304,30 @@ func TestImportDryRunOnlyAndExisting(t *testing.T) {
 	repo := t.TempDir()
 	id, _ := age.GenerateX25519Identity()
 	rec := func() ([]string, error) { return []string{id.Recipient().String()}, nil }
-	report, err := run(t, shopHost(), Options{Repo: repo, DryRun: true, Only: []string{"shop"}, Recipients: rec})
+	report, err := run(t, shopHost(), opts{Repo: repo, DryRun: true, Only: []string{"shop"}, Recipients: rec})
 	if err != nil || !strings.Contains(report, "✓ shop would go to apps/shop") {
 		t.Fatalf("%v\n%s", err, report)
 	}
 	if entries, _ := os.ReadDir(repo); len(entries) != 0 {
 		t.Fatal("dry run wrote files")
 	}
-	if _, err := run(t, shopHost(), Options{Repo: repo, Only: []string{"nope"}, Recipients: rec}); err == nil || !strings.Contains(err.Error(), `no Compose stack "nope"`) {
+	if _, err := run(t, shopHost(), opts{Repo: repo, Only: []string{"nope"}, Recipients: rec}); err == nil || !strings.Contains(err.Error(), `no Compose stack "nope"`) {
 		t.Fatalf("unknown stack: %v", err)
 	}
 	// an existing app folder is not overwritten without --force
 	os.MkdirAll(filepath.Join(repo, "apps", "shop"), 0o755)
-	report, err = run(t, shopHost(), Options{Repo: repo, Recipients: rec})
+	report, err = run(t, shopHost(), opts{Repo: repo, Recipients: rec})
 	if err == nil || !strings.Contains(report, "apps/shop exists already (--force overwrites it)") {
 		t.Fatalf("%v\n%s", err, report)
 	}
-	if _, err := run(t, shopHost(), Options{Repo: repo, Force: true, Recipients: rec}); err != nil {
+	if _, err := run(t, shopHost(), opts{Repo: repo, Force: true, Recipients: rec}); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestImportNeedsARecipientForSecrets(t *testing.T) {
 	repo := t.TempDir()
-	report, err := run(t, shopHost(), Options{Repo: repo, Recipients: func() ([]string, error) {
+	report, err := run(t, shopHost(), opts{Repo: repo, Recipients: func() ([]string, error) {
 		return nil, os.ErrNotExist
 	}})
 	if err == nil || !strings.Contains(report, "✗ shop:") {

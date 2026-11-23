@@ -26,6 +26,7 @@ import (
 
 	"github.com/obleey/omegacd/internal/crypto"
 	"github.com/obleey/omegacd/internal/domain"
+	"github.com/obleey/omegacd/internal/importer"
 	agentv1 "github.com/obleey/omegacd/internal/proto/agent/v1"
 	"github.com/obleey/omegacd/internal/store"
 	"github.com/obleey/omegacd/internal/wire"
@@ -894,7 +895,7 @@ func TestRemoveOnAClosingConnection(t *testing.T) {
 	h.mu.Lock()
 	h.conns["web"] = &session{conn: c, approved: approved, removes: map[uint64]chan *agentv1.AppRemoved{},
 		logs: map[uint64]chan *agentv1.LogChunk{}, diffs: map[uint64]chan *agentv1.DiffResult{}, files: map[string]bool{},
-		deploys: map[uint64]chan *agentv1.SyncOperationReport{}, sent: map[uint64]*agentv1.DesiredState{}}
+		imports: map[uint64]importWait{}, deploys: map[uint64]chan *agentv1.SyncOperationReport{}, sent: map[uint64]*agentv1.DesiredState{}}
 	h.mu.Unlock()
 	if err := h.Deploy(t.Context(), "web", &agentv1.DesiredState{Op: 1}); !errors.Is(err, ErrDisconnected) {
 		t.Fatalf("Deploy = %v", err)
@@ -910,6 +911,87 @@ func TestRemoveOnAClosingConnection(t *testing.T) {
 	}
 	if _, err := h.Diff(t.Context(), "web", &agentv1.DesiredState{}); !errors.Is(err, ErrDisconnected) {
 		t.Fatalf("Diff = %v", err)
+	}
+	if _, err := h.Import(t.Context(), "web", importer.Request{}); !errors.Is(err, ErrDisconnected) {
+		t.Fatalf("Import = %v", err)
+	}
+}
+
+// M6-05: Import asks the Agent and collects each stack's answer until it is done: its error, or why there is none. An
+// Import that stopped reading never holds up the connection; an Agent too old to import is told at once (Q322).
+func TestImport(t *testing.T) {
+	h, st, url := newHub(t)
+	ctx := t.Context()
+	req := importer.Request{HostName: "web"}
+	if _, err := h.Import(ctx, "web", req); !errors.Is(err, ErrOffline) {
+		t.Fatalf("offline: %v", err)
+	}
+	key := approvedAgent(t, h, st, url, "web")
+	c, _ := agent(t, url, key, "", nil)
+	got := reading(c)
+	stack := func(name string) *agentv1.ImportResult {
+		return &agentv1.ImportResult{Result: []byte(`{"Name":"` + name + `"}`), Files: map[string][]byte{"compose.yaml": []byte("x")}}
+	}
+	ask := func(answers ...*agentv1.ImportResult) ([]importer.Result, error) {
+		var out []importer.Result
+		done := make(chan error, 1)
+		go func() {
+			var err error
+			out, err = h.Import(ctx, "web", req)
+			done <- err
+		}()
+		e := next(t, got)
+		if string(e.GetImportRequest().GetRequest()) == "" || !strings.Contains(string(e.GetImportRequest().GetRequest()), `"HostName":"web"`) {
+			t.Fatalf("want the ImportRequest, got %v", e)
+		}
+		for _, a := range answers {
+			c.Send(ctx, &agentv1.Envelope{ReplyTo: e.Id, Body: &agentv1.Envelope_ImportResult{ImportResult: a}})
+		}
+		err := <-done
+		return out, err
+	}
+	if out, err := ask(stack("a"), stack("b"), &agentv1.ImportResult{Done: true}); err != nil || len(out) != 2 || out[1].Name != "b" ||
+		string(out[0].Files["compose.yaml"]) != "x" {
+		t.Fatalf("answers %+v %v", out, err)
+	}
+	if _, err := ask(&agentv1.ImportResult{Done: true, Error: "list containers: no engine"}); err == nil || err.Error() != "list containers: no engine" {
+		t.Fatalf("the Agent's error: %v", err)
+	}
+	// a broken answer ends the Import; the Agent's later answers to it are dropped, the connection still served
+	if _, err := ask(&agentv1.ImportResult{Result: []byte("{not json")}, stack("b"), stack("c"), &agentv1.ImportResult{Done: true}); err == nil ||
+		!strings.Contains(err.Error(), "the Agent's import") {
+		t.Fatalf("a broken answer: %v", err)
+	}
+	c.Send(ctx, &agentv1.Envelope{ReplyTo: 999, Body: &agentv1.Envelope_ImportResult{ImportResult: stack("x")}}) // asked by no one
+	if out, err := ask(stack("d"), &agentv1.ImportResult{Done: true}); err != nil || len(out) != 1 {
+		t.Fatalf("after: %v %v", out, err)
+	}
+
+	ictx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+	defer cancel()
+	if _, err := h.Import(ictx, "web", req); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("no answer: %v", err)
+	}
+	next(t, got)
+	done := make(chan error, 1)
+	go func() { _, err := h.Import(ctx, "web", req); done <- err }()
+	next(t, got)
+	c.Close()
+	if err := <-done; !errors.Is(err, ErrDisconnected) {
+		t.Fatalf("dropped: %v", err)
+	}
+	for deadline := time.Now().Add(10 * time.Second); h.session("web") != nil; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the session didn't end")
+		}
+	}
+
+	h.version = "v0.2.0"
+	c, _ = agentV(t, url, key, "", nil, &agentv1.Hello{AgentVersion: "v0.1.3", ProtocolVersion: 1})
+	defer c.Close()
+	reading(c)
+	if _, err := h.Import(ctx, "web", req); err == nil || err.Error() != "host web: its Agent is v0.1.3, which can't import: upgrade it to v0.2 or later" {
+		t.Fatalf("too old: %v", err)
 	}
 }
 
