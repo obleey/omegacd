@@ -102,6 +102,7 @@ func New(cfg Config) http.Handler {
 	mux.HandleFunc("POST /api/settings/hosts/{name}/unlock", s.unlockHost)
 	mux.HandleFunc("PUT /api/settings/hosts/{name}/allow-ips", s.setHostAllowIPs)
 	mux.HandleFunc("GET /api/settings/hosts/{name}/keys", s.hostKeys)
+	mux.HandleFunc("POST /api/settings/hosts/{name}/import", s.importHost)
 	mux.HandleFunc("GET /api/settings/tokens", s.listTokens)
 	mux.HandleFunc("POST /api/settings/tokens", s.createToken)
 	mux.HandleFunc("DELETE /api/settings/tokens/{id}", s.deleteToken)

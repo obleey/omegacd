@@ -11,10 +11,12 @@ import (
 	"maps"
 	"math"
 	"path"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 )
@@ -27,8 +29,8 @@ const (
 	helperImage  = "busybox:1.38" // reads files on the host from a short-lived container, like the engine writes them
 )
 
-// DockerHost is the Docker engine of the machine import runs on (DOCKER_HOST, the socket). There is no SSH path (Q47):
-// M6-05 reads another Host's stacks through its Agent.
+// DockerHost is the engine of the Agent's Host (DOCKER_HOST, as the Agent set it: rootless, Podman); the CLI reaches it
+// only through the Agent (Q47, Q321).
 type DockerHost struct{ c client.APIClient }
 
 // Dial connects to the engine the way the docker CLI does.
@@ -67,21 +69,66 @@ func (h *DockerHost) Stacks(ctx context.Context) ([]Stack, error) {
 	return out, nil
 }
 
-// Info stats paths under dir with du and stat in a helper container that mounts dir read-only.
+// Storage is every volume's mountpoint, by its name.
+func (h *DockerHost) Storage(ctx context.Context) (map[string]string, error) {
+	res, err := h.c.VolumeList(ctx, client.VolumeListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list volumes: %w", err)
+	}
+	out := map[string]string{}
+	for _, v := range res.Items {
+		if v.Mountpoint != "" {
+			out[v.Mountpoint] = v.Name
+		}
+	}
+	return out, nil
+}
+
+// within is the folder the helper mounts to reach every path (relative to dir, some beside it with ../), and the
+// paths relative to that folder.
+func within(dir string, paths []string) (string, []string) {
+	base := dir
+	for _, p := range paths {
+		for abs := path.Join(dir, p); base != "/" && abs != base && !strings.HasPrefix(abs, base+"/"); {
+			base = path.Dir(base)
+		}
+	}
+	out := make([]string, len(paths))
+	for i, p := range paths {
+		out[i] = rel(base, path.Join(dir, p))
+	}
+	return base, out
+}
+
+// back is a path relative to base as the importer names it: relative to dir, with ../ when beside it.
+func back(base, dir, p string) string { return rel(dir, path.Join(base, p)) }
+
+func rel(from, to string) string {
+	r, _ := filepath.Rel(from, to) // both absolute: it never fails
+	return filepath.ToSlash(r)
+}
+
+// Info stats paths under dir with du and stat in a helper container that mounts dir (or the folder above it that
+// holds them all) read-only.
 func (h *DockerHost) Info(ctx context.Context, dir string, paths []string) (map[string]Info, error) {
 	if len(paths) == 0 {
 		return map[string]Info{}, nil
 	}
+	base, inBase := within(dir, paths)
 	const script = `cd /src && for p in "$@"; do
   if [ -d "$p" ]; then echo "d $(du -sk "$p" | cut -f1) $p"
   elif [ -f "$p" ]; then echo "f $(stat -c %s "$p") $p"
   else echo "- 0 $p"; fi
-done > /tmp/out`
-	b, err := h.helper(ctx, dir, script, paths)
+done`
+	b, err := h.helper(ctx, base, script, inBase)
 	if err != nil {
 		return nil, err
 	}
-	return parseInfo(b), nil
+	out := map[string]Info{}
+	for p, in := range parseInfo(b) {
+		out[back(base, dir, p)] = in
+	}
+	return out, nil
 }
 
 // parseInfo reads the helper's "KIND SIZE PATH" lines. A size du or stat couldn't tell (no permission) is unknown:
@@ -114,8 +161,9 @@ func (h *DockerHost) Read(ctx context.Context, dir string, paths []string) (map[
 	}
 	// shortcut: names with newlines are not supported (one name per line in the list)
 	const script = `cd /src && for p in "$@"; do [ -e "$p" ] && printf '%s\n' "./$p"; done > /tmp/list
-[ -s /tmp/list ] && tar -cf /tmp/out -T /tmp/list || : > /tmp/out`
-	b, err := h.helper(ctx, dir, script, paths)
+if [ -s /tmp/list ]; then tar -cf - -T /tmp/list; fi`
+	base, inBase := within(dir, paths)
+	b, err := h.helper(ctx, base, script, inBase)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -129,7 +177,7 @@ func (h *DockerHost) Read(ctx context.Context, dir string, paths []string) (map[
 		if err != nil { // coverage: unreachable, the helper's tar, copied out whole by the engine
 			return nil, nil, fmt.Errorf("read files from %s: %w", dir, err)
 		}
-		name := path.Clean(strings.TrimPrefix(hdr.Name, "./"))
+		name := back(base, dir, path.Clean(strings.TrimPrefix(hdr.Name, "./")))
 		if hdr.Typeflag == tar.TypeDir {
 			continue // its files follow
 		}
@@ -145,7 +193,10 @@ func (h *DockerHost) Read(ctx context.Context, dir string, paths []string) (map[
 	}
 }
 
-// helper runs script (with paths as $@) in a container mounting dir read-only at /src, and returns /tmp/out.
+// helper runs script (with paths as $@) in a container mounting dir read-only at /src, and returns what it writes to
+// stdout, read through an attach: copying a file out of the stopped container instead needs the engine to mount its
+// binds again, which rootless Docker 26 can't for a folder on a nosuid tmpfs (Debian's /tmp), and races Podman's
+// cleanup of the container.
 func (h *DockerHost) helper(ctx context.Context, dir, script string, paths []string) ([]byte, error) {
 	if _, err := h.c.ImageInspect(ctx, helperImage); err != nil {
 		res, err := h.c.ImagePull(ctx, helperImage, client.ImagePullOptions{})
@@ -158,33 +209,33 @@ func (h *DockerHost) helper(ctx context.Context, dir, script string, paths []str
 	}
 	created, err := h.c.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Config: &container.Config{Image: helperImage, Cmd: append([]string{"sh", "-c", script, "sh"}, paths...),
-			Labels: map[string]string{"dev.omegacd.helper": "import"}},
+			AttachStdout: true, AttachStderr: true, Labels: map[string]string{"dev.omegacd.helper": "import"}},
 		HostConfig: &container.HostConfig{Binds: []string{dir + ":/src:ro"}, NetworkMode: "none"},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("create helper container: %w", err)
+		return nil, fmt.Errorf("create helper container for %s: %w", dir, err)
 	}
 	defer h.c.ContainerRemove(context.WithoutCancel(ctx), created.ID, client.ContainerRemoveOptions{Force: true})
+	att, err := h.c.ContainerAttach(ctx, created.ID, client.ContainerAttachOptions{Stream: true, Stdout: true, Stderr: true})
+	if err != nil {
+		return nil, fmt.Errorf("attach to helper container for %s: %w", dir, err)
+	}
+	defer att.Close()
 	if _, err := h.c.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
-		return nil, fmt.Errorf("start helper container: %w", err)
+		return nil, fmt.Errorf("start helper container for %s: %w", dir, err)
+	}
+	var out, stderr bytes.Buffer
+	if _, err := stdcopy.StdCopy(&out, &stderr, att.Reader); err != nil {
+		return nil, fmt.Errorf("read helper container for %s: %w", dir, err)
 	}
 	wait := h.c.ContainerWait(ctx, created.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
 	select {
 	case err := <-wait.Error:
-		return nil, fmt.Errorf("helper container: %w", err)
+		return nil, fmt.Errorf("helper container for %s: %w", dir, err)
 	case res := <-wait.Result:
 		if res.StatusCode != 0 {
-			return nil, fmt.Errorf("helper container exited %d", res.StatusCode)
+			return nil, fmt.Errorf("helper container for %s exited %d: %s", dir, res.StatusCode, strings.TrimSpace(stderr.String()))
 		}
 	}
-	cp, err := h.c.CopyFromContainer(ctx, created.ID, client.CopyFromContainerOptions{SourcePath: "/tmp/out"})
-	if err != nil {
-		return nil, fmt.Errorf("copy from helper container: %w", err)
-	}
-	defer cp.Content.Close()
-	tr := tar.NewReader(cp.Content)      // the API wraps the copied file in a tar of its own
-	if _, err := tr.Next(); err != nil { // coverage: unreachable, the engine's copy is a tar holding the one file
-		return nil, fmt.Errorf("copy from helper container: %w", err)
-	}
-	return io.ReadAll(tr)
+	return out.Bytes(), nil
 }

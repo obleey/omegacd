@@ -224,6 +224,8 @@ func (ag *Agent) serve(ctx context.Context, conn *wire.Conn, c *Connection) erro
 			go ag.removeApp(ctx, conn, e.Id, e.GetRemoveApp())
 		case e.GetDiffRequest() != nil:
 			go ag.answerDiff(ctx, conn, b, e.Id, e.GetDiffRequest())
+		case e.GetImportRequest() != nil:
+			go ag.answerImport(ctx, conn, e.Id, e.GetImportRequest())
 		case e.GetLogsRequest() != nil:
 			lctx, stop := context.WithCancel(ctx)
 			logsMu.Lock()

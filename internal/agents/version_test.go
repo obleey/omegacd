@@ -43,3 +43,22 @@ func TestCompatible(t *testing.T) {
 		t.Errorf("doesn't say what to upgrade to: %v", err)
 	}
 }
+
+// Q322: from v0.2 on an Agent imports; one older than its Control Plane and than v0.2 is told to upgrade.
+func TestCanImport(t *testing.T) {
+	for _, tc := range []struct {
+		cp, agent string
+		ok        bool
+	}{
+		{"v0.2.0", "v0.1.3", false},
+		{"v0.2.0", "v0.2.0", true},
+		{"v0.3.0", "v0.2.4", true},
+		{"v0.1.0-45-gabc", "v0.1.0-45-gabc", true}, // a build of the tree before v0.2 imports with its own Agent
+		{"v0.2.0", "(devel)", true},
+		{"(devel)", "v0.1.0", true},
+	} {
+		if err := canImport(tc.cp, tc.agent); (err == nil) != tc.ok {
+			t.Errorf("canImport(%s, %s) = %v", tc.cp, tc.agent, err)
+		}
+	}
+}

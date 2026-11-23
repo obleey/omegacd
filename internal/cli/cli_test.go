@@ -40,9 +40,11 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	key := r.Method + " " + r.URL.Path
 	f.mu.Lock()
 	f.calls = append(f.calls, r.Method+" "+r.URL.RequestURI())
-	if b, _ := io.ReadAll(r.Body); len(b) > 0 {
+	b, _ := io.ReadAll(r.Body)
+	if len(b) > 0 {
 		f.bodies = append(f.bodies, string(b))
 	}
+	r.Body = io.NopCloser(bytes.NewReader(b)) // for a route that answers by itself
 	v, ok := f.routes[key]
 	f.mu.Unlock()
 	if fn, isFn := v.(func() any); isFn {
@@ -494,6 +496,7 @@ func (importHost) Info(_ context.Context, _ string, paths []string) (map[string]
 	}
 	return out, nil
 }
+func (importHost) Storage(context.Context) (map[string]string, error) { return nil, nil }
 func (importHost) Read(_ context.Context, _ string, paths []string) (map[string][]byte, []string, error) {
 	all := map[string][]byte{
 		"compose.yaml": []byte("services:\n  web:\n    image: nginx\n    env_file: app.env\n"),
@@ -506,6 +509,22 @@ func (importHost) Read(_ context.Context, _ string, paths []string) (map[string]
 		}
 	}
 	return out, nil, nil
+}
+
+// fakeAgent answers the import endpoint as the Control Plane does with an Agent on h: the importer's Agent half on h,
+// every stack's result in the API's answer.
+func fakeAgent(h importer.Host) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req importer.Request
+		json.NewDecoder(r.Body).Decode(&req)
+		results := []importer.Result{}
+		if err := importer.Plan(r.Context(), h, req, func(x importer.Result) error { results = append(results, x); return nil }); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		json.NewEncoder(w).Encode(results)
+	}
 }
 
 func gitRepo(t *testing.T) string {
@@ -525,10 +544,10 @@ func TestImport(t *testing.T) {
 	_, srv := newAPI(t, map[string]any{"GET /api/settings/hosts": []domain.HostView{
 		{Host: domain.Host{Name: "edge", AgeRecipient: "age1edge"}},
 		{Host: domain.Host{Name: "vps", AgeRecipient: id.Recipient().String()}},
-	}, "GET /api/settings/encryption-keys": []domain.EncryptionKey{{Name: "ana", Recipient: person.Recipient().String(), AllHosts: true}}})
+	}, "GET /api/settings/encryption-keys": []domain.EncryptionKey{{Name: "ana", Recipient: person.Recipient().String(), AllHosts: true}},
+		"POST /api/settings/hosts/vps/import": fakeAgent(importHost{})})
 	repo := gitRepo(t)
-	withHost := func(c *CLI) { c.ImportHost = func() (importer.Host, error) { return importHost{}, nil } }
-	r := runWith(t, srv, nil, withHost, "import", "--host", "vps")
+	r := run(t, srv, nil, "", "import", "--host", "vps")
 	if r.code != 0 {
 		t.Fatalf("%+v", r)
 	}
@@ -558,10 +577,12 @@ func TestImport(t *testing.T) {
 
 func TestImportRecipientFlagAndErrors(t *testing.T) {
 	id, _ := age.GenerateX25519Identity()
-	withHost := func(c *CLI) { c.ImportHost = func() (importer.Host, error) { return importHost{}, nil } }
 	repo := gitRepo(t)
-	// --recipient: no server needed
-	if r := runWith(t, nil, nil, withHost, "import", "--host", "edge", "--recipient", id.Recipient().String(), "--dry-run"); r.code != 0 || !strings.Contains(r.stdout, "blog would go to apps/blog") {
+	hosts := []domain.HostView{{Host: domain.Host{Name: "new"}}, {Host: domain.Host{Name: "solo", AgeRecipient: id.Recipient().String()}}}
+	_, srv := newAPI(t, map[string]any{"GET /api/settings/hosts": hosts, "GET /api/settings/encryption-keys": []domain.EncryptionKey{},
+		"POST /api/settings/hosts/edge/import": fakeAgent(importHost{}), "POST /api/settings/hosts/solo/import": fakeAgent(importHost{})})
+	// --recipient: the keys aren't looked up
+	if r := run(t, srv, nil, "", "import", "--host", "edge", "--recipient", id.Recipient().String(), "--dry-run"); r.code != 0 || !strings.Contains(r.stdout, "blog would go to apps/blog") {
 		t.Fatalf("%+v", r)
 	}
 	if _, err := os.Stat(filepath.Join(repo, "apps")); err == nil {
@@ -574,28 +595,25 @@ func TestImportRecipientFlagAndErrors(t *testing.T) {
 	}{
 		{[]string{"import", "--host", "vps", "--ssh", "root@vps"}, false, "-ssh"},   // no SSH path (Q47)
 		{[]string{"import"}, false, "import needs --host NAME"},                     // no default Host (Q104)
-		{[]string{"import", "--host", "edge"}, false, "pass --recipient age1"},      // secrets, not logged in
+		{[]string{"import", "--host", "edge"}, false, "run omegacd login"},          // the Agent is reached through OmegaCD (Q321)
 		{[]string{"import", "--host", "nope"}, true, "Host nope is not in OmegaCD"}, // unknown Host on the server
 		{[]string{"import", "--host", "new"}, true, "Host new has no Host Key yet"}, // invited, its Agent not enrolled
-		{[]string{"import", "--host", "solo"}, true, "or pass --host-only"},         // nobody could open them again (Q201)
+		{[]string{"import", "--host", "solo"}, true, "or pass --host-only"},         // a stack with secrets nobody could open again (Q201, Q320)
 	} {
-		var srv *httptest.Server
+		var s *httptest.Server
 		if c.srv {
-			_, srv = newAPI(t, map[string]any{"GET /api/settings/hosts": []domain.HostView{{Host: domain.Host{Name: "new"}},
-				{Host: domain.Host{Name: "solo", AgeRecipient: id.Recipient().String()}}}, "GET /api/settings/encryption-keys": []domain.EncryptionKey{}})
+			s = srv
 		}
-		r := runWith(t, srv, nil, withHost, c.args...)
+		r := run(t, s, nil, "", c.args...)
 		if r.code == 0 || !strings.Contains(r.stdout+r.stderr, c.want) {
 			t.Errorf("%v: %+v, want %q", c.args, r, c.want)
 		}
 	}
-	_, srv := newAPI(t, map[string]any{"GET /api/settings/hosts": []domain.HostView{{Host: domain.Host{Name: "solo", AgeRecipient: id.Recipient().String()}}},
-		"GET /api/settings/encryption-keys": []domain.EncryptionKey{}})
-	if r := runWith(t, srv, nil, withHost, "import", "--host", "solo", "--host-only", "--dry-run"); r.code != 0 {
+	if r := run(t, srv, nil, "", "import", "--host", "solo", "--host-only", "--dry-run"); r.code != 0 {
 		t.Errorf("--host-only: %+v", r)
 	}
 	t.Chdir(t.TempDir()) // not a Git checkout
-	if r := runWith(t, nil, nil, withHost, "import", "--host", "edge", "--recipient", id.Recipient().String()); r.code == 0 || !strings.Contains(r.stderr, "inside your Git repository") {
+	if r := run(t, srv, nil, "", "import", "--host", "edge", "--recipient", id.Recipient().String()); r.code == 0 || !strings.Contains(r.stderr, "inside your Git repository") {
 		t.Errorf("outside a repository: %+v", r)
 	}
 }
@@ -714,8 +732,8 @@ func TestImportDetachedHead(t *testing.T) {
 			t.Fatalf("git %v: %v %s", args, err, out)
 		}
 	}
-	withHost := func(c *CLI) { c.ImportHost = func() (importer.Host, error) { return importHost{}, nil } }
-	r := runWith(t, nil, nil, withHost, "import", "--host", "edge", "--recipient", id.Recipient().String(), "--dry-run")
+	_, srv := newAPI(t, map[string]any{"POST /api/settings/hosts/edge/import": fakeAgent(importHost{})})
+	r := run(t, srv, nil, "", "import", "--host", "edge", "--recipient", id.Recipient().String(), "--dry-run")
 	if r.code != 0 || !strings.Contains(r.stderr, "no current branch (a detached HEAD?): the Applications follow main") {
 		t.Fatalf("%+v", r)
 	}

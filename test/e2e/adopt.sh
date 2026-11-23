@@ -38,9 +38,6 @@ ids() { docker ps -q --no-trunc --filter label=com.docker.compose.project=$1 | s
 serves() { for _ in $(seq 15); do [ "$(docker exec $(docker ps -q --filter label=com.docker.compose.project=adopt-b) wget -qO- http://127.0.0.1/ 2>&1)" = adopted ] && return 0; sleep 1; done; return 1; }
 before_a=$(ids adopt-a); before_b=$(ids adopt-b)
 check "adopt-b serves before the takeover" serves
-# import reads the stacks running on this machine (M4-05: this machine only, until M6-05 reads them through the Agent)
-out=$(cd "$T/repo" && "$BIN" import --host local --repo-url https://git.example.com/stacks.git --recipient "$(age-keygen 2>/dev/null | grep -o "age1[a-z0-9]*")" --dry-run adopt-a adopt-b 2>&1)
-check "import --dry-run finds both hand-started stacks on this machine" 'echo "$out" | grep -q adopt-a && echo "$out" | grep -q adopt-b'
 
 age-keygen -o "$T/age.key" 2>/dev/null
 mkdir -p "$T/data"
@@ -55,6 +52,9 @@ trap cleanup EXIT
 for _ in $(seq 50); do curl -sf $API/version >/dev/null && break; sleep 0.2; done
 admin_login "$API" "$T/data"
 . "$(dirname "$0")/enroll.sh"; enroll box # the Control Plane's machine, a Host like any other (Q104)
+# import reads the stacks running there through its Agent (M6-05; import.sh does the rest)
+out=$(cd "$T/repo" && "$BIN" import --host box --repo-url https://git.example.com/stacks.git --recipient "$(age-keygen 2>/dev/null | grep -o "age1[a-z0-9]*")" --dry-run adopt-a adopt-b 2>&1)
+check "import --dry-run finds both hand-started stacks on the Host" 'echo "$out" | grep -q adopt-a && echo "$out" | grep -q adopt-b'
 
 H=(-H "Authorization: Bearer $OMEGACD_TOKEN" -H 'X-Requested-With: omegacd' -H 'Content-Type: application/json')
 for s in adopt-a adopt-b; do
