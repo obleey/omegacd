@@ -3,6 +3,7 @@
 # also owns the Repository credentials (M1-06).
 set -u  # no pipefail: grep -q closing the pipe early must not fail a check
 BIN=${OMEGACD_BIN:-$(cd "$(dirname "$0")/../.." && pwd)/bin/omegacd}
+. "$(dirname "$0")/admin.sh"
 T=$(mktemp -d "${TMPDIR:-/tmp}/omegacd-e2es.XXXX")
 REPO=$T/repo
 API=http://127.0.0.1:18080/api
@@ -32,14 +33,11 @@ start_source() {
 }
 start_control_plane() {
   OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_AGE_KEY_FILE=$T/age.key \
-    OMEGACD_ADMIN_PASSWORD=e2e-password-123 OMEGACD_POLL_INTERVAL=1h \
+    OMEGACD_POLL_INTERVAL=1h \
     OMEGACD_SOURCE_SERVER=https://127.0.0.1:19090 OMEGACD_SOURCE_TLS_DIR=$T/tls "$BIN" >> "$T/server.log" 2>&1 &
   SRV=$!
   for _ in $(seq 50); do curl -sf $API/version >/dev/null && break; sleep 0.2; done
-  curl -sf -c "$T/j" -H 'Content-Type: application/json' -d '{"username":"admin","password":"e2e-password-123"}' $API/auth/login >/dev/null
-  export OMEGACD_SERVER=http://127.0.0.1:18080
-  export OMEGACD_TOKEN=$(curl -sf -b "$T/j" -H 'Content-Type: application/json' -H 'X-Requested-With: omegacd' \
-    -d '{"name":"e2e"}' $API/settings/tokens | python3 -c 'import json,sys; print(json.load(sys.stdin)["plaintext"])')
+  admin_login "$API" "$T/data"
   H=(-H "Authorization: Bearer $OMEGACD_TOKEN" -H 'X-Requested-With: omegacd' -H 'Content-Type: application/json')
 }
 stop() { kill "$@" 2>/dev/null; wait "$@" 2>/dev/null; }
@@ -131,7 +129,7 @@ check "losing the Control Plane's data loses no credential" 'listed'
 check "a client without the certificate is refused" '! curl -s --http2 --cacert "$T/tls/ca.pem" -o /dev/null https://127.0.0.1:19090/'
 check "a client with the certificate gets in" 'curl -s --http2 --cacert "$T/tls/ca.pem" --cert "$T/tls/client.pem" --key "$T/tls/client.key" -o /dev/null -w "%{http_code}" https://127.0.0.1:19090/ | grep -q "^[0-9]"'
 
-check "the logs are at debug and hold no secret (Q62)" 'grep -q level=DEBUG "$T/source.log" && ! grep -qF -e "$GITPW" -e "$GITPW2" -e "${FTOK:-$GITPW}" -e e2e-password-123 "$T/server.log" "$T/source.log" "$AGENT_LOG"'
+check "the logs are at debug and hold no secret (Q62)" 'grep -q level=DEBUG "$T/source.log" && ! grep -qF -e "$GITPW" -e "$GITPW2" -e "${FTOK:-$GITPW}" -e "$ADMIN_FIRST_PW" -e "$ADMIN_PW" "$T/server.log" "$T/source.log" "$AGENT_LOG"'
 
 check "deployed by the Agent of the Control Plane's machine, as its log says (Q104)" 'grep -q "msg=deploy" "$AGENT_LOG"'
 

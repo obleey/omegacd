@@ -25,23 +25,22 @@ refuses() {
 }
 
 age-keygen -o "$T/age.key" 2>/dev/null
-PW=$(python3 -c "import secrets; print(secrets.token_urlsafe(12))") # made each run: no test holds a password
 touch "$T/file"
 # a port something else holds
 python3 -c 'import socket,time; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("127.0.0.1",18089)); s.listen(); time.sleep(600)' & HOLD=$!
 sleep 0.5
 data() { mktemp -d "$T/data.XXXX"; }
-server() { echo OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA="$(data)" OMEGACD_AGE_KEY_FILE="$T/age.key" OMEGACD_ADMIN_PASSWORD="$PW"; }
+server() { echo OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA="$(data)" OMEGACD_AGE_KEY_FILE="$T/age.key"; }
 
 # shellcheck disable=SC2046 # word splitting of server's assignments is the point
 refuses "the server: a poll interval that isn't one" "OMEGACD_POLL_INTERVAL must be a duration" $(server) OMEGACD_POLL_INTERVAL=often --
 refuses "the server: a Source Server address that isn't https://host:port" "want https://host:port" $(server) OMEGACD_SOURCE_SERVER=ftp://source --
 d=$(data); echo "not age" > "$d/credentials.age"
-refuses "the server: Git credentials it can't open" "its key?" OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA="$d" OMEGACD_AGE_KEY_FILE="$T/age.key" OMEGACD_ADMIN_PASSWORD="$PW" --
-refuses "the server: a first admin password over 72 bytes (Q148)" "OMEGACD_ADMIN_PASSWORD is 73 bytes: at most 72" \
-  OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA="$(data)" OMEGACD_AGE_KEY_FILE="$T/age.key" OMEGACD_ADMIN_PASSWORD="$(printf 'x%.0s' $(seq 73))" --
+refuses "the server: Git credentials it can't open" "its key?" OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA="$d" OMEGACD_AGE_KEY_FILE="$T/age.key" --
+d=$(data); mkdir "$d/initial-admin-password"
+refuses "the server: the first admin password it can't write (Q300)" "write the initial admin password" OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA="$d" OMEGACD_AGE_KEY_FILE="$T/age.key" --
 refuses "the server: trusted proxies that aren't addresses" "invalid" $(server) OMEGACD_TRUSTED_PROXIES=everyone --
-refuses "the server: its port taken" "address already in use" OMEGACD_ADDR=127.0.0.1:18089 OMEGACD_DATA="$(data)" OMEGACD_AGE_KEY_FILE="$T/age.key" OMEGACD_ADMIN_PASSWORD="$PW" --
+refuses "the server: its port taken" "address already in use" OMEGACD_ADDR=127.0.0.1:18089 OMEGACD_DATA="$(data)" OMEGACD_AGE_KEY_FILE="$T/age.key" --
 
 refuses "the Source Server: no certificates" "omegacd source-certs makes them" OMEGACD_SOURCE_TLS_DIR="$T/none" OMEGACD_DATA="$(data)" -- source-server
 "$BIN" source-certs --out "$T/tls" >/dev/null 2>&1

@@ -3,6 +3,7 @@
 # a stack mounting a file from its folder is recreated once and keeps serving; named volumes stay.
 set -u
 BIN=${OMEGACD_BIN:-$(cd "$(dirname "$0")/../.." && pwd)/bin/omegacd}
+. "$(dirname "$0")/admin.sh"
 T=$(mktemp -d "${TMPDIR:-/tmp}/omegacd-e2ea.XXXX")
 API=http://127.0.0.1:18080/api
 fail=0
@@ -44,7 +45,7 @@ check "import --dry-run finds both hand-started stacks on this machine" 'echo "$
 age-keygen -o "$T/age.key" 2>/dev/null
 mkdir -p "$T/data"
 OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_AGE_KEY_FILE=$T/age.key \
-  OMEGACD_ADMIN_PASSWORD=e2e-password-123 OMEGACD_POLL_INTERVAL=1h "$BIN" > "$T/server.log" 2>&1 &
+  OMEGACD_POLL_INTERVAL=1h "$BIN" > "$T/server.log" 2>&1 &
 SRV=$!
 cleanup() {
   for s in adopt-a adopt-b; do "$BIN" app delete $s --volumes --yes >/dev/null 2>&1; docker compose -p $s down -v >/dev/null 2>&1; done
@@ -52,10 +53,7 @@ cleanup() {
 }
 trap cleanup EXIT
 for _ in $(seq 50); do curl -sf $API/version >/dev/null && break; sleep 0.2; done
-curl -sf -c "$T/j" -H 'Content-Type: application/json' -d '{"username":"admin","password":"e2e-password-123"}' $API/auth/login >/dev/null
-export OMEGACD_SERVER=http://127.0.0.1:18080
-export OMEGACD_TOKEN=$(curl -sf -b "$T/j" -H 'Content-Type: application/json' -H 'X-Requested-With: omegacd' \
-  -d '{"name":"e2e"}' $API/settings/tokens | python3 -c 'import json,sys; print(json.load(sys.stdin)["plaintext"])')
+admin_login "$API" "$T/data"
 . "$(dirname "$0")/enroll.sh"; enroll box # the Control Plane's machine, a Host like any other (Q104)
 
 H=(-H "Authorization: Bearer $OMEGACD_TOKEN" -H 'X-Requested-With: omegacd' -H 'Content-Type: application/json')

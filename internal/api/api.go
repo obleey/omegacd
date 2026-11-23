@@ -40,7 +40,9 @@ type Config struct {
 	Agents         *agents.Hub // the Agents' connections; nil: none are accepted
 	// Backup writes the backup tar (Q114): the database and the encrypted Git credentials, never a key; nil: none
 	Backup func(ctx context.Context, w io.Writer) error
-	Log    *slog.Logger // nil: nothing logged
+	// InitialPasswordFile holds the admin's first password, deleted when it is changed (Q300); empty: none
+	InitialPasswordFile string
+	Log                 *slog.Logger // nil: nothing logged
 }
 
 type server struct {

@@ -2,6 +2,7 @@
 # End-to-end: *.sops.* copies leave the work dir, decrypted files stay masked, a changed secret reaches the container.
 set -u  # no pipefail: grep -q closing the pipe early must not fail a check
 BIN=${OMEGACD_BIN:-$(cd "$(dirname "$0")/../.." && pwd)/bin/omegacd}
+. "$(dirname "$0")/admin.sh"
 T=$(mktemp -d "${TMPDIR:-/tmp}/omegacd-e2es.XXXX")
 REPO=$T/repo; API=http://127.0.0.1:18080/api; W=
 mkdir -p "$REPO/apps/box" "$T/data"
@@ -12,15 +13,12 @@ gitc() { git -C "$REPO" -c user.name=e2e -c user.email=e2e@local "$@"; }
 age-keygen -o "$T/age.key" 2>/dev/null
 
 OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_AGE_KEY_FILE=$T/age.key \
-  OMEGACD_ADMIN_PASSWORD=e2e-password-123 OMEGACD_POLL_INTERVAL=1h "$BIN" > "$T/server.log" 2>&1 &
+  OMEGACD_POLL_INTERVAL=1h "$BIN" > "$T/server.log" 2>&1 &
 SRV=$!
 cleanup() { "$BIN" app delete e2e-sec --volumes --yes >/dev/null 2>&1; kill $SRV ${AGENT:-} 2>/dev/null; wait $SRV ${AGENT:-} 2>/dev/null; rm -rf "$T"; }
 trap cleanup EXIT
 for _ in $(seq 50); do curl -sf $API/version >/dev/null && break; sleep 0.2; done
-curl -sf -c "$T/j" -H 'Content-Type: application/json' -d '{"username":"admin","password":"e2e-password-123"}' $API/auth/login >/dev/null
-export OMEGACD_SERVER=http://127.0.0.1:18080
-export OMEGACD_TOKEN=$(curl -sf -b "$T/j" -H 'Content-Type: application/json' -H 'X-Requested-With: omegacd' \
-  -d '{"name":"e2e"}' $API/settings/tokens | python3 -c 'import json,sys; print(json.load(sys.stdin)["plaintext"])')
+admin_login "$API" "$T/data"
 . "$(dirname "$0")/enroll.sh"; enroll box # the Control Plane's machine, a Host like any other (Q104)
 W=$AGENT_WORK/e2e-sec
 api() { curl -sf -H "Authorization: Bearer $OMEGACD_TOKEN" "$API/apps/e2e-sec/$1"; }
@@ -100,7 +98,7 @@ check "delete removes its folder, decrypted files and all" '[ ! -e "$W" ]'
 op=$(grep -o 'msg="sync started" .* op=[0-9]*' "$T/server.log" | head -1 | grep -o '[0-9]*$')
 check "a Sync is followed by its op from the controller through the Agent into the engine (Q62)" \
   '[ -n "$op" ] && grep "msg=\"compose up\"" "$AGENT_LOG" | grep "app=e2e-sec" | grep -q "op=$op "'
-check "the logs are at debug and hold no secret (Q62)" 'grep -q level=DEBUG "$T/server.log" && ! grep -qF -e first-db-pw -e first-token -e second-token -e e2e-password-123 -e "$OMEGACD_TOKEN" -e "$(grep AGE-SECRET-KEY "$T/age.key")" -e AGE-SECRET-KEY "$T/server.log" "$AGENT_LOG"'
+check "the logs are at debug and hold no secret (Q62)" 'grep -q level=DEBUG "$T/server.log" && ! grep -qF -e first-db-pw -e first-token -e second-token -e "$ADMIN_FIRST_PW" -e "$ADMIN_PW" -e "$OMEGACD_TOKEN" -e "$(grep AGE-SECRET-KEY "$T/age.key")" -e AGE-SECRET-KEY "$T/server.log" "$AGENT_LOG"'
 
 check "deployed by the Agent of the Control Plane's machine, as its log says (Q104)" 'grep -q "msg=deploy" "$AGENT_LOG"'
 

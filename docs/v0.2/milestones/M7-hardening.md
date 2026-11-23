@@ -10,6 +10,11 @@ Unit tests; integration tests running a real Agent against Docker-in-Docker **ro
 Podman**; CI runs all of them. M2-06 builds this matrix for the Agent alone; here it grows to the Control Plane
 driving the Agent.
 
+Found on 2026-11-23 (M6-11): `test/e2e/migrations.sh` fails every time on macOS (also on `main`, and with Compose
+v5.7.2), never on Linux: after a new Revision the migrate container runs the old `schema.sql` (the schema check, the
+failing migration and the app left as it was all fail), the OrbStack quirk of a file rewritten at the same path within
+a second mounted stale. Make it hold on macOS too, so the local suite is green before the Linux run.
+
 **Done when:** CI is green on all three engines.
 
 ### M7-02 · End-to-end suite on Control Plane + Agent

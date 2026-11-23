@@ -40,10 +40,12 @@ import (
 )
 
 func main() {
-	// no args or "server" runs the server, "source-server" the standalone Source Server, "agent" the Agent;
-	// anything else is a CLI command
+	// no args or "server" runs the server, "source-server" the standalone Source Server, "agent" the Agent,
+	// "reset-admin-password" resets the server's admin password from its machine; anything else is a CLI command
 	run := run
 	switch {
+	case len(os.Args) > 1 && os.Args[1] == "reset-admin-password":
+		run = func(*slog.Logger) error { return resetAdminPassword(context.Background(), os.Stdout) }
 	case len(os.Args) > 1 && os.Args[1] == "source-server":
 		run = runSourceServer
 	case len(os.Args) > 1 && os.Args[1] == "agent":
@@ -139,7 +141,8 @@ func run(log *slog.Logger) error {
 	hub.Reported, hub.Resynced, hub.Removed, hub.Progress, hub.Status, hub.HostChanged = ctl.AgentReported, ctl.Resynced,
 		ctl.AgentRemoved, ctl.AgentProgress, ctl.AgentStatusChanged, ctl.HostChanged
 
-	if err := api.EnsureAdmin(ctx, st, os.Getenv("OMEGACD_ADMIN_PASSWORD"), log.With("component", "api")); err != nil {
+	passwordFile := filepath.Join(dataDir, api.InitialPasswordFile)
+	if err := api.EnsureAdmin(ctx, st, passwordFile, log.With("component", "api")); err != nil {
 		return err
 	}
 	proxies, err := api.ParseTrustedProxies(os.Getenv("OMEGACD_TRUSTED_PROXIES"))
@@ -163,13 +166,14 @@ func run(log *slog.Logger) error {
 			Backup: func(ctx context.Context, w io.Writer) error {
 				return writeBackup(ctx, st, backupFiles, w)
 			},
-			Source:         src,
-			SourceURL:      os.Getenv("OMEGACD_SOURCE_SERVER"),
-			WebhookSecret:  os.Getenv("OMEGACD_WEBHOOK_SECRET"),
-			WebhookParse:   source.ParseWebhook,
-			TrustedProxies: proxies,
-			UI:             ui,
-			Log:            log.With("component", "api"),
+			Source:              src,
+			SourceURL:           os.Getenv("OMEGACD_SOURCE_SERVER"),
+			WebhookSecret:       os.Getenv("OMEGACD_WEBHOOK_SECRET"),
+			WebhookParse:        source.ParseWebhook,
+			TrustedProxies:      proxies,
+			UI:                  ui,
+			InitialPasswordFile: passwordFile,
+			Log:                 log.With("component", "api"),
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}

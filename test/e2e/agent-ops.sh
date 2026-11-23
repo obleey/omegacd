@@ -6,6 +6,7 @@
 # Host and done when it's back, and --forget for a Host gone for good (Q83-Q87, Q92).
 set -u # no pipefail: grep -q closing the pipe early must not fail a check
 BIN=${OMEGACD_BIN:-$(cd "$(dirname "$0")/../.." && pwd)/bin/omegacd}
+. "$(dirname "$0")/admin.sh"
 T=$(mktemp -d "${TMPDIR:-/tmp}/omegacd-e2eo.XXXX")
 REPO=$T/repo API=http://127.0.0.1:18080/api REG=127.0.0.1:15000 PRE=e2e-ops
 mkdir -p "$REPO/priv" "$REPO/vol" "$REPO/keep" "$REPO/later" "$REPO/gone" "$T/data" "$T/auth"
@@ -41,13 +42,10 @@ unset DOCKER_CONFIG
 
 age-keygen -o "$T/age.key" 2>/dev/null
 OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_AGE_KEY_FILE=$T/age.key \
-  OMEGACD_ADMIN_PASSWORD=e2e-password-123 OMEGACD_POLL_INTERVAL=1h "$BIN" > "$T/server.log" 2>&1 &
+  OMEGACD_POLL_INTERVAL=1h "$BIN" > "$T/server.log" 2>&1 &
 PIDS+=($!)
 for _ in $(seq 50); do curl -sf $API/version >/dev/null && break; sleep 0.2; done
-curl -sf -c "$T/j" -H 'Content-Type: application/json' -d '{"username":"admin","password":"e2e-password-123"}' $API/auth/login >/dev/null
-export OMEGACD_SERVER=http://127.0.0.1:18080
-export OMEGACD_TOKEN=$(curl -sf -b "$T/j" -H 'Content-Type: application/json' -H 'X-Requested-With: omegacd' \
-  -d '{"name":"e2e"}' $API/settings/tokens | python3 -c 'import json,sys; print(json.load(sys.stdin)["plaintext"])')
+admin_login "$API" "$T/data"
 H=(-H "Authorization: Bearer $OMEGACD_TOKEN" -H 'X-Requested-With: omegacd' -H 'Content-Type: application/json')
 waitfor() { for _ in $(seq $((${3:-10} * 10))); do grep -qF -- "$2" "$1" 2>/dev/null && return 0; sleep 0.1; done; return 1; }
 

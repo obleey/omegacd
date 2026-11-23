@@ -5,6 +5,7 @@
 # Linux build of this checkout for the engine's architecture.
 set -u # no pipefail: grep -q closing the pipe early must not fail a check
 BIN=${OMEGACD_BIN:-$(cd "$(dirname "$0")/../.." && pwd)/bin/omegacd}
+. "$(dirname "$0")/admin.sh"
 T=$(mktemp -d "${TMPDIR:-/tmp}/omegacd-e2es.XXXX")
 REPO=$T/repo API=http://127.0.0.1:18080/api SELF=e2e-selfagent
 mkdir -p "$REPO/self" "$REPO/other" "$T/data" "$T/work" "$T/state"
@@ -33,13 +34,10 @@ fi
 
 age-keygen -o "$T/age.key" 2>/dev/null
 OMEGACD_ADDR=:18080 OMEGACD_DATA=$T/data OMEGACD_AGE_KEY_FILE=$T/age.key \
-  OMEGACD_ADMIN_PASSWORD=e2e-password-123 OMEGACD_POLL_INTERVAL=1h "$BIN" > "$T/server.log" 2>&1 &
+  OMEGACD_POLL_INTERVAL=1h "$BIN" > "$T/server.log" 2>&1 &
 SRV=$!
 for _ in $(seq 50); do curl -sf $API/version >/dev/null && break; sleep 0.2; done
-curl -sf -c "$T/j" -H 'Content-Type: application/json' -d '{"username":"admin","password":"e2e-password-123"}' $API/auth/login >/dev/null
-export OMEGACD_SERVER=http://127.0.0.1:18080
-export OMEGACD_TOKEN=$(curl -sf -b "$T/j" -H 'Content-Type: application/json' -H 'X-Requested-With: omegacd' \
-  -d '{"name":"e2e"}' $API/settings/tokens | python3 -c 'import json,sys; print(json.load(sys.stdin)["plaintext"])')
+admin_login "$API" "$T/data"
 
 # the Agent as a Compose project: the engine's socket, its work dir at the same path both sides (Q21), coverage written
 # where the e2e binary writes it. Its own network, so its hostname is its container ID; a sidecar in its network

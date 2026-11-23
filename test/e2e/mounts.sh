@@ -29,7 +29,7 @@ git -C "$REPO" init -q -b main && git -C "$REPO" add -A && git -C "$REPO" -c use
 
 age-keygen -o "$T/age.key" 2>/dev/null
 OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_AGE_KEY_FILE=$T/age.key \
-  OMEGACD_ADMIN_PASSWORD=e2e-password-123 OMEGACD_POLL_INTERVAL=1h "$BIN" > "$T/server.log" 2>&1 &
+  OMEGACD_POLL_INTERVAL=1h "$BIN" > "$T/server.log" 2>&1 &
 SRV=$!
 cleanup() {
   for a in e2e-good e2e-bad; do "$BIN" app delete $a --volumes --yes >/dev/null 2>&1; done
@@ -38,11 +38,7 @@ cleanup() {
 trap cleanup EXIT
 for _ in $(seq 50); do curl -sf http://127.0.0.1:18080/api/version >/dev/null && break; sleep 0.2; done
 
-J=$T/cookies
-curl -sf -c "$J" -H 'Content-Type: application/json' -d '{"username":"admin","password":"e2e-password-123"}' http://127.0.0.1:18080/api/auth/login >/dev/null
-export OMEGACD_SERVER=http://127.0.0.1:18080
-export OMEGACD_TOKEN=$(curl -sf -b "$J" -H 'Content-Type: application/json' -H 'X-Requested-With: omegacd' \
-  -d '{"name":"e2e"}' http://127.0.0.1:18080/api/settings/tokens | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["plaintext"])')
+. "$(dirname "$0")/admin.sh"; admin_login http://127.0.0.1:18080/api "$T/data"
 . "$(dirname "$0")/enroll.sh"; enroll box # the Control Plane's machine, a Host like any other (Q104)
 check "got an API token" '[ -n "$OMEGACD_TOKEN" ]'
 

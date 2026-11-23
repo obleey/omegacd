@@ -63,8 +63,9 @@ run() {
 
 # After the suite, one real reboot (Q249): the system unit and the rootless Docker user unit, an app each, must come
 # back with their files before the engines start them, which only a boot shows (systemd.sh simulates it in the suite).
+# With the binary the suite built: rsync leaves bin/ alone, so no bin/omegacd on a new server.
 reboot() {
-  local t=$1 e2e="export TMPDIR=/tmp XDG_RUNTIME_DIR=/run/user/\$(id -u); cd ~/omegacd && OMEGACD_E2E_REBOOT"
+  local t=$1 e2e="export TMPDIR=/tmp XDG_RUNTIME_DIR=/run/user/\$(id -u) OMEGACD_BIN=~/omegacd/bin/omegacd-\$(go env GOARCH); cd ~/omegacd && OMEGACD_E2E_REBOOT"
   echo "=== $t: a real reboot"
   on "$t" bash -lc "$e2e=setup bash test/e2e/systemd.sh" || return 1
   asroot "$t" systemctl reboot || true # the connection drops

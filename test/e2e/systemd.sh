@@ -111,15 +111,10 @@ inst() {
 dropin() { printf '[Service]\nEnvironment=OMEGACD_LOG_LEVEL=debug GOCOVERDIR=%s\n' $COV; }
 
 SECRET=$(openssl rand -hex 12) && echo "$SECRET" > "$T/secret"
-PW=$(openssl rand -hex 12)
-OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_AGE_KEY_FILE=$T/age.key OMEGACD_ADMIN_PASSWORD=$PW \
-  OMEGACD_POLL_INTERVAL=1h "$BIN" > "$T/server.log" 2>&1 &
+OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_AGE_KEY_FILE=$T/age.key OMEGACD_POLL_INTERVAL=1h "$BIN" > "$T/server.log" 2>&1 &
 SRV=$!
 waitfor "curl -sf $API/version >/dev/null"
-curl -sf -c "$T/j" -H 'Content-Type: application/json' -d "{\"username\":\"admin\",\"password\":\"$PW\"}" $API/auth/login >/dev/null
-export OMEGACD_SERVER=http://127.0.0.1:18080
-export OMEGACD_TOKEN=$(curl -sf -b "$T/j" -H 'Content-Type: application/json' -H 'X-Requested-With: omegacd' \
-  -d '{"name":"e2e"}' $API/settings/tokens | python3 -c 'import json,sys; print(json.load(sys.stdin)["plaintext"])')
+. "$(dirname "$0")/admin.sh"; admin_login "$API" "$T/data"
 gitc init -q -b main && gitc commit -q --allow-empty -m init
 
 # approve HOST LOG: the fingerprint its Agent logged
@@ -254,7 +249,7 @@ if [ "$REBOOT" != setup ]; then
   n=$(connected syslog)
   apt remove omegacd
   check "apt remove stops the Agents, the user's too, and takes the binary, keeping its user, state and agent.env" \
-    '! systemctl -q is-active omegacd-agent && ! systemctl --user -q is-active omegacd-agent && [ ! -e /usr/bin/omegacd ] && id omegacd-agent >/dev/null && sudo test -f /var/lib/omegacd-agent/host.key && sudo test -f /etc/omegacd/agent.env'
+    '! systemctl -q is-active omegacd-agent && ! systemctl --user -q is-active omegacd-agent && [ ! -e /usr/bin/omegacd ] && [ ! -e /usr/bin/omegacd-reset-admin-password ] && id omegacd-agent >/dev/null && sudo test -f /var/lib/omegacd-agent/host.key && sudo test -f /etc/omegacd/agent.env'
   uunits
   apt install "$T/dl/omegacd_v0.0.1-e2e.2_linux_$ARCH.deb"
   check "installed again, the Agent starts by itself and reconnects with its key" 'waitfor "[ \$(connected syslog) -gt $n ]" 90'
@@ -265,6 +260,16 @@ if [ "$REBOOT" != setup ]; then
   sudo systemctl daemon-reload && sudo systemctl enable --now omegacd >/dev/null 2>&1
   check "the Control Plane's unit runs as omegacd, its Master Key made in /etc/omegacd/keys" \
     'waitfor "curl -sf http://127.0.0.1:18081/api/version >/dev/null" && [ "$(sudo stat -c "%U %a" /etc/omegacd/keys/age.key)" = "omegacd 600" ] || { sudo journalctl -u omegacd -o cat | tail -10; false; }'
+  PWF=/var/lib/omegacd/initial-admin-password
+  check "its first admin password in the data dir's file, the service's own, owner-only (Q300)" '[ "$(sudo stat -c "%U %a" $PWF)" = "omegacd 600" ]'
+  first=$(sudo cat $PWF)
+  out=$(omegacd-reset-admin-password 2>&1); rc=$?
+  check "omegacd-reset-admin-password asks for sudo (Q316)" '[ $rc -ne 0 ] && echo "$out" | grep -q "run it with sudo"'
+  out=$(sudo omegacd-reset-admin-password 2>&1); rc=$?
+  check "with sudo it writes a new one as the service's user, the database's files staying the service's (Q311, Q316)" \
+    '[ $rc -eq 0 ] && echo "$out" | grep -q "A new admin password is in $PWF" && [ "$(sudo cat $PWF)" != "$first" ] && [ "$(sudo stat -c "%U %a" $PWF)" = "omegacd 600" ] && [ -z "$(sudo find /var/lib/omegacd -maxdepth 1 -user root)" ] || { echo "$out"; false; }'
+  out=$(sudo env OMEGACD_DATA=/var/lib/omegacd OMEGACD_AGE_KEY_FILE=/etc/omegacd/keys/age.key /usr/bin/omegacd reset-admin-password 2>&1); rc=$?
+  check "the command itself, as root over the service's database, refuses, naming the wrapper" '[ $rc -ne 0 ] && echo "$out" | grep -q "sudo omegacd-reset-admin-password"'
 
   sudo rm -rf $SD/omegacd.service.d $SD/omegacd-agent.service.d $SD/omegacd-agent-restore.service.d
   OMEGACD_UID=$(id -u omegacd) # a system user, or the test servers' own login
@@ -276,7 +281,7 @@ if [ "$REBOOT" != setup ]; then
 fi
 
 check "no secret or password in the logs (Q62)" \
-  '! { START=0; syslog; journalctl --user -u omegacd-agent -o cat; cat "$T/server.log"; } | grep -qF -e "$SECRET" -e "$PW"'
+  '! { START=0; syslog; journalctl --user -u omegacd-agent -o cat; cat "$T/server.log"; } | grep -qF -e "$SECRET" -e "$ADMIN_FIRST_PW" -e "$ADMIN_PW"'
 
 [ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- system unit"; syslog | tail -15; echo "--- user unit"; ulog | tail -15; echo "--- server log"; tail -10 "$T/server.log"; }
 exit $fail

@@ -5,6 +5,7 @@
 # back from the Control Plane's store, its Encrypted Secret decrypting. The Source Server back, the new Revision syncs.
 set -u # no pipefail: grep -q closing the pipe early must not fail a check
 BIN=${OMEGACD_BIN:-$(cd "$(dirname "$0")/../.." && pwd)/bin/omegacd}
+. "$(dirname "$0")/admin.sh"
 T=$(mktemp -d "${TMPDIR:-/tmp}/omegacd-e2ep.XXXX")
 REPO=$T/repo API=http://127.0.0.1:18080/api
 mkdir -p "$REPO/web" "$T/data" "$T/src-data"
@@ -32,17 +33,14 @@ out=$(OMEGACD_DATA=$T/bad OMEGACD_AGE_KEY_FILE=$T/bad.key "$BIN" 2>&1)
 check "a store for the files it delivers it can't make stops the start, naming the setting" 'echo "$out" | grep -q "data dir: .*payloads.*(OMEGACD_DATA)"'
 start_source
 start_control_plane() { # extra settings as NAME=value arguments
-  env "$@" OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_AGE_KEY_FILE=$T/age.key OMEGACD_ADMIN_PASSWORD=e2e-password-123 \
+  env "$@" OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_AGE_KEY_FILE=$T/age.key \
     OMEGACD_POLL_INTERVAL=1h OMEGACD_LOG_LEVEL=debug OMEGACD_SOURCE_SERVER=https://127.0.0.1:19090 OMEGACD_SOURCE_TLS_DIR=$T/tls \
     "$BIN" >> "$T/server.log" 2>&1 &
   SRV=$!
   for _ in $(seq 50); do curl -sf $API/version >/dev/null && break; sleep 0.2; done
 }
 start_control_plane
-curl -sf -c "$T/j" -H 'Content-Type: application/json' -d '{"username":"admin","password":"e2e-password-123"}' $API/auth/login >/dev/null
-export OMEGACD_SERVER=http://127.0.0.1:18080
-export OMEGACD_TOKEN=$(curl -sf -b "$T/j" -H 'Content-Type: application/json' -H 'X-Requested-With: omegacd' \
-  -d '{"name":"e2e"}' $API/settings/tokens | python3 -c 'import json,sys; print(json.load(sys.stdin)["plaintext"])')
+admin_login "$API" "$T/data"
 . "$(dirname "$0")/enroll.sh"; enroll edge
 waitfor() { local end=$((SECONDS + 60)); while [ $SECONDS -lt $end ]; do eval "$1" && return 0; sleep 0.3; done; return 1; }
 ctr() { docker ps -q --filter label=com.docker.compose.project=pay-web; }
@@ -110,7 +108,7 @@ check "v1's and v2's files gone, the deployed v3's kept" '! kept "web v1" && ! k
 check "it warns that webhooks have no secret (Q134)" 'grep -q "OMEGACD_WEBHOOK_SECRET is unset" "$T/server.log"'
 check "stopped with its Agent connected, it records the Agent leaving before closing its database (M4-10a)" \
   '! grep -q "record the agent leaving" "$T/server.log"'
-check "no secret in any log (Q62)" '! grep -qF -e "$PW" -e e2e-password-123 "$T/server.log" "$T/source.log" "$AGENT_LOG" "$T/edge-before.log"'
+check "no secret in any log (Q62)" '! grep -qF -e "$PW" -e "$ADMIN_FIRST_PW" -e "$ADMIN_PW" "$T/server.log" "$T/source.log" "$AGENT_LOG" "$T/edge-before.log"'
 
 [ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- server log"; tail -25 "$T/server.log"; echo "--- agent log"; tail -15 "$AGENT_LOG"; }
 exit $fail

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"github.com/obleey/omegacd/internal/version"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
@@ -764,22 +765,99 @@ func TestAcceptsGzip(t *testing.T) {
 	}
 }
 
+// The first admin password is generated into a file (mode 0600), never logged, and must be changed (Q298, Q300);
+// every start says where it is while the file is there (Q312); an existing admin is kept.
 func TestEnsureAdmin(t *testing.T) {
-	s := &fakeStore{}
+	s := &fakeStore{sessions: map[string]time.Time{}}
+	file := filepath.Join(t.TempDir(), InitialPasswordFile)
 	var logs strings.Builder
-	if err := EnsureAdmin(context.Background(), s, "", slog.New(slog.NewTextHandler(&logs, nil))); err != nil {
+	log := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	if err := EnsureAdmin(t.Context(), s, file, log); err != nil {
 		t.Fatal(err)
 	}
-	if s.hash == "" || !s.mustChange {
-		t.Fatal("expected generated password with mustChange")
+	b, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(logs.String(), `level=WARN msg="initial admin password: log in and change it" username=admin initial=`) {
+	password := strings.TrimSpace(string(b))
+	if st, _ := os.Stat(file); st.Mode().Perm() != 0o600 || len(password) != 20 || !s.mustChange ||
+		bcrypt.CompareHashAndPassword([]byte(s.hash), []byte(password)) != nil {
+		t.Fatalf("mode %v, %q, must change %v", st.Mode().Perm(), password, s.mustChange)
+	}
+	want := `level=WARN msg="the initial admin password is in this file: log in as admin and change it" username=admin path=` + file
+	if !strings.Contains(logs.String(), want) || strings.Contains(logs.String(), password) {
 		t.Fatalf("logs: %s", logs.String())
 	}
+
+	logs.Reset()
 	old := s.hash
-	EnsureAdmin(context.Background(), s, "other", slog.New(slog.DiscardHandler))
-	if s.hash != old {
-		t.Fatal("existing admin overwritten")
+	if err := EnsureAdmin(t.Context(), s, file, log); err != nil || s.hash != old || !strings.Contains(logs.String(), want) {
+		t.Fatalf("a restart before the first login: %v, logs %s", err, logs.String())
+	}
+	os.Remove(file)
+	logs.Reset()
+	if err := EnsureAdmin(t.Context(), s, file, log); err != nil || strings.Contains(logs.String(), "WARN") || !strings.Contains(logs.String(), "no initial admin password file") {
+		t.Fatalf("once changed: %v, logs %s", err, logs.String())
+	}
+
+	for name, fail := range map[string]func(*fakeStore){
+		"AdminPasswordHash": func(s *fakeStore) { s.breaks("AdminPasswordHash", errLocked) },
+		"SetAdminPassword":  func(s *fakeStore) { s.breaks("SetAdminPassword", errLocked) },
+	} {
+		s := &fakeStore{}
+		fail(s)
+		if err := EnsureAdmin(t.Context(), s, filepath.Join(t.TempDir(), "f"), log); !errors.Is(err, errLocked) {
+			t.Errorf("%s failing: %v", name, err)
+		}
+	}
+	if err := EnsureAdmin(t.Context(), &fakeStore{}, filepath.Join(t.TempDir(), "missing", "f"), log); err == nil ||
+		!strings.Contains(err.Error(), "write the initial admin password") {
+		t.Errorf("a file it can't write: %v", err)
+	}
+}
+
+// A reset writes a new password, requires it changed and ends every session (Q311).
+func TestResetAdminPassword(t *testing.T) {
+	s := &fakeStore{hash: "old", sessions: map[string]time.Time{"a": time.Now(), "b": time.Now()}}
+	file := filepath.Join(t.TempDir(), InitialPasswordFile)
+	if err := ResetAdminPassword(t.Context(), s, file); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(file)
+	if s.hash == "old" || !s.mustChange || len(s.sessions) != 0 || bcrypt.CompareHashAndPassword([]byte(s.hash), []byte(strings.TrimSpace(string(b)))) != nil {
+		t.Fatalf("got %+v", s)
+	}
+	s.breaks("DeleteSessionsExcept", errLocked)
+	if err := ResetAdminPassword(t.Context(), s, file); !errors.Is(err, errLocked) {
+		t.Errorf("sessions not ended: %v", err)
+	}
+	if err := ResetAdminPassword(t.Context(), &fakeStore{}, filepath.Join(t.TempDir(), "missing", "f")); err == nil {
+		t.Error("a file it can't write")
+	}
+}
+
+// Changing the password deletes the initial password's file, saying so; one it can't delete is logged with its path,
+// the change counting all the same (Q300, Q313).
+func TestPasswordChangeDeletesInitialFile(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, InitialPasswordFile)
+	os.WriteFile(file, []byte("x\n"), 0o600)
+	e := newEnvWith(t, true, func(c *Config) { c.InitialPasswordFile = file })
+	e.login()
+	e.expect("POST", "/api/auth/password", changeBody(adminPassword, newPassword), 204)
+	if _, err := os.Stat(file); !errors.Is(err, fs.ErrNotExist) || !strings.Contains(e.log.String(), "the initial password file is deleted") {
+		t.Fatalf("%v\n%s", err, e.log.String())
+	}
+	e.expect("POST", "/api/auth/password", changeBody(newPassword, newPassword+"2"), 204) // no file any more: nothing to say
+	if os.Getuid() == 0 {
+		return // root deletes whatever the folder's mode
+	}
+	os.WriteFile(file, []byte("x\n"), 0o600)
+	os.Chmod(dir, 0o500)
+	t.Cleanup(func() { os.Chmod(dir, 0o700) })
+	e.expect("POST", "/api/auth/password", changeBody(newPassword+"2", newPassword), 204)
+	if !strings.Contains(e.log.String(), "the initial password file is left: delete it") {
+		t.Fatalf("log:\n%s", e.log.String())
 	}
 }
 

@@ -77,11 +77,12 @@ EOF
 		[ $i -lt 60 ] || die "OmegaCD did not start; see: cd $OMEGACD_DIR && docker compose logs omegacd"
 		sleep 2
 	done
-	pw=$(docker compose logs omegacd 2>&1 | sed -n 's/.*initial admin password.*initial=\([^ ]*\).*/\1/p' | tail -1)
+	# the first password, until it is changed at the first login (Q300); none on a rerun after that
+	pw=$(docker compose exec -T omegacd cat /data/initial-admin-password 2>/dev/null)
 
 	say ""
 	say "OmegaCD $VERSION is running: http://$(hostname -f 2>/dev/null || hostname):$OMEGACD_PORT"
-	if [ -n "$pw" ]; then say "Initial admin password: $pw   (log in as admin; valid until you set a new one on first login)"; fi
+	if [ -n "$pw" ]; then say "Initial admin password: $pw   (log in as admin and change it; until then it is also in /data/initial-admin-password)"; fi
 	say "Back up its Master Key (age.key in the omegacd-keys volume) apart from your backups."
 	say "Put OmegaCD behind a TLS reverse proxy before exposing it: deploy/proxy has Caddy, Traefik and nginx (README -> Reverse proxy)."
 	say "Next: open the UI and add a Host (Hosts -> Add Host), this machine too if Applications should run on it."
