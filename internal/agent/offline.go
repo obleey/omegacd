@@ -18,6 +18,7 @@ import (
 	"github.com/obleey/omegacd/internal/domain"
 	"github.com/obleey/omegacd/internal/logging"
 	agentv1 "github.com/obleey/omegacd/internal/proto/agent/v1"
+	"github.com/obleey/omegacd/internal/secrets"
 )
 
 // Triggers of what the Agent does on its own, as reported (the Control Plane's are "manual", "auto", …).
@@ -36,7 +37,7 @@ func complete(dir string, r Revision) bool {
 		p := filepath.Join(dir, filepath.FromSlash(f.Path))
 		if base := filepath.Base(p); strings.Contains(base, ".sops.") {
 			// decrypting replaces x.sops.ext with x.ext
-			p = filepath.Join(filepath.Dir(p), strings.Replace(base, ".sops.", ".", 1))
+			p = filepath.Join(filepath.Dir(p), secrets.DecryptedName(base))
 		}
 		fi, err := os.Lstat(p)
 		if err != nil || fi.IsDir() {

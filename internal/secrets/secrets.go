@@ -50,6 +50,10 @@ func formatFor(name string) formats.Format {
 // which an Application at the repository's root has too.
 func Encrypted(name string) bool { return strings.Contains(name, ".sops.") && name != sopsConfig }
 
+// DecryptedName is the name an Encrypted Secret's file decrypts to, its first ".sops." made "." (app.sops.env →
+// app.env): the one rule for decrypting, the work dir, the restore and the render's bind-mount check (Q327).
+func DecryptedName(name string) string { return strings.Replace(name, ".sops.", ".", 1) }
+
 func (Decryptor) DecryptDir(dir string, identities []string) ([]string, error) {
 	var ids sopsage.ParsedIdentities
 	if err := ids.Import(identities...); err != nil {
@@ -63,7 +67,7 @@ func (Decryptor) DecryptDir(dir string, identities []string) ([]string, error) {
 		if !e.Type().IsRegular() || !Encrypted(e.Name()) {
 			return nil
 		}
-		out := filepath.Join(filepath.Dir(path), strings.Replace(e.Name(), ".sops.", ".", 1))
+		out := filepath.Join(filepath.Dir(path), DecryptedName(e.Name()))
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return err
@@ -98,7 +102,7 @@ func Encrypt(plain []byte, name string, recipients []string) ([]byte, error) {
 	for i, k := range keys {
 		group[i] = k
 	}
-	store := common.StoreForFormat(formatFor(strings.Replace(name, ".sops.", ".", 1)), config.NewStoresConfig())
+	store := common.StoreForFormat(formatFor(DecryptedName(name)), config.NewStoresConfig())
 	branches, err := store.LoadPlainFile(plain)
 	if err != nil {
 		return nil, fmt.Errorf("encrypt %s: %w", name, err)
@@ -118,7 +122,7 @@ func Encrypt(plain []byte, name string, recipients []string) ([]byte, error) {
 // are readable in Git and nothing is decrypted. Nested keys read as paths ("db.host"), list items by index
 // ("hosts.0"); comments are left out. A binary file has no keys: none.
 func Keys(encrypted []byte, name string) ([]string, error) {
-	format := formatFor(strings.Replace(name, ".sops.", ".", 1))
+	format := formatFor(DecryptedName(name))
 	if format == formats.Binary {
 		return nil, nil
 	}

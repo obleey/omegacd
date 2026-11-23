@@ -302,6 +302,7 @@ Each Application has its own folder in its Host's work dir (the Agent's `OMEGACD
 | `- media:/data` (named volume) | Docker's volume storage | ✅ kept, even with Prune — deleted only by **Prune volumes** once no longer declared, or by deleting the Application with **Also delete its volumes** (`app delete --volumes`) |
 | `- /opt/media/torrents:/data` (absolute path) | that folder **on the Host running the container** | ✅ OmegaCD never touches it; a missing folder is created by Docker (as root, so `chown` it for non-root images) |
 | `- ./nginx.conf:/etc/nginx/nginx.conf:ro` | a file from Git | ✅ restored from Git; changing it recreates the container |
+| `- ./app.yaml:/etc/app/app.yaml:ro` (from `app.sops.yaml`) | a file decrypted from an [encrypted one in Git](#secrets) | ✅ decrypted again on every Sync and after a reboot; a plain `app.yaml` in Git beside `app.sops.yaml` fails the Sync, as decrypting would replace it |
 | `- ./conf.d:/etc/nginx/conf.d:ro` | a folder from Git | ✅ for config only: anything a container writes into it is deleted on the next Sync (a `.gitkeep` doesn't make it a data folder) |
 | `- ./data:/data` (not in Git) | — | ⛔ **refused**: every Sync deletes files that are not in Git, so the Sync fails and asks for a named volume or an absolute path. The same goes for `../` paths |
 
@@ -513,8 +514,9 @@ Any file whose name contains `.sops.` is decrypted by the Agent at Sync time, wi
 
 ```sh
 sops encrypt --age age1... --input-type dotenv --output-type dotenv app.env > app.sops.env
+sops encrypt --age age1... app.yaml > app.sops.yaml
 sops encrypt --age age1... --input-type binary --output-type binary db-password.txt > db-password.sops.txt
-rm app.env db-password.txt   # commit only the .sops. files
+rm app.env app.yaml db-password.txt   # commit only the .sops. files
 ```
 
 ```yaml
@@ -522,6 +524,8 @@ services:
   app:
     image: ghcr.io/acme/app:1.4.2
     env_file: app.env          # decrypted from app.sops.env
+    volumes:
+      - ./app.yaml:/etc/app/app.yaml:ro   # decrypted from app.sops.yaml
     secrets: [db_password]
 secrets:
   db_password:

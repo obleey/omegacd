@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/obleey/omegacd/internal/domain"
@@ -208,5 +209,21 @@ func TestAllowed(t *testing.T) {
 	}
 	if Allowed("/run/omegacd", nil) {
 		t.Error("no roots allow nothing")
+	}
+}
+
+// A plain file and the .sops. file decrypting to it, both in Git: refused, naming both, before anything is written
+// (Q328). SOPS's own .sops.yaml beside a .yaml isn't a secret, so it isn't a conflict.
+func TestWriteRefusesDecryptingOverGit(t *testing.T) {
+	dest := t.TempDir()
+	err := write(dest, map[string]string{"compose.yaml": "services: {}\n", "conf/app.yaml": "a: 1\n", "conf/app.sops.yaml": "a: ENC\n"})
+	if !errors.Is(err, domain.ErrInvalid) || !strings.Contains(err.Error(), "conf/app.yaml and conf/app.sops.yaml are both in Git, and decrypting conf/app.sops.yaml would replace conf/app.yaml") {
+		t.Fatalf("Write = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "compose.yaml")); !os.IsNotExist(err) {
+		t.Error("files written before the refusal")
+	}
+	if err := write(dest, map[string]string{".sops.yaml": "creation_rules: []\n", ".yaml": "a: 1\n"}); err != nil {
+		t.Errorf("Write with .sops.yaml = %v", err)
 	}
 }

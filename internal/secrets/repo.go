@@ -188,7 +188,7 @@ func (SOPS) Rekey(dir string) (Rekeyed, error) {
 		if err != nil { // coverage: unreachable, a file the walk just listed
 			return err
 		}
-		store := common.StoreForFormat(formatFor(strings.Replace(e.Name(), ".sops.", ".", 1)), config.NewStoresConfig())
+		store := common.StoreForFormat(formatFor(DecryptedName(e.Name())), config.NewStoresConfig())
 		tree, err := store.LoadEncryptedFile(data)
 		if err != nil {
 			return fmt.Errorf("%s: %w", rel, err)
@@ -236,7 +236,7 @@ func groupKeys(groups []sops.KeyGroup) []string {
 
 // Recipients lists the keys an encrypted SOPS file is encrypted for, from its metadata: nothing is decrypted (Q293).
 func Recipients(encrypted []byte, name string) ([]string, error) {
-	tree, err := common.StoreForFormat(formatFor(strings.Replace(name, ".sops.", ".", 1)), config.NewStoresConfig()).LoadEncryptedFile(encrypted)
+	tree, err := common.StoreForFormat(formatFor(DecryptedName(name)), config.NewStoresConfig()).LoadEncryptedFile(encrypted)
 	if err != nil {
 		return nil, fmt.Errorf("read the keys %s is encrypted for: %w", name, err)
 	}

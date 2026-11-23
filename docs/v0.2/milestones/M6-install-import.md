@@ -221,7 +221,7 @@ outside its folders, to whichever user gets the uid next, and could delete a use
 servers' own login is `omegacd`, which `sysusers` keeps); so the users stay.
 
 ### M6-10 · Decrypted files as bind mounts
-**Status:** todo
+**Status:** done (2026-11-23, PR #169)
 **Depends on:** M4-01
 
 A Sync refuses a relative bind mount whose source isn't in Git (`checkBindSources`, so data written there isn't lost
