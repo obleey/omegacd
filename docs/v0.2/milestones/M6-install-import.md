@@ -128,7 +128,15 @@ from issue #9 here (copy referenced files into the app, refuse paths inside othe
 The import encrypts for the Host's key plus the people's keys allowed for it, and refuses a Host-only result without
 `--host-only` (Q194, Q201; the key list is M6-08's, done before this ticket, Q229).
 
-**Done when:** today's importer tests pass through a fake Agent, and an integration test imports from a real Agent.
+Decided in the grilling before it (Q317–Q326): the importer splits into the Agent's half (read, decide, rewrite,
+encrypt) and the CLI's (overwrite check, `--force`, `--dry-run`, write); `POST /api/hosts/{name}/import` relays it as
+Diff does, `--timeout` 5m; one answer per stack, at most 6 MB; Host-only refused by the Agent only when a stack has
+secrets; no local path; an Agent too old to import is told at once; `../` files copied in with the `../` dropped,
+`../` bind mounts by the inside rules; data inside another tool's storage fails the stack.
+
+**Done when:** today's importer tests pass through a fake Agent, an integration test imports through a real Agent,
+and an e2e `import.sh` imports hand-made stacks (with `../` references, with data in a volume) and takes them over, on
+Linux also through rootless Docker and Podman Hosts (Q326).
 
 ### M6-06 · Reverse proxy documentation
 **Status:** done (2026-11-22, PR #160)

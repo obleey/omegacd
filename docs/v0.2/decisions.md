@@ -1049,3 +1049,33 @@ Building Q189–Q201:
   `.deb` ships `omegacd-reset-admin-password`, a few lines of shell running it with the unit's settings as `omegacd`
   (`runuser`): `sudo omegacd-reset-admin-password`. The command itself refuses root on a database another user owns,
   naming that wrapper.
+
+## Import through the Agent (M6-05, 2026-11-23)
+
+- **Q317** The importer splits where Q230 draws the line: the Agent's half lists the stacks, reads their files, decides
+  config, data and secrets, rewrites the compose files and encrypts, and returns per stack its files, definition and
+  report; the CLI's half checks for an existing `apps/<name>`, applies `--force` and `--dry-run`, writes the files and
+  appends the definitions. The CLI sends the names already defined, so the Agent skips those stacks.
+- **Q318** The CLI calls `POST /api/hosts/{name}/import`; the Control Plane relays an `ImportRequest` to that Host's
+  Agent and waits for its answer, as `Diff` does; an offline or unapproved Host gets the usual error. `--timeout`
+  (default 5m) bounds the wait.
+- **Q319** One answer per stack; a stack whose files pass 6 MB fails ("too big to import through the Agent") instead
+  of a new Agent → Control Plane blob transfer.
+- **Q320** The CLI always sends the Host Key and the people's keys covering the Host, and `--host-only`; the Agent
+  refuses to encrypt for its own Host Key alone (Q201's message) only when a stack has secrets, so a secret-free import
+  needs no key list. `--recipient` still replaces the set, unchecked (Q294).
+- **Q321** No local path: `import` always goes through the named Host's Agent (Q47), with the Agent's engine settings
+  (rootless socket, Podman). Importing the machine you are on means enrolling its Agent first.
+- **Q322** An Agent too old to import is told at once, from its Hello's version ("upgrade it to import"), instead of
+  the request waiting for its timeout (Q62); a development build without a version is let through.
+- **Q323** Issue #9: an `env_file`, Compose secret or config file under `../` is handled like one in the stack's
+  folder: copied into the Application with its leading `../` dropped, encrypted when it holds secrets, the compose file
+  pointing at the copy; a copy colliding with a file of the stack fails the stack, naming both.
+- **Q324** A bind mount under `../` follows the same rules as one inside: a file (or read-only folder) up to 1 MB is
+  config and copied, a writable or bigger folder is data with its absolute path on the host.
+- **Q325** Data inside another tool's storage (`/var/lib/docker/volumes/`, `/var/lib/containers/storage/`, any
+  volume's mountpoint the engine reports) fails the stack, naming the path and the volume: after the takeover it would
+  vanish with that tool's cache (doco-cd's, issue #9).
+- **Q326** Done when: the importer's tests pass through a fake Agent; an integration test imports through a real
+  Agent; an e2e `import.sh` enrolls an Agent, imports hand-made stacks (one with `../` references, one with data in a
+  volume) and takes them over; on Linux also through rootless Docker and Podman Hosts.
