@@ -1079,3 +1079,21 @@ Building Q189–Q201:
 - **Q326** Done when: the importer's tests pass through a fake Agent; an integration test imports through a real
   Agent; an e2e `import.sh` enrolls an Agent, imports hand-made stacks (one with `../` references, one with data in a
   volume) and takes them over; on Linux also through rootless Docker and Podman Hosts.
+
+## Decrypted files as bind mounts (M6-10, 2026-11-23)
+
+- **Q327** A relative bind source not in Git is accepted when a file from Git in its folder decrypts to it: one whose
+  name contains `.sops.` and, with the first `.sops.` made `.`, is the source's name (`app.sops.yaml` → `app.yaml`).
+  The rule lives once, in `secrets.DecryptedName`, used by the check and by the places that had copied it (decrypting,
+  the work dir's pruning, the offline restore, the controller's key names). Anything else not in Git stays refused with
+  the same message.
+- **Q328** A plain file and the `.sops.` file that decrypts to it, both in Git (`app.yaml` beside `app.sops.yaml`), fail
+  the render, naming both: decrypting would silently replace the file from Git (Q62).
+- **Q329** No `:ro` required on a decrypted file's mount: as with a plain file from Git, a container's writes there last
+  until the next Sync, which the README's data table says.
+- **Q330** Tests: unit cases in the render's tests (decrypted source accepted, a `.sops.` file in another folder not
+  counting, the Q328 conflict refused, the refusal message unchanged); `systemd.sh`'s app bind-mounts a plain file from
+  Git and a decrypted file beside its Compose secret and reads all three, before and after the simulated reboot;
+  `mounts.sh` keeps checking the refusal.
+- **Q331** The README's Secrets example mounts a decrypted file beside `env_file` and `secrets:`, and its data table
+  gains a row for it.

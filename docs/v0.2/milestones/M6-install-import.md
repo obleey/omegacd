@@ -236,6 +236,12 @@ Found while building M6-03, whose `systemd.sh` mounts its decrypted file as a Co
 reads both, they come back after `systemd.sh`'s simulated reboot, and a mount of a file neither in Git nor decrypted
 from one is still refused with the same message.
 
+**Decisions (Q327–Q331, 2026-11-23):** a bind source is accepted when a `.sops.` file from Git in its folder decrypts
+to it, by one rule in `secrets.DecryptedName` that the other copies use too (Q327); a plain file and the `.sops.` file
+decrypting to it, both in Git, fail the render naming both (Q328); no `:ro` required (Q329); unit cases in the render's
+tests, `systemd.sh` mounting a plain and a decrypted file beside its Compose secret across the reboot (Q330); the
+README's Secrets example and data table show the mount (Q331).
+
 ### M6-11 · Initial admin password, changed at first login
 **Status:** done (2026-11-23, PR #167)
 **Depends on:** M6-01, M6-08
