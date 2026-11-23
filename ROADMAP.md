@@ -85,8 +85,9 @@ The plan: [docs/v0.2](docs/v0.2/README.md) (architecture, decisions, 8 milestone
 
 - **SSO** via OpenID Connect (Google, GitHub, GitLab, Microsoft Entra, Keycloak, Authentik, …), multiple users, RBAC (e.g. access per customer / App of Apps)
 - Audit log
-- **External secret managers** as Secret Sources next to SOPS, resolved on the Agent (paid): HashiCorp Vault / OpenBao, 1Password, Bitwarden, Infisical, AWS Secrets Manager, Google Secret Manager, Azure Key Vault — referenced from compose, resolved at Sync time, never stored in Git
+- **External secret managers** as Secret Sources next to SOPS, resolved on the Agent (paid): HashiCorp Vault / OpenBao, 1Password, Bitwarden, Infisical, AWS Secrets Manager, Google Secret Manager, Azure Key Vault — referenced from compose, resolved at Sync time, never stored in Git. M6-08's helper interface (`omegacd secrets init`, `rekey`) fits sources that encrypt files in Git for a set of keys (SOPS, Ansible Vault); these keep the secret outside Git, referenced from compose and fetched by the Agent with its own credentials, so they have no rules, recipients or rekey: the interface will likely split into the two kinds with the first of them, and the people's key list and the outdated-keys warning stay SOPS's
 - Postgres as an alternative to SQLite
+- **YAML config file** for the Control Plane, the Source Server and the Agent, besides the environment variables: to be designed (grilled) when it is picked up, after the release; open then: settings only or declarative state too, one file per process, which wins over the environment, where it is found, key names, secrets in it, mistakes and reloads
 
 ## Later
 

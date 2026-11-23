@@ -1018,3 +1018,17 @@ Building Q189–Q201:
 - **Q296** The Host card's "Copy .sops.yaml rule" and "for all Hosts" add the keys allowed for each Host, with Q201's
   warning when none covers it; the copied rule keeps its `apps/<host>/` example path.
 - **Q297** `rekey` rekeys what it can, lists the files it can't open with the fix, and exits 1 when there are any.
+
+## Initial admin password (before M6-11, 2026-11-22)
+
+- **Q298** `OMEGACD_ADMIN_PASSWORD` goes: the admin's first password is always generated, never configured, and the
+  first login must change it. A password in `.env` sat in plain text and outlived the first start without ever being
+  changed.
+- **Q299** Its own ticket, M6-11 (issue #161), right after M6-08.
+- **Q300** The generated password is written once to `initial-admin-password` in the data dir (mode 0600) and the
+  file is deleted when the password is changed; the log says only where it is, so Q46's one logged secret goes.
+  `install.sh full` prints it at the end; by hand `docker compose exec omegacd cat /data/initial-admin-password`.
+- **Q301** All of `OMEGACD_ADMIN_PASSWORD`'s code goes, with no warning: an install still setting it simply has it
+  ignored, and an admin who exists keeps their password.
+- **Q302** One shared e2e helper reads the file, logs in, changes the password and makes the API token; every e2e
+  script, `deploy-compose.sh` and the README walkthrough use it.

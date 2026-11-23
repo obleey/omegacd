@@ -3,7 +3,7 @@
 Getting a Control Plane and Agents running anywhere, and moving existing stacks in.
 See [architecture](../architecture.md#install-q10-q21-q26-q33-q35-q51).
 
-Order (Q229): M6-02, M6-03, M6-09, M6-01, M6-04 (deferred, Q276), M6-06, M6-08, M6-05, then M6-10.
+Order (Q229): M6-02, M6-03, M6-09, M6-01, M6-04 (deferred, Q276), M6-06, M6-08, M6-11 (Q299), M6-05, then M6-10.
 
 ### M6-01 · install.sh: full and agent modes
 **Status:** done (2026-11-22, PR #158)
@@ -227,3 +227,20 @@ Found while building M6-03, whose `systemd.sh` mounts its decrypted file as a Co
 **Done when:** an app mounting both a plain file from Git and a decrypted file as bind volumes deploys and its container
 reads both, they come back after `systemd.sh`'s simulated reboot, and a mount of a file neither in Git nor decrypted
 from one is still refused with the same message.
+
+### M6-11 · Initial admin password, changed at first login
+**Status:** in progress (feat/m6-11-initial-admin-password)
+**Depends on:** M6-01, M6-08
+
+The admin's first password is always generated, never configured (Q298): `OMEGACD_ADMIN_PASSWORD` and all its code go
+(Q301; an install still setting it simply has it ignored, an existing admin keeps their password). At first start the
+Control Plane writes the generated password once to `initial-admin-password` in its data dir (mode 0600) and logs
+only where it is, never the password: the logging exception of Q46 goes (Q300). The first login must change it, the
+API refusing everything else until then (as today for a generated one); the change deletes the file. `install.sh full`
+prints it at the end; by hand `docker compose exec omegacd cat /data/initial-admin-password`. One shared e2e helper
+reads the file, logs in, changes the password and makes the API token; every e2e script, `deploy-compose.sh` and the
+README walkthrough use it (Q302).
+
+**Done when:** a fresh install has no admin password setting; the initial password is only in that file, never in a
+log; the first login must change it and the change removes the file; `install.sh full` shows it; README, TESTING.md
+and the e2e suite use the file; tested end to end.

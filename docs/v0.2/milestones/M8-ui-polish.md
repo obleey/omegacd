@@ -34,6 +34,9 @@ re-renders.
 
 Badges, colors, spacing and animations consistent; Catppuccin in all flavors where shown; new README screenshots.
 
+Found on 2026-11-22: on Settings, a section's heading sits too close to the text under it (Registry credentials and
+its "Private image registries…" line, and the other sections the same way): one heading-to-text spacing for every card.
+
 **Done when:** screenshots replaced in the README.
 
 ### M8-05 · Release notes
