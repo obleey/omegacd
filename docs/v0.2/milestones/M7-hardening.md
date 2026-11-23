@@ -71,6 +71,11 @@ work dir in RAM vs on disk (where decrypted secrets live, what a reboot does, Q1
 secrets per engine (Q58) get their own section, from the draft [user-ids.md](../user-ids.md): rootful vs rootless,
 who owns which files, data folders and `chown`, the "user 1000" convention, choosing an engine.
 
+Found on 2026-11-23: the security model says plainly that access to a rootful Docker socket is root on that Host. The
+Agent runs as `omegacd-agent`/`omegacd`, never root (Q236, Q242), but in the docker group it can start a privileged
+container, as any deploy tool using the socket can. So a compromised Agent or Control Plane controls its rootful Hosts.
+Rootless Docker or Podman keep it to the Agent's own user; README, SECURITY.md and the engine choice say so.
+
 **Done when:** a new user installs from the README alone (the v0.1 checklist's test 6, redone).
 
 ### M7-06 · RHEL-family test matrix
@@ -113,3 +118,26 @@ pull mirror of GitHub (every 10 minutes, Actions off). The switch:
 
 **Done when:** an issue, a pull request with its CI on the maintainer's runners, and a release (image pulled from Docker
 Hub, binary and install script downloaded by someone not logged in) all work on Forgejo alone.
+
+### M7-08 · Security review before the release
+**Status:** todo
+**Depends on:** M7-05
+
+Until now, OmegaCD's security rests on tests written against our own decisions; nobody has looked at it from the
+outside. Before v0.2 is released, a review by someone other than its authors (a person, or at least a separate review
+pass with a fresh context), against SECURITY.md's trust boundaries:
+- **Authentication:** login and sessions, API tokens, the first admin password and its reset, CSRF (`X-Requested-With`),
+  login throttling, cookies behind a proxy.
+- **The Agent protocol:** enrollment, invites and fingerprints, approval, signing keys, what a Control Plane can make an
+  Agent do and what an Agent can make a Control Plane believe; the Source Server's mTLS.
+- **Secrets:** the Host Key, people's keys and the key list, decryption on the Host only, the work dir's file modes, no
+  secret in logs, API or UI; repository and registry credentials sealed at rest.
+- **Engine access:** the Docker socket (M7-05's note), bind mounts and paths from Git (`../`, symlinks, absolute paths),
+  `omegacd import` reading the Host.
+- **Supply chain:** dependencies (`govulncheck`, `pnpm audit`), the image and its base, the release's checksums,
+  `install.sh`.
+
+Each finding becomes a ticket, or is recorded as accepted with its reason in decisions.md.
+
+**Done when:** the review's report is in `docs/v0.2/security-review.md`, every finding high or above is fixed with a test,
+and the rest are fixed or accepted in decisions.md.
