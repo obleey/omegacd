@@ -52,6 +52,11 @@ The plan: [docs/v0.2](docs/v0.2/README.md) (architecture, decisions, 8 milestone
 - **Logging everywhere**: error, warn, info and debug for every decision the code makes, one Sync followable across Control Plane, Source Server and Agent, json or text; never a secret in a log
 - **Secrets helpers**: a list of the people's keys (each for all Hosts or chosen ones) besides each Host Key, `omegacd secrets init` writing `.sops.yaml` rules for a Host's Applications, `omegacd secrets rekey` after the keys change, a warning for files encrypted for an outdated set, and a clear "this Host can't decrypt it"; built per secret source, ready for KeePass, 1Password, Ansible Vault, OpenBao and others later
 
+## Right after v0.2 — in this order (each grilled when picked up)
+
+1. **Theme picker and OmegaCD's own theme** — a theme of OmegaCD's own as the default, designed for it, and a picker beside it (light, dark, following the system; the Catppuccin flavors); moved up from v0.3
+2. **Users, login methods and groups** — more than the one admin: people with their own logins, more ways to log in (OpenID Connect and others), groups and what each may do; moved up from v0.4's SSO and RBAC
+
 ## After v0.2 — trustworthy for real sites (to be re-planned)
 
 - **Ubuntu 26.04** — the current LTS (newer Docker, Podman, systemd) as a supported Host, tested like 24.04: two more test servers; on GitHub's 26.04 runner rootless Podman can't remove a container's network (`rootless netns: kill network process: permission denied`), cause to find first, then CI moves from `ubuntu-24.04` (Q111, M4-12)
@@ -79,11 +84,10 @@ The plan: [docs/v0.2](docs/v0.2/README.md) (architecture, decisions, 8 milestone
 - **Podman support** beyond v0.2's tested rootless setup — run against Podman's Docker-compatible API socket (rootful and rootless): enable/check `podman-restart.service` so containers come back after a reboot, an SSH transport that doesn't need the Docker CLI on the server, rootless notes (ports < 1024, UID mapping on bind mounts), and the integration test suite running against Podman in CI; the engine (Docker or Podman, with version) detected per Host and shown as a badge on the Host and on every Application deployed there, so mixed fleets are obvious. Quick test against Podman 5.8 (Docker-compatible API): deploy, SOPS, bind-mounted files, diff, logs, events/drift and delete-with-volumes work; healthchecks need systemd on the Podman host (document it)
 - Nested App of Apps
 - Name prefix per App of Apps, so two of them can declare an Application with the same name (e.g. `edge-caddy`, `blog-caddy`)
-- Theme picker (all Catppuccin flavors)
 
 ## v0.4 — teams
 
-- **SSO** via OpenID Connect (Google, GitHub, GitLab, Microsoft Entra, Keycloak, Authentik, …), multiple users, RBAC (e.g. access per customer / App of Apps)
+- **SSO** via OpenID Connect (Google, GitHub, GitLab, Microsoft Entra, Keycloak, Authentik, …), multiple users, RBAC (e.g. access per customer / App of Apps): moved to [right after v0.2](#right-after-v02--in-this-order-each-grilled-when-picked-up)
 - Audit log
 - **External secret managers** as Secret Sources next to SOPS, resolved on the Agent (paid): HashiCorp Vault / OpenBao, 1Password, Bitwarden, Infisical, AWS Secrets Manager, Google Secret Manager, Azure Key Vault — referenced from compose, resolved at Sync time, never stored in Git. M6-08's helper interface (`omegacd secrets init`, `rekey`) fits sources that encrypt files in Git for a set of keys (SOPS, Ansible Vault); these keep the secret outside Git, referenced from compose and fetched by the Agent with its own credentials, so they have no rules, recipients or rekey: the interface will likely split into the two kinds with the first of them, and the people's key list and the outdated-keys warning stay SOPS's
 - Postgres as an alternative to SQLite
