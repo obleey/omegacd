@@ -37,6 +37,8 @@ refuses "the server: a poll interval that isn't one" "OMEGACD_POLL_INTERVAL must
 refuses "the server: a Source Server address that isn't https://host:port" "want https://host:port" $(server) OMEGACD_SOURCE_SERVER=ftp://source --
 d=$(data); echo "not age" > "$d/credentials.age"
 refuses "the server: Git credentials it can't open" "its key?" OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA="$d" OMEGACD_AGE_KEY_FILE="$T/age.key" --
+d=$(data); mkdir "$d/initial-admin-password"
+refuses "the server: the first admin password it can't write (Q300)" "write the initial admin password" OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA="$d" OMEGACD_AGE_KEY_FILE="$T/age.key" --
 refuses "the server: trusted proxies that aren't addresses" "invalid" $(server) OMEGACD_TRUSTED_PROXIES=everyone --
 refuses "the server: its port taken" "address already in use" OMEGACD_ADDR=127.0.0.1:18089 OMEGACD_DATA="$(data)" OMEGACD_AGE_KEY_FILE="$T/age.key" --
 
