@@ -251,6 +251,12 @@ func TestSyncWait(t *testing.T) {
 	if r.code != 1 || !strings.Contains(r.stderr, "timed out after 30ms") {
 		t.Fatalf("timeout: %+v", r)
 	}
+
+	// the history failing while it waits fails the wait, with the server's answer
+	_, srv = newAPI(t, map[string]any{"POST /api/apps/app/sync": map[string]int64{"opID": 7}}) // its history isn't served
+	if r = run(t, srv, nil, "", "app", "sync", "app", "--wait"); r.code != 1 || !strings.Contains(r.stderr, "GET /api/apps/app/history: not found") {
+		t.Fatalf("history failing: %+v", r)
+	}
 }
 
 func TestDiffExitCodes(t *testing.T) {
