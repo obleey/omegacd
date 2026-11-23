@@ -3,7 +3,7 @@
 Proving "no data loss" and every supported setup (Q50, Q52).
 
 ### M7-01 · Test pyramid with real Agents
-**Status:** todo
+**Status:** done (2026-11-24, PR #174)
 **Depends on:** M4-05
 
 Unit tests; integration tests running a real Agent against Docker-in-Docker **rootful and rootless**, and **rootless

@@ -25,6 +25,7 @@ import (
 	"github.com/moby/moby/client"
 
 	"github.com/obleey/omegacd/internal/domain"
+	"github.com/obleey/omegacd/internal/enginetest"
 )
 
 const fixture = `
@@ -79,7 +80,7 @@ func TestLifecycle(t *testing.T) {
 	ctx := context.Background()
 	e := newTestEngine(t)
 	app := testApp(t, e)
-	dir := t.TempDir()
+	dir := enginetest.TempDir(t)
 	write(t, dir, "compose.yaml", fixture)
 	write(t, dir, ".env", "GREETING=hi\n")
 	t.Setenv("OMEGACD_IT_SECRET", "leaked")
@@ -212,7 +213,7 @@ func TestProjectExistsUnmanaged(t *testing.T) {
 	ctx := context.Background()
 	e := newTestEngine(t)
 	app := testApp(t, e)
-	dir := t.TempDir()
+	dir := enginetest.TempDir(t)
 	write(t, dir, "compose.yaml", "services:\n  sleeper:\n    image: busybox\n    command: [\"sleep\", \"3600\"]\n")
 
 	// Plain compose SDK, as `docker compose up` would do it: no omegacd label.
@@ -242,7 +243,7 @@ func TestDiffFromStagingDir(t *testing.T) {
 	ctx := context.Background()
 	e := newTestEngine(t)
 	app := testApp(t, e)
-	dir, stage := t.TempDir(), t.TempDir()
+	dir, stage := enginetest.TempDir(t), enginetest.TempDir(t)
 	const compose = `
 services:
   web:
@@ -272,7 +273,7 @@ func TestStoppedLongRunningServiceIsDrift(t *testing.T) {
 	ctx := context.Background()
 	e := newTestEngine(t)
 	app := testApp(t, e)
-	dir := t.TempDir()
+	dir := enginetest.TempDir(t)
 	write(t, dir, "compose.yaml", `
 services:
   web:
@@ -322,7 +323,7 @@ func TestDiffResolvesServiceReferences(t *testing.T) {
 	ctx := context.Background()
 	e := newTestEngine(t)
 	app := testApp(t, e)
-	dir := t.TempDir()
+	dir := enginetest.TempDir(t)
 	write(t, dir, "compose.yaml", `
 services:
   db:
@@ -338,7 +339,11 @@ services:
     pid: "service:db"
     volumes_from: [db]
 `)
-	if err := e.Sync(ctx, app, dir, domain.SyncOptions{}); err != nil {
+	err := e.Sync(ctx, app, dir, domain.SyncOptions{})
+	if err != nil && strings.Contains(err.Error(), "cannot join another container's PID namespace if not creating cgroups") {
+		t.Skip("Podman in a container without cgroups can't share a PID namespace; the other engines run this")
+	}
+	if err != nil {
 		t.Fatal(err)
 	}
 	if diffs, err := e.Diff(ctx, app, dir, ""); err != nil || len(diffs) != 0 {
@@ -351,7 +356,7 @@ func TestWatchReportsContainerChanges(t *testing.T) {
 	defer cancel()
 	e := newTestEngine(t)
 	app := testApp(t, e)
-	dir := t.TempDir()
+	dir := enginetest.TempDir(t)
 	write(t, dir, "compose.yaml", "services:\n  web:\n    image: busybox\n    command: [\"sleep\", \"3600\"]\n")
 
 	seen := make(chan string, 64)
@@ -377,7 +382,7 @@ func TestContentChangesRecreate(t *testing.T) {
 	ctx := context.Background()
 	e := newTestEngine(t)
 	app := testApp(t, e)
-	dir := t.TempDir()
+	dir := enginetest.TempDir(t)
 	write(t, dir, "compose.yaml", `
 services:
   web:
@@ -446,7 +451,7 @@ func TestProjectFilesAndInspect(t *testing.T) {
 	ctx := context.Background()
 	e := newTestEngine(t)
 	app := testApp(t, e)
-	dir := t.TempDir()
+	dir := enginetest.TempDir(t)
 	write(t, dir, "compose.yaml", `
 services:
   web:
@@ -517,7 +522,7 @@ func TestUndeclaredServicesStoppedOrPruned(t *testing.T) {
 	ctx := context.Background()
 	e := newTestEngine(t)
 	app := testApp(t, e)
-	dir := t.TempDir()
+	dir := enginetest.TempDir(t)
 	write(t, dir, "compose.yaml", `
 services:
   web:
@@ -575,7 +580,7 @@ func TestForceRecreateReplacesUnchangedContainers(t *testing.T) {
 	ctx := context.Background()
 	e := newTestEngine(t)
 	app := testApp(t, e)
-	dir := t.TempDir()
+	dir := enginetest.TempDir(t)
 	write(t, dir, "compose.yaml", "services:\n  web:\n    image: busybox\n    command: [\"sleep\", \"3600\"]\n")
 	id := func() string { ls, _ := e.Status(ctx, app); return ls.Containers[0].ID }
 	if err := e.Sync(ctx, app, dir, domain.SyncOptions{}); err != nil {
@@ -594,7 +599,7 @@ func TestAbsoluteBindMountIsLeftAlone(t *testing.T) {
 	ctx := context.Background()
 	e := newTestEngine(t)
 	app := testApp(t, e)
-	dir, data := t.TempDir(), t.TempDir() // data: an absolute host path outside the app dir, like /opt/media
+	dir, data := enginetest.TempDir(t), enginetest.TempDir(t) // data: an absolute host path outside the app dir, like /opt/media
 	write(t, dir, "compose.yaml", fmt.Sprintf(`
 services:
   web:
@@ -670,7 +675,7 @@ func TestPruneSkipsNetworkInUse(t *testing.T) {
 	ctx := context.Background()
 	e := newTestEngine(t)
 	app, other := testApp(t, e), testApp(t, e)
-	dir, odir := t.TempDir(), t.TempDir()
+	dir, odir := enginetest.TempDir(t), enginetest.TempDir(t)
 	write(t, dir, "compose.yaml", "services:\n  web:\n    image: busybox\n    command: [\"sleep\", \"3600\"]\n    networks: [front]\nnetworks:\n  front: {}\n")
 	if err := e.Sync(ctx, app, dir, domain.SyncOptions{}); err != nil {
 		t.Fatal(err)
@@ -711,7 +716,7 @@ func TestPruneVolumes(t *testing.T) {
 	ctx := context.Background()
 	e := newTestEngine(t)
 	app := testApp(t, e)
-	dir, data := t.TempDir(), t.TempDir()
+	dir, data := enginetest.TempDir(t), enginetest.TempDir(t)
 	write(t, data, "keep.txt", "host data")
 	ext := app.Name + "-ext"
 	if out, err := dockerCmd("volume", "create", ext); err != nil {
@@ -793,7 +798,7 @@ volumes:
 func TestRemoveVolumes(t *testing.T) {
 	ctx := context.Background()
 	e := newTestEngine(t)
-	dir, data := t.TempDir(), t.TempDir()
+	dir, data := enginetest.TempDir(t), enginetest.TempDir(t)
 	write(t, data, "keep.txt", "host data")
 	write(t, dir, "compose.yaml", fmt.Sprintf("services:\n  web:\n    image: busybox\n    command: [\"sleep\", \"3600\"]\n    volumes: [\"data:/data\", \"%s:/host\"]\nvolumes:\n  data: {}\n", data))
 	for _, volumes := range []bool{false, true} {
@@ -819,7 +824,7 @@ func TestLogsRefused(t *testing.T) {
 	ctx := context.Background()
 	e := newTestEngine(t)
 	app := testApp(t, e)
-	dir := t.TempDir()
+	dir := enginetest.TempDir(t)
 	write(t, dir, "compose.yaml", "services:\n  quiet:\n    image: busybox\n    command: [\"sleep\", \"3600\"]\n    logging:\n      driver: none\n")
 	if err := e.Sync(ctx, app, dir, domain.SyncOptions{}); err != nil {
 		t.Fatal(err)

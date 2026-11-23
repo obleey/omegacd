@@ -25,6 +25,14 @@ func Faulty(t testing.TB, answer func(*http.Request) int) string {
 	network, addr, _ := strings.Cut(cmp.Or(os.Getenv("DOCKER_HOST"), "unix:///var/run/docker.sock"), "://")
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(r *httputil.ProxyRequest) { r.Out.URL.Scheme, r.Out.URL.Host = "http", "engine" },
+		// Podman switches an attach asked as "Upgrade: tcp" to "application/vnd.docker.raw-stream", which the proxy
+		// refuses as another protocol than asked; the Docker client takes either
+		ModifyResponse: func(r *http.Response) error {
+			if r.StatusCode == http.StatusSwitchingProtocols {
+				r.Header.Set("Upgrade", r.Request.Header.Get("Upgrade"))
+			}
+			return nil
+		},
 		Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, network, addr)
 		}},
@@ -67,4 +75,24 @@ func Is(r *http.Request, method, pattern string) bool {
 	}
 	ok, _ := path.Match(pattern, p)
 	return r.Method == method && ok
+}
+
+// TempDir is t.TempDir for files the engine at DOCKER_HOST reads (bind mounts, compose files): with OMEGACD_IT_ROOT set
+// (make test-engines), under that folder, which the matrix's engines in containers see at the same path, and
+// traversable by their user, another than the test's; otherwise t.TempDir.
+func TempDir(t testing.TB) string {
+	t.Helper()
+	root := os.Getenv("OMEGACD_IT_ROOT")
+	if root == "" {
+		return t.TempDir()
+	}
+	dir, err := os.MkdirTemp(root, "it-")
+	if err == nil {
+		err = os.Chmod(dir, 0o711)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	return dir
 }

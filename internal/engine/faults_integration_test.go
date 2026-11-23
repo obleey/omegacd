@@ -76,7 +76,7 @@ func TestEngineFailures(t *testing.T) {
 	ctx := t.Context()
 	e := newTestEngine(t)
 	app := testApp(t, e)
-	dir := t.TempDir()
+	dir := enginetest.TempDir(t)
 	write(t, dir, "compose.yaml", faultsV1)
 	app.Profiles = []string{"debug"}
 	if err := e.Sync(ctx, app, dir, domain.SyncOptions{}); err != nil {
@@ -259,7 +259,7 @@ func TestInitServiceFailures(t *testing.T) {
 	ctx := t.Context()
 	e := newTestEngine(t)
 	app := testApp(t, e)
-	dir := t.TempDir()
+	dir := enginetest.TempDir(t)
 	write(t, dir, "compose.yaml", strings.Replace(initFailing, "%s", "0", 1))
 	for _, tc := range []struct {
 		name, want string
@@ -293,7 +293,7 @@ func TestLogsOfATTY(t *testing.T) {
 	ctx := t.Context()
 	e := newTestEngine(t)
 	app := testApp(t, e)
-	dir := t.TempDir()
+	dir := enginetest.TempDir(t)
 	write(t, dir, "compose.yaml", "services:\n  tty:\n    image: busybox\n    tty: true\n    command: [\"sh\", \"-c\", \"echo from-a-tty; sleep 3600\"]\n")
 	if err := e.Sync(ctx, app, dir, domain.SyncOptions{}); err != nil {
 		t.Fatal(err)

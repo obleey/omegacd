@@ -42,6 +42,10 @@ func TestDetectEngineFails(t *testing.T) {
 func TestReclaimFails(t *testing.T) {
 	ctx := t.Context()
 	root := os.Getenv("OMEGACD_IT_ROOT")
+	if e, err := DetectEngine(ctx); err == nil && e.Rootless && root == "" {
+		t.Skip("reclaim runs only in a containerised Agent, which on a rootless engine is root in its container (Q240): " +
+			"called as this test's user, its chown hands the folder to a sub-uid; the matrix's rootless engines run it")
+	}
 	if root == "" {
 		root = t.TempDir()
 	}

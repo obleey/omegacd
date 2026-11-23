@@ -11,6 +11,7 @@ import (
 	"github.com/moby/moby/client"
 
 	"github.com/obleey/omegacd/internal/domain"
+	"github.com/obleey/omegacd/internal/enginetest"
 	"github.com/obleey/omegacd/internal/logging"
 )
 
@@ -24,7 +25,7 @@ func TestAdoptKeepsContainersOfAnyCompose(t *testing.T) {
 	e := newTestEngine(t)
 	app := testApp(t, e)
 	app.Adopt = true
-	dir := t.TempDir()
+	dir := enginetest.TempDir(t)
 	write(t, dir, "compose.yaml", "services:\n  app:\n    image: busybox:1.36\n    command: [\"sleep\", \"3600\"]\n    volumes: [data:/data]\nvolumes:\n  data: {}\n")
 	up := exec.Command("docker", "compose", "-p", app.Name, "up", "-d", "--quiet-pull")
 	up.Dir = dir

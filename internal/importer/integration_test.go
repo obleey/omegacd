@@ -71,7 +71,7 @@ func checkImported(t *testing.T, repo, name, hostDir, report string, id *age.X25
 			t.Errorf("%s was written to Git", gone)
 		}
 	}
-	dir := t.TempDir()
+	dir := enginetest.TempDir(t)
 	for _, f := range []string{"app.sops.env", ".sops.env"} {
 		c, err := os.ReadFile(filepath.Join(app, f))
 		if err != nil {
@@ -95,7 +95,7 @@ func checkImported(t *testing.T, repo, name, hostDir, report string, id *age.X25
 
 func importInto(t *testing.T, h Host, name, hostName string, id *age.X25519Identity) (string, string) {
 	t.Helper()
-	repo := t.TempDir()
+	repo := enginetest.TempDir(t)
 	out, err := run(t, h, opts{Repo: repo, HostName: hostName, Only: []string{name},
 		Recipients: func() ([]string, error) { return []string{id.Recipient().String()}, nil }})
 	if err != nil {
@@ -105,7 +105,7 @@ func importInto(t *testing.T, h Host, name, hostName string, id *age.X25519Ident
 }
 
 func TestImportLocal(t *testing.T) {
-	dir := t.TempDir()
+	dir := enginetest.TempDir(t)
 	writeStack(t, dir)
 	const name = "omegacd-it-import"
 	if out, err := docker("compose", "-p", name, "--project-directory", dir, "-f", filepath.Join(dir, "compose.yaml"), "up", "-d", "--quiet-pull"); err != nil {
@@ -155,7 +155,7 @@ func TestDockerHostFails(t *testing.T) {
 		skipUnlessRequired(t, "docker not on PATH")
 	}
 	ctx := t.Context()
-	dir := t.TempDir()
+	dir := enginetest.TempDir(t)
 	os.MkdirAll(filepath.Join(dir, "conf"), 0o755)
 	os.WriteFile(filepath.Join(dir, "conf", "a.conf"), []byte("a"), 0o644)
 	os.Symlink("a.conf", filepath.Join(dir, "conf", "link.conf"))

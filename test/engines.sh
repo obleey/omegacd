@@ -40,6 +40,15 @@ EOF
       exit 1
     }
   done
+  # the tests' images, pulled once by this machine's engine (its cache survives cleanups) and copied into each engine in
+  # a container: four engines pulling from Docker Hub on every run fail now and then on its token server
+  for image in busybox busybox:1.36 busybox:1.37 busybox:1.38 nginx:alpine nginx:1.29-alpine; do
+    docker image inspect "$image" >/dev/null 2>&1 || docker pull -q "$image" >/dev/null
+    for port in 23750 23751; do
+      DOCKER_HOST=tcp://127.0.0.1:$port docker image inspect "$image" >/dev/null 2>&1 ||
+        docker save "$image" | DOCKER_HOST=tcp://127.0.0.1:$port docker load -q >/dev/null
+    done
+  done
   ;;
 down) docker rm -f omegacd-it-rootless omegacd-it-podman >/dev/null 2>&1 || true ;;
 *) echo "usage: test/engines.sh up ROOT | down" >&2; exit 2 ;;

@@ -32,6 +32,8 @@ func TestContainerHealth(t *testing.T) {
 		{"exited", "", 0, 0, false, domain.Healthy},
 		{"exited", "", 0, 0, true, domain.Degraded},
 		{"exited", "", 137, 0, false, domain.Degraded},
+		{"stopped", "", 0, 0, false, domain.Healthy}, // Podman, before its cleanup: an exited one-shot
+		{"stopped", "", 1, 0, false, domain.Degraded},
 		{"dead", "", 0, 0, false, domain.Degraded},
 		{"paused", "", 0, 0, false, domain.Degraded},
 	}

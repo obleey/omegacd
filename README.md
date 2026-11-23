@@ -785,6 +785,11 @@ make docker             # build the container image
 make up / make down     # run that image with deploy/compose.yaml (its own volumes)
 ```
 
+On macOS the suite runs too, as a check before the Linux one: Hosts are Linux (macOS is for development only), and
+`test/linux.sh` runs everything on the supported Linux servers. One check is Linux-only: OrbStack's file sharing now and
+then hands a container started right after a file was rewritten its old content, so `migrations.sh` skips what a
+rewritten migration did there, saying so.
+
 | Path | |
 | --- | --- |
 | `cmd/omegacd` | entry point: server and CLI |

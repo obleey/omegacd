@@ -36,12 +36,15 @@ ENGINES_ROOT ?= $(abspath $(or $(TMPDIR),/tmp))/omegacd-engines
 # ENGINES picks some: test/linux.sh adds host-podman (the machine's own rootless Podman, run as the test's user:
 # Q58's rootless case) on every machine
 ENGINES ?= rootful rootless podman
+# what runs on each engine (Q332): every integration test of the Agent, the importer and the engine package
+ENGINE_PKGS := ./internal/agent ./internal/importer ./internal/engine
+
 test-engines:
 	test/engines.sh up $(ENGINES_ROOT)
-	$(if $(filter rootful,$(ENGINES)),go test -tags integration -count=1 $(call cov,engines-rootful,./internal/...) -run TestAgent ./internal/agent)
-	$(if $(filter rootless,$(ENGINES)),DOCKER_HOST=tcp://127.0.0.1:23750 OMEGACD_IT_ROOT=$(ENGINES_ROOT) go test -tags integration -count=1 $(call cov,engines-rootless,./internal/...) -run TestAgent ./internal/agent)
-	$(if $(filter podman,$(ENGINES)),DOCKER_HOST=tcp://127.0.0.1:23751 OMEGACD_IT_ROOT=$(ENGINES_ROOT) go test -tags integration -count=1 $(call cov,engines-podman,./internal/...) -run TestAgent ./internal/agent)
-	$(if $(filter host-podman,$(ENGINES)),DOCKER_HOST=unix://$$XDG_RUNTIME_DIR/podman/podman.sock go test -tags integration -count=1 $(call cov,engines-host-podman,./internal/...) -run TestAgent ./internal/agent)
+	$(if $(filter rootful,$(ENGINES)),go test -tags integration -count=1 $(call cov,engines-rootful,./internal/...) $(ENGINE_PKGS))
+	$(if $(filter rootless,$(ENGINES)),DOCKER_HOST=tcp://127.0.0.1:23750 OMEGACD_IT_ROOT=$(ENGINES_ROOT) go test -tags integration -count=1 $(call cov,engines-rootless,./internal/...) $(ENGINE_PKGS))
+	$(if $(filter podman,$(ENGINES)),DOCKER_HOST=tcp://127.0.0.1:23751 OMEGACD_IT_ROOT=$(ENGINES_ROOT) go test -tags integration -count=1 $(call cov,engines-podman,./internal/...) $(ENGINE_PKGS))
+	$(if $(filter host-podman,$(ENGINES)),DOCKER_HOST=unix://$$XDG_RUNTIME_DIR/podman/podman.sock go test -tags integration -count=1 $(call cov,engines-host-podman,./internal/...) $(ENGINE_PKGS))
 	@echo "engines tested: $(ENGINES)"
 
 # the whole suite, as before every PR (web/build must exist: make web): vet, unit with -race, integration, the Agent on
