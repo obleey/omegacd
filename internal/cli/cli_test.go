@@ -246,7 +246,8 @@ func TestSyncWait(t *testing.T) {
 		"POST /api/apps/app/sync":   map[string]int64{"opID": 7},
 		"GET /api/apps/app/history": []domain.SyncOperation{{ID: 7, Phase: domain.OpRunning}},
 	})
-	r = run(t, srv, nil, "", "app", "sync", "app", "--wait", "--timeout", "30ms")
+	// the timeout comes while it sleeps between looks, never during one: the sleep's own return is covered every run
+	r = runWith(t, srv, nil, func(c *CLI) { c.Poll = time.Hour }, "app", "sync", "app", "--wait", "--timeout", "30ms")
 	if r.code != 1 || !strings.Contains(r.stderr, "timed out after 30ms") {
 		t.Fatalf("timeout: %+v", r)
 	}
