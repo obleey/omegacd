@@ -9,7 +9,7 @@ require (
 	github.com/containerd/errdefs v1.0.0
 	github.com/distribution/reference v0.6.0
 	github.com/docker/cli v29.10.0+incompatible
-	github.com/docker/compose/v5 v5.7.2
+	github.com/docker/compose/v5 v5.8.0
 	github.com/getsops/sops/v3 v3.13.3
 	github.com/go-git/go-git/v5 v5.19.3
 	github.com/moby/moby/api v1.57.0
@@ -155,6 +155,7 @@ require (
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/moby/buildkit v0.33.1 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
+	github.com/moby/extensions v0.0.0-20261020100352-d2819d88bcbe // indirect
 	github.com/moby/go-archive v0.3.3 // indirect
 	github.com/moby/locker v1.0.1 // indirect
 	github.com/moby/patternmatcher v0.6.1 // indirect
