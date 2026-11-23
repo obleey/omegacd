@@ -221,7 +221,7 @@ outside its folders, to whichever user gets the uid next, and could delete a use
 servers' own login is `omegacd`, which `sysusers` keeps); so the users stay.
 
 ### M6-10 · Decrypted files as bind mounts
-**Status:** todo
+**Status:** done (2026-11-23, PR #169)
 **Depends on:** M4-01
 
 A Sync refuses a relative bind mount whose source isn't in Git (`checkBindSources`, so data written there isn't lost
@@ -235,6 +235,12 @@ Found while building M6-03, whose `systemd.sh` mounts its decrypted file as a Co
 **Done when:** an app mounting both a plain file from Git and a decrypted file as bind volumes deploys and its container
 reads both, they come back after `systemd.sh`'s simulated reboot, and a mount of a file neither in Git nor decrypted
 from one is still refused with the same message.
+
+**Decisions (Q327–Q331, 2026-11-23):** a bind source is accepted when a `.sops.` file from Git in its folder decrypts
+to it, by one rule in `secrets.DecryptedName` that the other copies use too (Q327); a plain file and the `.sops.` file
+decrypting to it, both in Git, fail the render naming both (Q328); no `:ro` required (Q329); unit cases in the render's
+tests, `systemd.sh` mounting a plain and a decrypted file beside its Compose secret across the reboot (Q330); the
+README's Secrets example and data table show the mount (Q331).
 
 ### M6-11 · Initial admin password, changed at first login
 **Status:** done (2026-11-23, PR #167)

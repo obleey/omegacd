@@ -2,9 +2,10 @@
 # End-to-end: the .deb (M6-09) with this checkout's binary, and the Agent's systemd units in it (M6-03) as an operator
 # uses them, a drop-in only logging at debug and collecting coverage: the system unit as the omegacd-agent user in the
 # docker group on rootful Docker (Q242), the user unit on the test user's rootless Docker and rootless Podman (Q244,
-# Q246). Each enrolls, deploys an app with a restart policy that mounts a decrypted file, keeps its work dir across an
-# Agent restart (Q243), and comes through a simulated reboot: the Agent and engine stopped, the RAM work dir emptied, the
-# engine started, which runs the restore unit first, so the container starts again with its file (Q59, Q248). Then the
+# Q246). Each enrolls, deploys an app with a restart policy that mounts a decrypted file (as a Compose secret and a bind
+# mount, M6-10) and a plain file from Git, keeps its work dir across an Agent restart (Q243), and comes through a
+# simulated reboot: the Agent and engine stopped, the RAM work dir emptied, the engine started, which runs the restore
+# unit first, so the container starts again with its files (Q59, Q248). Then the
 # package: an upgrade restarts the Agents under the running app (Q256), remove keeps the state, a reinstall starts the
 # Agent again, the Control Plane's unit runs, and purge leaves nothing of the Agent's (Q257, Q260). Linux with systemd,
 # apt and passwordless sudo; it changes the machine (a package, users), so it runs on the test servers and CI's runners.
@@ -38,8 +39,12 @@ waitfor() { for _ in $(seq $((${2:-30} * 5))); do eval "$1" && return 0; sleep 0
 syslog() { sudo journalctl -u omegacd-agent -o cat --since "@$START" 2>/dev/null; }
 ulog() { journalctl --user -u omegacd-agent -o cat --since "@$START" 2>/dev/null; }
 ctr() { DOCKER_HOST=$2 docker ps -q --filter label=com.docker.compose.project="$1"; } # APP ENGINE
-# the file the app's container reads: the decrypted secret, restored (a folder Docker made can't be cat)
-shows() { [ "$(DOCKER_HOST=$2 docker exec "$(ctr "$1" "$2")" cat /run/secrets/token 2>/dev/null)" = "TOKEN=$SECRET" ]; }
+# the files the app's container reads, restored (a folder Docker made can't be cat): the decrypted file as a Compose
+# secret and as a bind mount (Q330), and a plain file from Git as a bind mount
+shows() {
+  [ "$(DOCKER_HOST=$2 docker exec "$(ctr "$1" "$2")" cat /run/secrets/token /secret.env /plain.conf 2>/dev/null)" = \
+    "$(printf 'TOKEN=%s\nTOKEN=%s\nPLAIN=git' "$SECRET" "$SECRET")" ]
+}
 mono() { "$@" | tr -dc 0-9; } # a unit's monotonic timestamp, from systemctl show -p … --value
 # a system user, which the test removes after itself: the test servers' own login is omegacd too (the package's
 # Control Plane then runs as it), never removed
@@ -122,11 +127,13 @@ approve() {
   local fp; fp=$($2 | grep -o 'fingerprint=SHA256:[A-Za-z0-9+/]*' | head -1 | cut -d= -f2)
   "$BIN" host approve "$1" "$fp" >/dev/null
 }
-# deploy APP HOST: an app with a restart policy and a Compose secret, a file decrypted from Git with its Host's key
+# deploy APP HOST: an app with a restart policy, a file decrypted from Git with its Host's key as a Compose secret and
+# as a bind mount (M6-10), and a plain file from Git bind-mounted
 deploy() {
   local rcpt; rcpt=$("$BIN" host list -o json | python3 -c "import json,sys; print([h for h in json.load(sys.stdin) if h['name']=='$2'][0]['ageRecipient'])")
   mkdir -p "$REPO/$1"
-  printf 'services:\n  web:\n    image: busybox:1.38\n    restart: always\n    command: ["sh", "-c", "cat /run/secrets/token; sleep 3600"]\n    secrets: [token]\nsecrets:\n  token:\n    file: ./secret.env\n' > "$REPO/$1/compose.yaml"
+  printf 'services:\n  web:\n    image: busybox:1.38\n    restart: always\n    command: ["sh", "-c", "cat /run/secrets/token; sleep 3600"]\n    secrets: [token]\n    volumes:\n      - ./secret.env:/secret.env:ro\n      - ./plain.conf:/plain.conf:ro\nsecrets:\n  token:\n    file: ./secret.env\n' > "$REPO/$1/compose.yaml"
+  printf 'PLAIN=git\n' > "$REPO/$1/plain.conf"
   printf 'TOKEN=%s\n' "$SECRET" | SOPS_AGE_RECIPIENTS=$rcpt sops --encrypt --input-type dotenv --output-type dotenv /dev/stdin > "$REPO/$1/secret.sops.env"
   gitc add -A && gitc commit -qm "$1"
   "$BIN" app create "$1" --repo "$REPO" --path "$1" --host "$2" >/dev/null

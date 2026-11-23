@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/obleey/omegacd/internal/domain"
+	"github.com/obleey/omegacd/internal/secrets"
 )
 
 // Write makes dest hold exactly files, reading each one's content with blob: files are overwritten in place (same
@@ -25,9 +26,18 @@ func Write(dest string, files []domain.File, blob func(hash string) ([]byte, err
 	keep := map[string]bool{}
 	for _, f := range files {
 		keep[f.Path] = true
+	}
+	for _, f := range files {
 		if base := path.Base(f.Path); strings.Contains(base, ".sops.") {
-			keep[path.Join(path.Dir(f.Path), strings.Replace(base, ".sops.", ".", 1))] = true
+			out := path.Join(path.Dir(f.Path), secrets.DecryptedName(base))
+			if keep[out] && secrets.Encrypted(base) { // decrypting would silently replace a file from Git (Q328)
+				return fmt.Errorf("%w: %s and %s are both in Git, and decrypting %s would replace %s: keep one",
+					domain.ErrInvalid, out, f.Path, f.Path, out)
+			}
+			keep[out] = true
 		}
+	}
+	for _, f := range files {
 		content, err := blob(f.SHA256)
 		if err != nil {
 			return fmt.Errorf("%s: %w", f.Path, err)

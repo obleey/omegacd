@@ -128,6 +128,13 @@ func TestValidateBindSources(t *testing.T) {
 		{"./html/../../x:/x", "outside the Application's files"},
 		{"ROOT/other:/other", ""}, // absolute, even right next to the app folder
 		{"~/media:/media", ""},    // home dir: absolute too
+		// decrypted on the Host from a .sops. file in Git beside it (Q327)
+		{"./app.yaml:/etc/app.yaml:ro", ""},
+		{"./html/site.env:/site.env", ""},
+		{"./site.env:/site.env", "mounts ./site.env, which is not in Git"},  // its .sops. file is in html/
+		{"./gone/x.env:/x.env", "mounts ./gone/x.env, which is not in Git"}, // no such folder
+		{"./.yaml:/x.yaml", "mounts ./.yaml, which is not in Git"},          // .sops.yaml is SOPS's config, not a secret
+		{"./tls.d:/tls", "mounts ./tls.d, which is not in Git"},             // tls.sops.d is a folder, not decrypted
 	}
 	for _, tt := range tests {
 		root := t.TempDir()
@@ -135,13 +142,19 @@ func TestValidateBindSources(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(dir, "html"), 0o755); err != nil {
 			t.Fatal(err)
 		}
+		if err := os.MkdirAll(filepath.Join(dir, "tls.sops.d"), 0o755); err != nil {
+			t.Fatal(err)
+		}
 		vol := strings.Replace(tt.volume, "ROOT", root, 1)
 		if !strings.HasPrefix(vol, "{") {
 			vol = strconv.Quote(vol)
 		}
 		files := map[string]string{
-			"conf.yaml": "a: 1\n",
-			"web.env":   "A=1\n",
+			"conf.yaml":          "a: 1\n",
+			"app.sops.yaml":      "a: ENC\n",
+			"html/site.sops.env": "A=ENC\n",
+			".sops.yaml":         "creation_rules: []\n",
+			"web.env":            "A=1\n",
 			"compose.yaml": "services:\n  web:\n    image: busybox\n    env_file: web.env\n    configs: [conf]\n    volumes: [" + vol + "]\n" +
 				"configs:\n  conf: {file: ./conf.yaml}\nvolumes:\n  data: {}\n",
 		}

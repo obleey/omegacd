@@ -455,7 +455,7 @@ func (c *Controller) secretDetail(ctx context.Context, a domain.Application, d d
 	d.Info = map[string]string{"type": "file", "secret": "values decrypted only on the Host: never sent anywhere"}
 	name := filepath.ToSlash(d.Name)
 	i := slices.IndexFunc(r.Files, func(f domain.File) bool {
-		return path.Join(path.Dir(f.Path), strings.Replace(path.Base(f.Path), ".sops.", ".", 1)) == name && f.Path != name
+		return path.Join(path.Dir(f.Path), secrets.DecryptedName(path.Base(f.Path))) == name && f.Path != name
 	})
 	if i < 0 { // not from a SOPS file in Git: a Compose secret made on the Host
 		return d, nil

@@ -222,7 +222,7 @@ func checkNoBuild(p *types.Project) error {
 	return nil
 }
 
-// checkBindSources refuses relative bind mounts that are not in Git: every Sync makes the app dir match Git
+// checkBindSources refuses relative bind mounts that are not in Git, nor decrypted from it: every Sync makes the app dir match Git
 // exactly, so files a container writes there would be deleted on the next Sync (and on reboot, with the
 // work dir in /run). Only named volumes and absolute paths keep data.
 func checkBindSources(p *types.Project, dir string) error {
@@ -236,13 +236,22 @@ func checkBindSources(p *types.Project, dir string) error {
 				return fmt.Errorf("%w: service %q mounts %s, outside the Application's files; "+
 					"use a named volume or an absolute path", domain.ErrInvalid, name, v.Source)
 			}
-			if _, err := os.Stat(src); errors.Is(err, fs.ErrNotExist) {
+			if _, err := os.Stat(src); errors.Is(err, fs.ErrNotExist) && !decrypted(src) {
 				return fmt.Errorf("%w: service %q mounts %s, which is not in Git: OmegaCD deletes files that are not in Git on every Sync, "+
 					"so data written there would be lost; use a named volume or an absolute path", domain.ErrInvalid, name, v.Source)
 			}
 		}
 	}
 	return nil
+}
+
+// decrypted reports whether src is a file the Host decrypts from an Encrypted Secret in Git beside it (Q327): a
+// decrypted file is rewritten on every Sync and after a reboot, so it mounts like a file from Git.
+func decrypted(src string) bool {
+	entries, _ := os.ReadDir(filepath.Dir(src)) // a missing folder has none
+	return slices.ContainsFunc(entries, func(e fs.DirEntry) bool {
+		return e.Type().IsRegular() && secrets.Encrypted(e.Name()) && secrets.DecryptedName(e.Name()) == filepath.Base(src)
+	})
 }
 
 // outdatedKeys warns about each Encrypted Secret not encrypted for exactly recipients, the Host's key and the people's
