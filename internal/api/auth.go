@@ -8,9 +8,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"os"
 	"path"
 	"strings"
 	"time"
@@ -29,32 +31,51 @@ const (
 	maxPassword   = 72    // bcrypt reads no more (Q148)
 )
 
-// EnsureAdmin initialises the admin account on first start.
-func EnsureAdmin(ctx context.Context, store domain.Store, initialPassword string, log *slog.Logger) error {
+// InitialPasswordFile is the file in the data dir that holds the admin's generated first password until it is
+// changed (Q300).
+const InitialPasswordFile = "initial-admin-password"
+
+// EnsureAdmin makes the admin account at the first start: a generated password, written to file (mode 0600) and never
+// logged, to be changed at the first login (Q298, Q300). While file is there, every start says where it is (Q312).
+func EnsureAdmin(ctx context.Context, store domain.Store, file string, log *slog.Logger) error {
 	_, _, err := store.AdminPasswordHash(ctx)
-	if err == nil || !errors.Is(err, domain.ErrNotFound) {
+	if errors.Is(err, domain.ErrNotFound) {
+		err = newAdminPassword(ctx, store, file)
+	}
+	if err != nil {
 		return err
 	}
-	generated := initialPassword == ""
-	if generated {
-		initialPassword = rand.Text()[:20]
+	if _, err := os.Stat(file); err != nil {
+		log.Debug("no initial admin password file: the admin's password was set", "path", file, "err", err)
+		return nil
 	}
-	if len(initialPassword) > maxPassword { // Q148
-		return fmt.Errorf("OMEGACD_ADMIN_PASSWORD is %d bytes: at most %d", len(initialPassword), maxPassword)
-	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(initialPassword), bcrypt.DefaultCost)
-	if err != nil { // coverage: unreachable, bcrypt refuses only a password over its 72 bytes, checked above
-		return err
-	}
-	if err := store.SetAdminPassword(ctx, string(hash), generated); err != nil {
-		return err
-	}
-	if generated {
-		// the one secret logged on purpose (Q62): generated at first start, it must be changed at first login. Its key
-		// isn't a secret's name, so the logger's redaction lets it through.
-		log.Warn("initial admin password: log in and change it", "username", adminUser, "initial", initialPassword)
-	}
+	log.Warn("the initial admin password is in this file: log in as admin and change it", "username", adminUser, "path", file)
 	return nil
+}
+
+// ResetAdminPassword writes a new generated password to file and requires it changed at the next login, ending every
+// session; API tokens keep working (Q311).
+func ResetAdminPassword(ctx context.Context, store domain.Store, file string) error {
+	if err := newAdminPassword(ctx, store, file); err != nil {
+		return err
+	}
+	return store.DeleteSessionsExcept(ctx, "")
+}
+
+func newAdminPassword(ctx context.Context, store domain.Store, file string) error {
+	password := rand.Text()[:20]
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil { // coverage: unreachable, bcrypt refuses only a password over its 72 bytes, and this has 20
+		return err
+	}
+	// the file first: a password in the database that nobody can read would lock the admin out
+	if err := os.WriteFile(file, []byte(password+"\n"), 0o600); err != nil {
+		return fmt.Errorf("write the initial admin password: %w", err)
+	}
+	if err := os.Chmod(file, 0o600); err != nil { // coverage: unreachable, the file was just written by this user
+		return err
+	}
+	return store.SetAdminPassword(ctx, string(hash), true)
 }
 
 type loginState struct {
@@ -281,6 +302,13 @@ func (s *server) changePassword(w http.ResponseWriter, r *http.Request) {
 	if err := s.Store.SetAdminPassword(r.Context(), string(newHash), false); err != nil {
 		writeError(w, err)
 		return
+	}
+	if s.InitialPasswordFile != "" { // the first password is no use any more (Q300); the change counts anyway (Q313)
+		if err := os.Remove(s.InitialPasswordFile); err == nil {
+			s.Log.InfoContext(r.Context(), "admin password changed: the initial password file is deleted", "path", s.InitialPasswordFile)
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			s.Log.ErrorContext(r.Context(), "admin password changed, but the initial password file is left: delete it", "path", s.InitialPasswordFile, "err", err)
+		}
 	}
 	keep := ""
 	if c, err := r.Cookie(sessionCookie); err == nil {

@@ -52,6 +52,9 @@
 		<button class="primary" type="submit" disabled={busy}>
 			{#if busy}<Icon name="notch" size={15} spin />Logging in…{:else}Log in{/if}
 		</button>
+		<!-- the page can't know whether this is the first login (Q314): always here -->
+		<p class="first muted small">First login? The password is in <code>initial-admin-password</code> in OmegaCD's data folder:
+			<code>docker compose exec omegacd cat /data/initial-admin-password</code>. You'll set your own right after.</p>
 	</form>
 	<p class="foot muted small">Keeps Compose projects in line with Git.</p>
 </div>
@@ -70,4 +73,5 @@
 	.error { margin: 0 0 1rem; }
 	button { width: 100%; margin-top: 0.4rem; padding: 0.55rem; }
 	.foot { position: relative; margin: 0; }
+	.first { margin: 1rem 0 0; line-height: 1.45; overflow-wrap: anywhere; }
 </style>

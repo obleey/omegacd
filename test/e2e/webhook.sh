@@ -3,6 +3,7 @@
 # Uses a throwaway OmegaCD and a throwaway Forgejo user + repo, both removed at the end.
 set -u
 BIN=${OMEGACD_BIN:-$(cd "$(dirname "$0")/../.." && pwd)/bin/omegacd}
+. "$(dirname "$0")/admin.sh"
 FJ=${OMEGACD_E2E_FORGEJO:-forgejo-forgejo-1}   # a running Forgejo container, served at FURL
 FURL=${OMEGACD_E2E_FORGEJO_URL:-http://git.localhost}
 docker inspect "$FJ" >/dev/null 2>&1 || { echo "SKIP  no Forgejo container $FJ (set OMEGACD_E2E_FORGEJO)"; exit 0; }
@@ -37,7 +38,7 @@ age-keygen -o "$T/age.key" 2>/dev/null
 mkdir -p "$T/data"
 # all interfaces: Forgejo reaches it via host.docker.internal, on Linux the Docker bridge, not loopback
 OMEGACD_ADDR=:18080 OMEGACD_DATA=$T/data OMEGACD_AGE_KEY_FILE=$T/age.key \
-  OMEGACD_ADMIN_PASSWORD=e2e-password-123 OMEGACD_POLL_INTERVAL=1h OMEGACD_WEBHOOK_SECRET=$SECRET "$BIN" > "$T/server.log" 2>&1 &
+  OMEGACD_POLL_INTERVAL=1h OMEGACD_WEBHOOK_SECRET=$SECRET "$BIN" > "$T/server.log" 2>&1 &
 SRV=$!
 cleanup() {
   "$BIN" app delete hook-test --volumes --yes >/dev/null 2>&1
@@ -47,10 +48,7 @@ cleanup() {
 }
 trap cleanup EXIT
 for _ in $(seq 50); do curl -sf $API/version >/dev/null && break; sleep 0.2; done
-curl -sf -c "$T/j" -H 'Content-Type: application/json' -d '{"username":"admin","password":"e2e-password-123"}' $API/auth/login >/dev/null
-export OMEGACD_SERVER=http://127.0.0.1:18080
-export OMEGACD_TOKEN=$(curl -sf -b "$T/j" -H 'Content-Type: application/json' -H 'X-Requested-With: omegacd' \
-  -d '{"name":"e2e"}' $API/settings/tokens | python3 -c 'import json,sys; print(json.load(sys.stdin)["plaintext"])')
+admin_login "$API" "$T/data"
 . "$(dirname "$0")/enroll.sh"; enroll box # the Control Plane's machine, a Host like any other (Q104)
 # the private repo needs a credential in OmegaCD
 code=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $OMEGACD_TOKEN" -H 'X-Requested-With: omegacd' -H 'Content-Type: application/json' \
@@ -86,7 +84,7 @@ check "a forged webhook is refused (401)" '[ "$code" = 401 ]'
 grep -i "webhook\|sync finished" "$T/server.log" | cut -c1-200 | tail -4
 
 check "with a webhook secret set, no warning about it (Q134)" '! grep -q "OMEGACD_WEBHOOK_SECRET is unset" "$T/server.log"'
-check "the logs are at debug and hold no secret (Q62)" 'grep -q level=DEBUG "$T/server.log" && ! grep -qF -e "$SECRET" -e "$FTOK" -e "$PW" -e e2e-password-123 -e "$OMEGACD_TOKEN" "$T/server.log" "$AGENT_LOG"'
+check "the logs are at debug and hold no secret (Q62)" 'grep -q level=DEBUG "$T/server.log" && ! grep -qF -e "$SECRET" -e "$FTOK" -e "$PW" -e "$ADMIN_FIRST_PW" -e "$ADMIN_PW" -e "$OMEGACD_TOKEN" "$T/server.log" "$AGENT_LOG"'
 
 check "deployed by the Agent of the Control Plane's machine, as its log says (Q104)" 'grep -q "msg=deploy" "$AGENT_LOG"'
 

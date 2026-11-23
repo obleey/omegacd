@@ -60,7 +60,6 @@ cp "$LBIN" "$T/bc/omegacd"
 docker pull -q busybox:1.38 >/dev/null
 check "the image builds from the Dockerfile" 'docker buildx build -q --load --build-context go="$T/bc" -t $IMAGE "$ROOT" >/dev/null 2>&1'
 
-PW=$(python3 -c 'import secrets; print(secrets.token_urlsafe(12))')
 # coverage where the e2e binary writes it, by the containers' users too
 cover() {
   [ -n "${GOCOVERDIR:-}" ] || return 0
@@ -71,8 +70,8 @@ cover() {
   echo "services:"
   echo "  source-certs:"; cover
   echo "  source-server:"; cover; echo '    extra_hosts: ["git.localhost:host-gateway"]'
-  printf '  omegacd:\n    environment: {OMEGACD_ADMIN_PASSWORD: "%s", OMEGACD_LOG_LEVEL: debug, OMEGACD_POLL_INTERVAL: 1h%s}\n' \
-    "$PW" "${GOCOVERDIR:+, GOCOVERDIR: $GOCOVERDIR}"
+  printf '  omegacd:\n    environment: {OMEGACD_LOG_LEVEL: debug, OMEGACD_POLL_INTERVAL: 1h%s}\n' \
+    "${GOCOVERDIR:+, GOCOVERDIR: $GOCOVERDIR}"
   [ -z "${GOCOVERDIR:-}" ] || printf '    volumes: ["%s:%s"]\n' "$GOCOVERDIR" "$GOCOVERDIR"
 } > "$T/cp-cover.yaml"
 {
@@ -93,10 +92,11 @@ check "and made its Master Key itself, in its keys volume (Q115)" 'cp_ logs omeg
 CA=$(docker run --rm -v ${CP}_source-tls:/c busybox:1.38 cat /c/ca.pem | cksum)
 MK=$(docker run --rm -v ${CP}_omegacd-keys:/k busybox:1.38 cat /k/age.key | cksum)
 
-curl -sf -c "$T/j" -H 'Content-Type: application/json' -d "{\"username\":\"admin\",\"password\":\"$PW\"}" $API/auth/login >/dev/null
-export OMEGACD_SERVER=http://127.0.0.1:18080
-export OMEGACD_TOKEN=$(curl -sf -b "$T/j" -H 'Content-Type: application/json' -H 'X-Requested-With: omegacd' \
-  -d '{"name":"e2e"}' $API/settings/tokens | python3 -c 'import json,sys; print(json.load(sys.stdin)["plaintext"])')
+ADMIN_FIRST_PW=$(sed -n 's/^Initial admin password: \([^ ]*\) .*/\1/p' "$T/install.out")
+check "install.sh full prints the first admin password, the one in the data volume's file (Q300)" \
+  '[ -n "$ADMIN_FIRST_PW" ] && [ "$(cp_ exec -T omegacd cat /data/initial-admin-password)" = "$ADMIN_FIRST_PW" ]'
+. "$(dirname "$0")/admin.sh"; admin_login "$API" ""
+check "the first login changed it, and its file is gone" '! cp_ exec -T omegacd test -e /data/initial-admin-password'
 
 # the Agent in a container, through install.sh: a .env with the Control Plane, the invite and the socket's group (the
 # engine's view of it: OrbStack's differs from macOS's)
@@ -229,7 +229,7 @@ if [ "$(uname)" = Linux ] && { [ -S "${DOCKERR#unix://}" ] || [ -n "${OMEGACD_TE
   rootless "rootless Docker" d "$DOCKERR" "https://$IP:18443" rootless-docker "$T/agentd-ca.yaml"
 fi
 
-check "no password in the logs (Q62)" '! { cp_ logs 2>&1; agentlog; } | grep -qF "$PW"'
+check "no password in the logs (Q62)" '! { cp_ logs 2>&1; agentlog; } | grep -qF -e "$ADMIN_FIRST_PW" -e "$ADMIN_PW"'
 
 [ $fail -eq 0 ] && echo "ALL PASSED" || {
   echo "--- agent log"; agentlog | tail -15; echo "--- control plane log"; cp_ logs omegacd 2>&1 | tail -10

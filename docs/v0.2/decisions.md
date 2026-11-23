@@ -128,7 +128,7 @@ change it here first.
   never logged**, at any level (a test injects known secrets and scans every log line); URLs are logged redacted, and
   the logger replaces any value whose key names a secret (password, token, …) as a safety net. One exception, on
   purpose (user's choice, 2026-11-08): the admin password generated at first start without `OMEGACD_ADMIN_PASSWORD`,
-  logged once and changed at first login.
+  logged once and changed at first login. (Gone with Q300: the first password is in a file, the log says only where.)
   The CLI reads the same settings with `warn` as its default: it talks to people (at `debug` it shows its API calls).
 - **Q47** `import` goes only through the Agent (`--host NAME`); no SSH path.
 - **Q34/Q52** Talks to any Docker-compatible socket; Podman rootless is in v0.2's test matrix; engine badges everywhere.
@@ -1032,3 +1032,20 @@ Building Q189–Q201:
   ignored, and an admin who exists keeps their password.
 - **Q302** One shared e2e helper reads the file, logs in, changes the password and makes the API token; every e2e
   script, `deploy-compose.sh` and the README walkthrough use it.
+- **Q311** `omegacd reset-admin-password`, run on the Control Plane's machine with its data dir (Compose:
+  `docker compose exec omegacd omegacd reset-admin-password`; `.deb`: `sudo omegacd-reset-admin-password`, Q316), generates a
+  new password into `initial-admin-password`, requires it changed at the next login and ends every session; API tokens
+  keep working. A lost password has a way back.
+- **Q312** While the file exists, every start logs at warn where it is ("log in as admin and change it"), never the
+  password; after the change, nothing.
+- **Q313** The file is never in `omegacd backup`; a restart before the first login keeps it and its password; if it
+  can't be deleted after the change, the change still counts and the error names the path to delete by hand; an install
+  whose generated password is only in its old log gets no file on upgrade (the log has it; Q311 covers the rest).
+- **Q314** The login page shows a fixed hint where the first password is; no unauthenticated "setup pending" endpoint.
+- **Q315** API tokens need no check of their own: one can be made only after logging in, which the must-change block
+  already stops until the password is changed.
+- **Q316** (corrects Q311's `.deb` line) Run from a shell, `omegacd reset-admin-password` has neither the unit's
+  settings nor its user: as root it would leave the database's `-wal`/`-shm` files and the password file root's. The
+  `.deb` ships `omegacd-reset-admin-password`, a few lines of shell running it with the unit's settings as `omegacd`
+  (`runuser`): `sudo omegacd-reset-admin-password`. The command itself refuses root on a database another user owns,
+  naming that wrapper.

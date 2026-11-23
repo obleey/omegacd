@@ -13,7 +13,7 @@ mkdir -p "$T/data"
 # what v0.1 left: its migrations counted to 16
 python3 -c 'import sqlite3,sys; d=sqlite3.connect(sys.argv[1]); d.executescript("CREATE TABLE apps (name TEXT PRIMARY KEY); INSERT INTO apps VALUES (\"web\"); PRAGMA user_version = 16;"); d.close()' "$T/data/omegacd.db"
 before=$(shasum -a 256 "$T/data/omegacd.db")
-server() { OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$1 OMEGACD_AGE_KEY_FILE=$T/age.key OMEGACD_ADMIN_PASSWORD=e2e-password-123 exec "$BIN" "${@:2}"; }
+server() { OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$1 OMEGACD_AGE_KEY_FILE=$T/age.key exec "$BIN" "${@:2}"; }
 
 server "$T/data" > "$T/old.log" 2>&1 & pid=$!
 for _ in $(seq 50); do kill -0 $pid 2>/dev/null || break; sleep 0.2; done

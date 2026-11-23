@@ -6,6 +6,7 @@
 # and the App of Apps takes them over: the unchanged one without deploying, the rolled back one with a normal Sync.
 set -u # no pipefail: grep -q closing the pipe early must not fail a check
 BIN=${OMEGACD_BIN:-$(cd "$(dirname "$0")/../.." && pwd)/bin/omegacd}
+. "$(dirname "$0")/admin.sh"
 T=$(mktemp -d "${TMPDIR:-/tmp}/omegacd-e2er.XXXX")
 REPO=$T/repo API=http://127.0.0.1:18080/api
 mkdir -p "$REPO/apps" "$REPO/web" "$REPO/db"
@@ -37,14 +38,11 @@ gitc init -q -b main && gitc add -A && gitc commit -qm v1
 V1=$(git -C "$REPO" rev-parse HEAD)
 
 server() { # data dir, Master Key file
-  OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$1 OMEGACD_AGE_KEY_FILE=$2 OMEGACD_ADMIN_PASSWORD=e2e-password-123 \
+  OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$1 OMEGACD_AGE_KEY_FILE=$2 \
     OMEGACD_POLL_INTERVAL=1h "$BIN" >> "$T/server.log" 2>&1 &
   SRV=$!
   for _ in $(seq 50); do curl -sf $API/version >/dev/null && break; sleep 0.2; done
-  curl -sf -c "$T/j" -H 'Content-Type: application/json' -d '{"username":"admin","password":"e2e-password-123"}' $API/auth/login >/dev/null
-  export OMEGACD_SERVER=http://127.0.0.1:18080
-  export OMEGACD_TOKEN=$(curl -sf -b "$T/j" -H 'Content-Type: application/json' -H 'X-Requested-With: omegacd' \
-    -d '{"name":"e2e-'$RANDOM'"}' $API/settings/tokens | python3 -c 'import json,sys; print(json.load(sys.stdin)["plaintext"])')
+  admin_login "$API" "$1"
 }
 stop() { kill "$@" 2>/dev/null; wait "$@" 2>/dev/null; }
 . "$(dirname "$0")/enroll.sh"
@@ -121,7 +119,7 @@ env -i PATH="$PATH" ${GOCOVERDIR:+GOCOVERDIR=$GOCOVERDIR} HOME="$T/edge" XDG_RUN
   ${DOCKER_HOST:+DOCKER_HOST=$DOCKER_HOST} OMEGACD_LOG_LEVEL=debug OMEGACD_AGENT_CONTROL_PLANE=$OMEGACD_SERVER "$BIN" agent >> "$AGENT_LOG" 2>&1 &
 AGENT=$!
 check "after its next resync nothing is unmanaged" 'waitfor "[ -z \"\$(unmanaged)\" ]"'
-check "no secret in any log (Q62)" '! grep -qF -e "$GITPW" -e e2e-password-123 "$T/server.log" "$AGENT_LOG"'
+check "no secret in any log (Q62)" '! grep -qF -e "$GITPW" -e "$ADMIN_FIRST_PW" -e "$ADMIN_PW" "$T/server.log" "$AGENT_LOG"'
 
 [ $fail -eq 0 ] && echo "ALL PASSED" || { echo "--- server log"; tail -25 "$T/server.log"; echo "--- agent log"; tail -15 "$AGENT_LOG"; }
 exit $fail

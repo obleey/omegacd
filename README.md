@@ -69,7 +69,7 @@ OmegaCD (the Control Plane) makes an [age](https://github.com/FiloSottile/age) k
 curl -fsSL https://github.com/obleey/omegacd/releases/latest/download/install.sh | sh
 ```
 
-[`install.sh`](deploy/install.sh) asks **full** (OmegaCD itself) or **agent** (a [Host's](#hosts) Agent). Full mode asks for the folder and the port, starts OmegaCD with Docker Compose and prints the URL and the initial admin password; then open the UI and add a Host. Agent mode takes OmegaCD's address and an invite (Hosts → Add Host shows the line with both filled in) and installs the Agent for the engine it finds (install Docker or Podman first; on Debian with its recommended packages, as apt does by default: a minimal image without them lacks the `docker` command and Podman's networking): the [`.deb`](#option-2-binary--systemd)'s systemd service where apt is there (as its own user with rootful Docker, as you with rootless Docker or Podman), or [in a container](#the-agent-in-a-container). Run it as the user whose Docker or Podman the Agent uses; it asks for `sudo` where it needs root. Each release has its own `install.sh`, which installs that release; running it again upgrades to it and keeps the keys and settings. It runs unattended with the settings listed at its top (`OMEGACD_MODE`, `OMEGACD_PORT`, `OMEGACD_AGENT_CONTROL_PLANE`, …). The options below do the same by hand.
+[`install.sh`](deploy/install.sh) asks **full** (OmegaCD itself) or **agent** (a [Host's](#hosts) Agent). Full mode asks for the folder and the port, starts OmegaCD with Docker Compose and prints the URL and the first admin password, which you change at the first login; then open the UI and add a Host. Agent mode takes OmegaCD's address and an invite (Hosts → Add Host shows the line with both filled in) and installs the Agent for the engine it finds (install Docker or Podman first; on Debian with its recommended packages, as apt does by default: a minimal image without them lacks the `docker` command and Podman's networking): the [`.deb`](#option-2-binary--systemd)'s systemd service where apt is there (as its own user with rootful Docker, as you with rootless Docker or Podman), or [in a container](#the-agent-in-a-container). Run it as the user whose Docker or Podman the Agent uses; it asks for `sudo` where it needs root. Each release has its own `install.sh`, which installs that release; running it again upgrades to it and keeps the keys and settings. It runs unattended with the settings listed at its top (`OMEGACD_MODE`, `OMEGACD_PORT`, `OMEGACD_AGENT_CONTROL_PLANE`, …). The options below do the same by hand.
 
 ### Option 1: Docker Compose (recommended)
 
@@ -78,7 +78,7 @@ Download [`deploy/compose.yaml`](deploy/compose.yaml): OmegaCD and its [Source S
 ```sh
 curl -fsSLO https://raw.githubusercontent.com/obleey/omegacd/main/deploy/compose.yaml
 docker compose up -d
-docker compose logs omegacd | grep "initial admin password"
+docker compose exec omegacd cat /data/initial-admin-password   # the first admin password: change it at the first login
 ```
 
 Back up the Master Key (`age.key` in the `omegacd-keys` volume) and the Source Server's `source.key` (in `source-data`) apart from [`omegacd backup`](#backup-and-recovery)'s files: without them, registry and Git credentials have to be entered again.
@@ -104,7 +104,7 @@ curl -LO https://github.com/obleey/omegacd/releases/download/$VERSION/SHA256SUMS
 sha256sum --ignore-missing -c SHA256SUMS
 sudo apt install ./omegacd_${VERSION}_linux_${ARCH}.deb
 sudo systemctl enable --now omegacd
-journalctl -u omegacd | grep "initial admin password"
+sudo cat /var/lib/omegacd/initial-admin-password   # the first admin password: change it at the first login
 ```
 
 It runs as the system user `omegacd`, with its data in `/var/lib/omegacd`. The Master Key, `/etc/omegacd/keys/age.key`,
@@ -703,7 +703,6 @@ All server settings are environment variables:
 | `OMEGACD_HISTORY_MAX_AGE` | *(forever)* | Sync Operations older than this (Go duration, e.g. `720h`) are deleted, the deployed one kept |
 | `OMEGACD_SSH_KNOWN_HOSTS` | `/etc/omegacd/known_hosts` | Host keys of Git servers, for Git over SSH |
 | `OMEGACD_POLL_INTERVAL` | `3m` | How often Git is polled (Go duration); `0` turns polling off (webhooks only, see [Webhooks](#webhooks)) |
-| `OMEGACD_ADMIN_PASSWORD` | *(generated)* | Initial `admin` password, used only on first start; at most 72 bytes, as any admin password. If unset, a random one is logged and must be changed on first login |
 | `OMEGACD_WEBHOOK_SECRET` | *(none)* | Shared secret for webhooks |
 | `OMEGACD_TRUSTED_PROXIES` | *(none)* | Comma-separated IPs/CIDRs of reverse proxies whose `X-Forwarded-For` is trusted |
 | `OMEGACD_SOURCE_SERVER` | *(in-process)* | `https://host:port` of a standalone Source Server (see below) |
@@ -758,6 +757,7 @@ CLI: `OMEGACD_SERVER`, `OMEGACD_TOKEN`, `NO_COLOR`.
 - **Secrets stay secret.** Passwords, tokens and private keys are write-only in the API and UI; decrypted SOPS files are never shown (env files show keys only).
 - **Credentials are sealed at rest**: registry credentials with the Master Key, repository credentials by the Source Server with its own key. Secrets in Git are decrypted only on their Host, by its Agent.
 - **API tokens** (`ocd_…`) are shown once and stored only as SHA-256 hashes; the admin password is stored as a bcrypt hash.
+- **The admin's first password** is generated at the first start, never set by a setting, and written only to `initial-admin-password` in the data folder (owner-only; the log says where, never what). The first login must change it, which deletes the file. A lost password: on the Control Plane's machine, `docker compose exec omegacd omegacd reset-admin-password` (Compose) or `sudo omegacd-reset-admin-password` (the `.deb`) writes a new one to the same file, to change at the next login; every session ends, API tokens keep working.
 - **Sessions** are HttpOnly, SameSite=Lax cookies (Secure behind HTTPS) that expire after 24 h of inactivity. State-changing requests from the browser must carry an `X-Requested-With` header, which cross-site forms cannot send (CSRF protection).
 - **Login throttling** with exponential backoff per client IP. Behind a reverse proxy, set `OMEGACD_TRUSTED_PROXIES` so the real client IP is used.
 - **Host keys** are always verified for Git over SSH; there is no "accept unknown host" mode.

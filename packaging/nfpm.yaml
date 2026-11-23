@@ -16,6 +16,9 @@ contents:
   - src: bin/deb/omegacd
     dst: /usr/bin/omegacd
     file_info: {mode: 0755}
+  - src: packaging/omegacd-reset-admin-password
+    dst: /usr/bin/omegacd-reset-admin-password
+    file_info: {mode: 0755}
   - src: packaging/omegacd.service
     dst: /usr/lib/systemd/system/omegacd.service
   - src: packaging/omegacd-agent.service

@@ -47,12 +47,11 @@ check "the image builds from the Dockerfile" 'docker buildx build -q --load --bu
   chmod 0644 privkey.pem) >/dev/null 2>&1
 printf 'tls:\n  stores:\n    default:\n      defaultCertificate: {certFile: /tls/fullchain.pem, keyFile: /tls/privkey.pem}\n' > "$T/tls/traefik.yaml"
 
-PW=$(python3 -c 'import secrets; print(secrets.token_urlsafe(12))')
 for p in $PROXIES; do
   mkdir -p "$T/$p" && cp "$ROOT/deploy/compose.yaml" "$T/$p/" && cp -R "$ROOT/deploy/proxy" "$T/$p/"
   printf 'OMEGACD_IMAGE=%s\nOMEGACD_PORT=%s\nOMEGACD_DOMAIN=localhost\nOMEGACD_PROXY_NET=%s\nOMEGACD_TLS_DIR=%s\nOMEGACD_ACME_EMAIL=e2e@example.com\n' \
     $IMAGE ${PORT[$p]} ${NET[$p]} "$T/tls" > "$T/$p/.env"
-  { printf 'services:\n  omegacd:\n    environment: {OMEGACD_ADMIN_PASSWORD: "%s", OMEGACD_LOG_LEVEL: debug}\n' "$PW"
+  { printf 'services:\n  omegacd:\n    environment: {OMEGACD_LOG_LEVEL: debug}\n'
     printf '  %s:\n    ports: !override ["%s:443", "%s:80"]\n' $p ${HTTPS[$p]} ${HTTP[$p]}
   } > "$T/$p/test.yaml"
   if [ $p = traefik ]; then # its shipped flags, and the test CA's certificate instead of Let's Encrypt's
@@ -77,9 +76,13 @@ for p in $PROXIES; do
   U=https://localhost:${HTTPS[$p]} c="curl -s --cacert ${CA[$p]}"
   loc=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' http://localhost:${HTTP[$p]}/)
   check "$p: plain http is redirected to https" 'echo "$loc" | grep -Eq "^30[178] https://localhost"'
-  hdr=$($c -D - -o /dev/null -H 'Content-Type: application/json' -d "{\"username\":\"admin\",\"password\":\"$PW\"}" $U/api/auth/login)
+  pw=$(dc $p exec -T omegacd cat /data/initial-admin-password) # its first password (Q300)
+  hdr=$($c -D - -o /dev/null -H 'Content-Type: application/json' -d "{\"username\":\"admin\",\"password\":\"$pw\"}" $U/api/auth/login)
   check "$p: the login cookie is Secure, from its X-Forwarded-Proto" 'echo "$hdr" | grep -i "^set-cookie:" | grep -qi "; *secure"'
   tok=$(echo "$hdr" | sed -n 's/^[Ss]et-[Cc]ookie: *\([^=]*=[^;]*\).*/\1/p' | head -1)
+  code=$($c -o /dev/null -w '%{http_code}' -b "$tok" -H 'Content-Type: application/json' -H 'X-Requested-With: omegacd' \
+    -d "{\"currentPassword\":\"$pw\",\"newPassword\":\"$(openssl rand -hex 16)\"}" $U/api/auth/password)
+  check "$p: the first login changes the password through it" '[ "$code" = 204 ]'
   # one failed login throttles the client's address for 2 s; a second carrying its own X-Forwarded-For is the same
   # client to OmegaCD, because the proxy sets that header, not the client (Q278)
   $c -o /dev/null -H 'Content-Type: application/json' -d '{"username":"admin","password":"wrong"}' $U/api/auth/login

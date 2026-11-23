@@ -3,6 +3,7 @@
 # enrolled as local, the name the examples use (Q110).
 set -u
 BIN=${OMEGACD_BIN:-$(cd "$(dirname "$0")/../.." && pwd)/bin/omegacd}
+. "$(dirname "$0")/admin.sh"
 T=$(mktemp -d "${TMPDIR:-/tmp}/omegacd-e2eh.XXXX")
 API=http://127.0.0.1:18080/api
 fail=0
@@ -13,7 +14,7 @@ serves() { for _ in $(seq 20); do curl -s --max-time 2 "$1" | grep -q "$2" && re
 age-keygen -o "$T/age.key" 2>/dev/null
 mkdir -p "$T/data"
 OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_AGE_KEY_FILE=$T/age.key \
-  OMEGACD_ADMIN_PASSWORD=e2e-password-123 OMEGACD_POLL_INTERVAL=1h "$BIN" > "$T/server.log" 2>&1 &
+  OMEGACD_POLL_INTERVAL=1h "$BIN" > "$T/server.log" 2>&1 &
 SRV=$!
 cleanup() {
   for a in hello whoami examples; do "$BIN" app delete $a --volumes --yes >/dev/null 2>&1; done
@@ -21,10 +22,7 @@ cleanup() {
 }
 trap cleanup EXIT
 for _ in $(seq 50); do curl -sf $API/version >/dev/null && break; sleep 0.2; done
-curl -sf -c "$T/j" -H 'Content-Type: application/json' -d '{"username":"admin","password":"e2e-password-123"}' $API/auth/login >/dev/null
-export OMEGACD_SERVER=http://127.0.0.1:18080
-export OMEGACD_TOKEN=$(curl -sf -b "$T/j" -H 'Content-Type: application/json' -H 'X-Requested-With: omegacd' \
-  -d '{"name":"e2e"}' $API/settings/tokens | python3 -c 'import json,sys; print(json.load(sys.stdin)["plaintext"])')
+admin_login "$API" "$T/data"
 . "$(dirname "$0")/enroll.sh"; enroll local
 
 # --- the README's CLI commands, verbatim

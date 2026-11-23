@@ -229,7 +229,7 @@ reads both, they come back after `systemd.sh`'s simulated reboot, and a mount of
 from one is still refused with the same message.
 
 ### M6-11 · Initial admin password, changed at first login
-**Status:** in progress (feat/m6-11-initial-admin-password)
+**Status:** done (2026-11-23, PR #167)
 **Depends on:** M6-01, M6-08
 
 The admin's first password is always generated, never configured (Q298): `OMEGACD_ADMIN_PASSWORD` and all its code go
@@ -240,6 +240,10 @@ API refusing everything else until then (as today for a generated one); the chan
 prints it at the end; by hand `docker compose exec omegacd cat /data/initial-admin-password`. One shared e2e helper
 reads the file, logs in, changes the password and makes the API token; every e2e script, `deploy-compose.sh` and the
 README walkthrough use it (Q302).
+
+Settled before it (Q311–Q316): `omegacd reset-admin-password` on the Control Plane's machine writes a new one into
+the file and requires it changed (the `.deb`: `sudo omegacd-reset-admin-password`, as the service's user); every start logs the file's path while it exists; never in a backup; the login page
+says where the first password is.
 
 **Done when:** a fresh install has no admin password setting; the initial password is only in that file, never in a
 log; the first login must change it and the change removes the file; `install.sh full` shows it; README, TESTING.md

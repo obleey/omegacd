@@ -1,6 +1,6 @@
 # OmegaCD's Control Plane with its Source Server standalone beside it (Q231), never as root (Q236). It deploys nothing
 # itself: every Host, this machine included, runs an Agent (deploy/agent.yaml; README → Hosts).
-#   docker compose up -d && docker compose logs omegacd | grep "initial admin password"
+#   docker compose up -d && docker compose exec omegacd cat /data/initial-admin-password   (the first login changes it)
 # Back up the Master Key (age.key in the omegacd-keys volume) and the Source Server's source.key (source-data) apart
 # from omegacd backup's files: losing them means entering the registry and Git credentials again (Q115).
 # Every setting below has a default; override with environment variables or a .env file next to this one.

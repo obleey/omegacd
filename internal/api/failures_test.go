@@ -92,7 +92,7 @@ func TestAuthStoreFailures(t *testing.T) {
 	e.expect("POST", "/api/auth/login", `not json`, 400)
 }
 
-// Q148: a new password is 8 to 72 bytes, and not the current one; the first admin password from the environment too.
+// Q148: a new password is 8 to 72 bytes, and not the current one.
 func TestPasswordLength(t *testing.T) {
 	e := newEnv(t, false)
 	e.login()
@@ -101,14 +101,6 @@ func TestPasswordLength(t *testing.T) {
 	long := strings.Repeat("x", 73)
 	if b := e.expect("POST", "/api/auth/password", changeBody(adminPassword, long), 400); !strings.Contains(b, "at most 72 bytes") {
 		t.Fatal(b)
-	}
-	s := &fakeStore{}
-	if err := EnsureAdmin(context.Background(), s, long, nil); err == nil || !strings.Contains(err.Error(), "OMEGACD_ADMIN_PASSWORD is 73 bytes: at most 72") {
-		t.Errorf("a first password too long: %v", err)
-	}
-	s.breaks("SetAdminPassword", errLocked)
-	if err := EnsureAdmin(context.Background(), s, newPassword, nil); !errors.Is(err, errLocked) {
-		t.Errorf("not saved: %v", err)
 	}
 }
 
