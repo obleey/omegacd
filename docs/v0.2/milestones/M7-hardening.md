@@ -15,6 +15,12 @@ v5.7.2), never on Linux: after a new Revision the migrate container runs the old
 failing migration and the app left as it was all fail), the OrbStack quirk of a file rewritten at the same path within
 a second mounted stale. Make it hold on macOS too, so the local suite is green before the Linux run.
 
+**Decisions (Q332–Q334, 2026-11-23):** the engines job runs every integration test of `agent`, `importer` and `engine`
+on each engine, plus one new test with a real controller, hub, Source Server and Agent through an Application's life
+(Q332); `migrations.sh` skips its after-rewrite checks on macOS only, naming OrbStack's stale file cache, with no
+product change, Linux running them all (Q333); done when the engines job is green on all four engines on both
+architectures, `make e2e` green on macOS and the Linux gate passes (Q334).
+
 **Done when:** CI is green on all three engines.
 
 ### M7-02 · End-to-end suite on Control Plane + Agent

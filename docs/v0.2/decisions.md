@@ -1097,3 +1097,19 @@ Building Q189–Q201:
   `mounts.sh` keeps checking the refusal.
 - **Q331** The README's Secrets example mounts a decrypted file beside `env_file` and `secrets:`, and its data table
   gains a row for it.
+
+## Test pyramid with real Agents (M7-01, 2026-11-23)
+
+- **Q332** The Control Plane driving the Agent on every engine: the Agent engines job runs every integration test of
+  `agent`, `importer` and `engine` on each engine (rootful Docker, rootless Docker and rootless Podman in containers,
+  the runner's own rootless Podman), not only `TestAgent*`; and one new integration test runs a real controller, hub,
+  Source Server and Agent through an Application's life (create, Sync, drift and Self-Heal, Diff, Rollback, delete with
+  volumes) on each. The e2e scripts stay on the runner's Docker: per engine they'd add ~20 minutes for what that test
+  covers in-process.
+- **Q333** `migrations.sh` on macOS: OrbStack's file sharing now and then serves a container started right after a
+  rewrite the file's old content (the Agent's in-place write is correct; a fresh container sees it; never on Linux,
+  where the engine reads the disk). Linux is where OmegaCD runs (Q61: macOS for development only), so there is no
+  product change: on macOS the script skips the checks after a rewrite, naming the quirk, and Linux (CI, the gate) runs
+  them all. The README's development notes say so.
+- **Q334** Done when: the Agent engines job runs Q332's tests on all four engines, amd64 and arm64, and CI is green;
+  `make e2e` is green on macOS with Q333's skip; the Linux gate passes.
