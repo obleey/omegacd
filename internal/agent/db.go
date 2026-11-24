@@ -54,6 +54,18 @@ ALTER TABLE apps ADD COLUMN dir TEXT NOT NULL DEFAULT '';
 `, `
 -- the root the Application names for its folder (Q57); '' is the Host's work dir
 ALTER TABLE apps ADD COLUMN work_dir TEXT NOT NULL DEFAULT '';
+`, `
+-- the Control Plane that approved this Agent (Q340), for good: set once, never changed or removed
+CREATE TABLE control_plane (
+	one INTEGER PRIMARY KEY CHECK (one = 1),
+	id TEXT NOT NULL
+);
+CREATE TRIGGER control_plane_unchanged BEFORE UPDATE ON control_plane BEGIN
+	SELECT RAISE(ABORT, 'an Agent belongs to the Control Plane that approved it');
+END;
+CREATE TRIGGER control_plane_kept BEFORE DELETE ON control_plane BEGIN
+	SELECT RAISE(ABORT, 'an Agent belongs to the Control Plane that approved it');
+END;
 `}
 
 // DB is the Agent's own small database in its state dir (Q48).
@@ -125,6 +137,22 @@ func (d *DB) migrate() error {
 }
 
 func (d *DB) Close() error { return d.db.Close() }
+
+// ControlPlane is the ID of the Control Plane that approved this Agent (Q340), "" before one did.
+func (d *DB) ControlPlane(ctx context.Context) (string, error) {
+	var id string
+	err := d.db.QueryRowContext(ctx, `SELECT id FROM control_plane`).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
+}
+
+// BindControlPlane records the Control Plane that approved this Agent; once one is recorded it stays (Q340).
+func (d *DB) BindControlPlane(ctx context.Context, id string) error {
+	_, err := d.db.ExecContext(ctx, `INSERT INTO control_plane (one, id) VALUES (1, ?) ON CONFLICT DO NOTHING`, id)
+	return err
+}
 
 // ---- Applications ----
 

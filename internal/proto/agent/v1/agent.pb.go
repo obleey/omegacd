@@ -58,6 +58,7 @@ type Envelope struct {
 	//	*Envelope_DiffResult
 	//	*Envelope_ImportRequest
 	//	*Envelope_ImportResult
+	//	*Envelope_Refused
 	Body          isEnvelope_Body `protobuf_oneof:"body"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -366,6 +367,15 @@ func (x *Envelope) GetImportResult() *ImportResult {
 	return nil
 }
 
+func (x *Envelope) GetRefused() *Refused {
+	if x != nil {
+		if x, ok := x.Body.(*Envelope_Refused); ok {
+			return x.Refused
+		}
+	}
+	return nil
+}
+
 type isEnvelope_Body interface {
 	isEnvelope_Body()
 }
@@ -482,6 +492,10 @@ type Envelope_ImportResult struct {
 	ImportResult *ImportResult `protobuf:"bytes,37,opt,name=import_result,json=importResult,proto3,oneof"`
 }
 
+type Envelope_Refused struct {
+	Refused *Refused `protobuf:"bytes,38,opt,name=refused,proto3,oneof"`
+}
+
 func (*Envelope_Hello) isEnvelope_Body() {}
 
 func (*Envelope_Challenge) isEnvelope_Body() {}
@@ -537,6 +551,8 @@ func (*Envelope_DiffResult) isEnvelope_Body() {}
 func (*Envelope_ImportRequest) isEnvelope_Body() {}
 
 func (*Envelope_ImportResult) isEnvelope_Body() {}
+
+func (*Envelope_Refused) isEnvelope_Body() {}
 
 // Hello comes before the ChallengeResponse; the Control Plane records it and serves Agents of its minor version and
 // one behind (Q41).
@@ -658,8 +674,10 @@ func (x *Hello) GetWorkDirAllow() []string {
 }
 
 type Challenge struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Nonce         []byte                 `protobuf:"bytes,1,opt,name=nonce,proto3" json:"nonce,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Nonce []byte                 `protobuf:"bytes,1,opt,name=nonce,proto3" json:"nonce,omitempty"`
+	// the Control Plane's ID (Q341): an Agent approved by another one refuses it before enrolling (Q340)
+	ControlPlane  string `protobuf:"bytes,2,opt,name=control_plane,json=controlPlane,proto3" json:"control_plane,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -701,6 +719,68 @@ func (x *Challenge) GetNonce() []byte {
 	return nil
 }
 
+func (x *Challenge) GetControlPlane() string {
+	if x != nil {
+		return x.ControlPlane
+	}
+	return ""
+}
+
+// Refused answers a Challenge from a Control Plane other than the one that approved the Agent (Q340), which then ends
+// the connection: control_plane is the Agent's own, invite the one it was given (unused), so the Control Plane can
+// show the refusal on that Host.
+type Refused struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ControlPlane  string                 `protobuf:"bytes,1,opt,name=control_plane,json=controlPlane,proto3" json:"control_plane,omitempty"`
+	Invite        string                 `protobuf:"bytes,2,opt,name=invite,proto3" json:"invite,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Refused) Reset() {
+	*x = Refused{}
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Refused) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Refused) ProtoMessage() {}
+
+func (x *Refused) ProtoReflect() protoreflect.Message {
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Refused.ProtoReflect.Descriptor instead.
+func (*Refused) Descriptor() ([]byte, []int) {
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *Refused) GetControlPlane() string {
+	if x != nil {
+		return x.ControlPlane
+	}
+	return ""
+}
+
+func (x *Refused) GetInvite() string {
+	if x != nil {
+		return x.Invite
+	}
+	return ""
+}
+
 type ChallengeResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	PublicKey     []byte                 `protobuf:"bytes,1,opt,name=public_key,json=publicKey,proto3" json:"public_key,omitempty"` // ed25519, identifies the Host
@@ -711,7 +791,7 @@ type ChallengeResponse struct {
 
 func (x *ChallengeResponse) Reset() {
 	*x = ChallengeResponse{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[3]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -723,7 +803,7 @@ func (x *ChallengeResponse) String() string {
 func (*ChallengeResponse) ProtoMessage() {}
 
 func (x *ChallengeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[3]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -736,7 +816,7 @@ func (x *ChallengeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChallengeResponse.ProtoReflect.Descriptor instead.
 func (*ChallengeResponse) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{3}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *ChallengeResponse) GetPublicKey() []byte {
@@ -765,7 +845,7 @@ type Enroll struct {
 
 func (x *Enroll) Reset() {
 	*x = Enroll{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[4]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -777,7 +857,7 @@ func (x *Enroll) String() string {
 func (*Enroll) ProtoMessage() {}
 
 func (x *Enroll) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[4]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -790,7 +870,7 @@ func (x *Enroll) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Enroll.ProtoReflect.Descriptor instead.
 func (*Enroll) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{4}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *Enroll) GetInvite() string {
@@ -823,7 +903,7 @@ type EnrollmentStatus struct {
 
 func (x *EnrollmentStatus) Reset() {
 	*x = EnrollmentStatus{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[5]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -835,7 +915,7 @@ func (x *EnrollmentStatus) String() string {
 func (*EnrollmentStatus) ProtoMessage() {}
 
 func (x *EnrollmentStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[5]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -848,7 +928,7 @@ func (x *EnrollmentStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnrollmentStatus.ProtoReflect.Descriptor instead.
 func (*EnrollmentStatus) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{5}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *EnrollmentStatus) GetHost() string {
@@ -889,7 +969,7 @@ type RotateKey struct {
 
 func (x *RotateKey) Reset() {
 	*x = RotateKey{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[6]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -901,7 +981,7 @@ func (x *RotateKey) String() string {
 func (*RotateKey) ProtoMessage() {}
 
 func (x *RotateKey) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[6]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -914,7 +994,7 @@ func (x *RotateKey) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RotateKey.ProtoReflect.Descriptor instead.
 func (*RotateKey) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{6}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{7}
 }
 
 // KeyRotation is the Agent's new signing key, signed by the current one: "omegacd-agent-v1 rotate\n" followed by
@@ -930,7 +1010,7 @@ type KeyRotation struct {
 
 func (x *KeyRotation) Reset() {
 	*x = KeyRotation{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[7]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -942,7 +1022,7 @@ func (x *KeyRotation) String() string {
 func (*KeyRotation) ProtoMessage() {}
 
 func (x *KeyRotation) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[7]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -955,7 +1035,7 @@ func (x *KeyRotation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use KeyRotation.ProtoReflect.Descriptor instead.
 func (*KeyRotation) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{7}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *KeyRotation) GetPublicKey() []byte {
@@ -999,7 +1079,7 @@ type DesiredState struct {
 
 func (x *DesiredState) Reset() {
 	*x = DesiredState{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[8]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1011,7 +1091,7 @@ func (x *DesiredState) String() string {
 func (*DesiredState) ProtoMessage() {}
 
 func (x *DesiredState) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[8]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1024,7 +1104,7 @@ func (x *DesiredState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DesiredState.ProtoReflect.Descriptor instead.
 func (*DesiredState) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{8}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *DesiredState) GetApp() string {
@@ -1129,7 +1209,7 @@ type File struct {
 
 func (x *File) Reset() {
 	*x = File{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[9]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1141,7 +1221,7 @@ func (x *File) String() string {
 func (*File) ProtoMessage() {}
 
 func (x *File) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[9]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1154,7 +1234,7 @@ func (x *File) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use File.ProtoReflect.Descriptor instead.
 func (*File) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{9}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *File) GetPath() string {
@@ -1190,7 +1270,7 @@ type BlobRequest struct {
 
 func (x *BlobRequest) Reset() {
 	*x = BlobRequest{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[10]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1202,7 +1282,7 @@ func (x *BlobRequest) String() string {
 func (*BlobRequest) ProtoMessage() {}
 
 func (x *BlobRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[10]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1215,7 +1295,7 @@ func (x *BlobRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BlobRequest.ProtoReflect.Descriptor instead.
 func (*BlobRequest) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{10}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *BlobRequest) GetSha256() [][]byte {
@@ -1243,7 +1323,7 @@ type BlobChunk struct {
 
 func (x *BlobChunk) Reset() {
 	*x = BlobChunk{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[11]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1255,7 +1335,7 @@ func (x *BlobChunk) String() string {
 func (*BlobChunk) ProtoMessage() {}
 
 func (x *BlobChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[11]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1268,7 +1348,7 @@ func (x *BlobChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BlobChunk.ProtoReflect.Descriptor instead.
 func (*BlobChunk) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{11}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *BlobChunk) GetSha256() []byte {
@@ -1305,7 +1385,7 @@ type Resync struct {
 
 func (x *Resync) Reset() {
 	*x = Resync{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[12]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1317,7 +1397,7 @@ func (x *Resync) String() string {
 func (*Resync) ProtoMessage() {}
 
 func (x *Resync) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[12]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1330,7 +1410,7 @@ func (x *Resync) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Resync.ProtoReflect.Descriptor instead.
 func (*Resync) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{12}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *Resync) GetChecksums() map[string][]byte {
@@ -1369,7 +1449,7 @@ type StatusReport struct {
 
 func (x *StatusReport) Reset() {
 	*x = StatusReport{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[13]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1381,7 +1461,7 @@ func (x *StatusReport) String() string {
 func (*StatusReport) ProtoMessage() {}
 
 func (x *StatusReport) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[13]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1394,7 +1474,7 @@ func (x *StatusReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatusReport.ProtoReflect.Descriptor instead.
 func (*StatusReport) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{13}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *StatusReport) GetApp() string {
@@ -1477,7 +1557,7 @@ type SyncOperationReport struct {
 
 func (x *SyncOperationReport) Reset() {
 	*x = SyncOperationReport{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[14]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1489,7 +1569,7 @@ func (x *SyncOperationReport) String() string {
 func (*SyncOperationReport) ProtoMessage() {}
 
 func (x *SyncOperationReport) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[14]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1502,7 +1582,7 @@ func (x *SyncOperationReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SyncOperationReport.ProtoReflect.Descriptor instead.
 func (*SyncOperationReport) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{14}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *SyncOperationReport) GetApp() string {
@@ -1566,7 +1646,7 @@ type LogsRequest struct {
 
 func (x *LogsRequest) Reset() {
 	*x = LogsRequest{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[15]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1578,7 +1658,7 @@ func (x *LogsRequest) String() string {
 func (*LogsRequest) ProtoMessage() {}
 
 func (x *LogsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[15]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1591,7 +1671,7 @@ func (x *LogsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogsRequest.ProtoReflect.Descriptor instead.
 func (*LogsRequest) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{15}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *LogsRequest) GetApp() string {
@@ -1634,7 +1714,7 @@ type LogChunk struct {
 
 func (x *LogChunk) Reset() {
 	*x = LogChunk{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[16]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1646,7 +1726,7 @@ func (x *LogChunk) String() string {
 func (*LogChunk) ProtoMessage() {}
 
 func (x *LogChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[16]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1659,7 +1739,7 @@ func (x *LogChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogChunk.ProtoReflect.Descriptor instead.
 func (*LogChunk) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{16}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *LogChunk) GetData() []byte {
@@ -1692,7 +1772,7 @@ type LogsStop struct {
 
 func (x *LogsStop) Reset() {
 	*x = LogsStop{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[17]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1704,7 +1784,7 @@ func (x *LogsStop) String() string {
 func (*LogsStop) ProtoMessage() {}
 
 func (x *LogsStop) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[17]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1717,7 +1797,7 @@ func (x *LogsStop) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogsStop.ProtoReflect.Descriptor instead.
 func (*LogsStop) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{17}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{18}
 }
 
 // OutboxEntry is something that happened while offline, sent on reconnect in seq order. Status goes live, never
@@ -1737,7 +1817,7 @@ type OutboxEntry struct {
 
 func (x *OutboxEntry) Reset() {
 	*x = OutboxEntry{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[18]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1749,7 +1829,7 @@ func (x *OutboxEntry) String() string {
 func (*OutboxEntry) ProtoMessage() {}
 
 func (x *OutboxEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[18]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1762,7 +1842,7 @@ func (x *OutboxEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OutboxEntry.ProtoReflect.Descriptor instead.
 func (*OutboxEntry) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{18}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *OutboxEntry) GetSeq() uint64 {
@@ -1834,7 +1914,7 @@ type RemoveApp struct {
 
 func (x *RemoveApp) Reset() {
 	*x = RemoveApp{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[19]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1846,7 +1926,7 @@ func (x *RemoveApp) String() string {
 func (*RemoveApp) ProtoMessage() {}
 
 func (x *RemoveApp) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[19]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1859,7 +1939,7 @@ func (x *RemoveApp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoveApp.ProtoReflect.Descriptor instead.
 func (*RemoveApp) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{19}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *RemoveApp) GetApp() string {
@@ -1894,7 +1974,7 @@ type AppRemoved struct {
 
 func (x *AppRemoved) Reset() {
 	*x = AppRemoved{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[20]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1906,7 +1986,7 @@ func (x *AppRemoved) String() string {
 func (*AppRemoved) ProtoMessage() {}
 
 func (x *AppRemoved) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[20]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1919,7 +1999,7 @@ func (x *AppRemoved) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AppRemoved.ProtoReflect.Descriptor instead.
 func (*AppRemoved) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{20}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *AppRemoved) GetApp() string {
@@ -1946,7 +2026,7 @@ type RegistryAuthRequest struct {
 
 func (x *RegistryAuthRequest) Reset() {
 	*x = RegistryAuthRequest{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[21]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1958,7 +2038,7 @@ func (x *RegistryAuthRequest) String() string {
 func (*RegistryAuthRequest) ProtoMessage() {}
 
 func (x *RegistryAuthRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[21]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1971,7 +2051,7 @@ func (x *RegistryAuthRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegistryAuthRequest.ProtoReflect.Descriptor instead.
 func (*RegistryAuthRequest) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{21}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *RegistryAuthRequest) GetRegistries() []string {
@@ -1992,7 +2072,7 @@ type RegistryAuth struct {
 
 func (x *RegistryAuth) Reset() {
 	*x = RegistryAuth{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[22]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2004,7 +2084,7 @@ func (x *RegistryAuth) String() string {
 func (*RegistryAuth) ProtoMessage() {}
 
 func (x *RegistryAuth) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[22]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2017,7 +2097,7 @@ func (x *RegistryAuth) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegistryAuth.ProtoReflect.Descriptor instead.
 func (*RegistryAuth) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{22}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *RegistryAuth) GetCredentials() []*SealedCredential {
@@ -2037,7 +2117,7 @@ type SealedCredential struct {
 
 func (x *SealedCredential) Reset() {
 	*x = SealedCredential{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[23]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2049,7 +2129,7 @@ func (x *SealedCredential) String() string {
 func (*SealedCredential) ProtoMessage() {}
 
 func (x *SealedCredential) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[23]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2062,7 +2142,7 @@ func (x *SealedCredential) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SealedCredential.ProtoReflect.Descriptor instead.
 func (*SealedCredential) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{23}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *SealedCredential) GetRegistry() string {
@@ -2093,7 +2173,7 @@ type SyncProgress struct {
 
 func (x *SyncProgress) Reset() {
 	*x = SyncProgress{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[24]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2105,7 +2185,7 @@ func (x *SyncProgress) String() string {
 func (*SyncProgress) ProtoMessage() {}
 
 func (x *SyncProgress) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[24]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2118,7 +2198,7 @@ func (x *SyncProgress) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SyncProgress.ProtoReflect.Descriptor instead.
 func (*SyncProgress) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{24}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *SyncProgress) GetApp() string {
@@ -2168,7 +2248,7 @@ type DiffRequest struct {
 
 func (x *DiffRequest) Reset() {
 	*x = DiffRequest{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[25]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2180,7 +2260,7 @@ func (x *DiffRequest) String() string {
 func (*DiffRequest) ProtoMessage() {}
 
 func (x *DiffRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[25]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2193,7 +2273,7 @@ func (x *DiffRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DiffRequest.ProtoReflect.Descriptor instead.
 func (*DiffRequest) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{25}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *DiffRequest) GetDesiredState() *DesiredState {
@@ -2214,7 +2294,7 @@ type DiffResult struct {
 
 func (x *DiffResult) Reset() {
 	*x = DiffResult{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[26]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2226,7 +2306,7 @@ func (x *DiffResult) String() string {
 func (*DiffResult) ProtoMessage() {}
 
 func (x *DiffResult) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[26]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2239,7 +2319,7 @@ func (x *DiffResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DiffResult.ProtoReflect.Descriptor instead.
 func (*DiffResult) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{26}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *DiffResult) GetServices() []byte {
@@ -2268,7 +2348,7 @@ type ImportRequest struct {
 
 func (x *ImportRequest) Reset() {
 	*x = ImportRequest{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[27]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2280,7 +2360,7 @@ func (x *ImportRequest) String() string {
 func (*ImportRequest) ProtoMessage() {}
 
 func (x *ImportRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[27]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2293,7 +2373,7 @@ func (x *ImportRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ImportRequest.ProtoReflect.Descriptor instead.
 func (*ImportRequest) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{27}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *ImportRequest) GetRequest() []byte {
@@ -2317,7 +2397,7 @@ type ImportResult struct {
 
 func (x *ImportResult) Reset() {
 	*x = ImportResult{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[28]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2329,7 +2409,7 @@ func (x *ImportResult) String() string {
 func (*ImportResult) ProtoMessage() {}
 
 func (x *ImportResult) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[28]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2342,7 +2422,7 @@ func (x *ImportResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ImportResult.ProtoReflect.Descriptor instead.
 func (*ImportResult) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{28}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *ImportResult) GetResult() []byte {
@@ -2384,7 +2464,7 @@ type OutboxAck struct {
 
 func (x *OutboxAck) Reset() {
 	*x = OutboxAck{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[29]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2396,7 +2476,7 @@ func (x *OutboxAck) String() string {
 func (*OutboxAck) ProtoMessage() {}
 
 func (x *OutboxAck) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[29]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2409,7 +2489,7 @@ func (x *OutboxAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OutboxAck.ProtoReflect.Descriptor instead.
 func (*OutboxAck) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{29}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *OutboxAck) GetSeq() uint64 {
@@ -2428,7 +2508,7 @@ type Error struct {
 
 func (x *Error) Reset() {
 	*x = Error{}
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[30]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2440,7 +2520,7 @@ func (x *Error) String() string {
 func (*Error) ProtoMessage() {}
 
 func (x *Error) ProtoReflect() protoreflect.Message {
-	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[30]
+	mi := &file_omegacd_agent_v1_agent_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2453,7 +2533,7 @@ func (x *Error) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Error.ProtoReflect.Descriptor instead.
 func (*Error) Descriptor() ([]byte, []int) {
-	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{30}
+	return file_omegacd_agent_v1_agent_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *Error) GetMessage() string {
@@ -2467,7 +2547,7 @@ var File_omegacd_agent_v1_agent_proto protoreflect.FileDescriptor
 
 const file_omegacd_agent_v1_agent_proto_rawDesc = "" +
 	"\n" +
-	"\x1comegacd/agent/v1/agent.proto\x12\x10omegacd.agent.v1\"\x98\x0f\n" +
+	"\x1comegacd/agent/v1/agent.proto\x12\x10omegacd.agent.v1\"\xcf\x0f\n" +
 	"\bEnvelope\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x04R\x02id\x12\x19\n" +
 	"\breply_to\x18\x02 \x01(\x04R\areplyTo\x12/\n" +
@@ -2505,7 +2585,8 @@ const file_omegacd_agent_v1_agent_proto_rawDesc = "" +
 	"\vdiff_result\x18# \x01(\v2\x1c.omegacd.agent.v1.DiffResultH\x00R\n" +
 	"diffResult\x12H\n" +
 	"\x0eimport_request\x18$ \x01(\v2\x1f.omegacd.agent.v1.ImportRequestH\x00R\rimportRequest\x12E\n" +
-	"\rimport_result\x18% \x01(\v2\x1e.omegacd.agent.v1.ImportResultH\x00R\fimportResultB\x06\n" +
+	"\rimport_result\x18% \x01(\v2\x1e.omegacd.agent.v1.ImportResultH\x00R\fimportResult\x125\n" +
+	"\arefused\x18& \x01(\v2\x19.omegacd.agent.v1.RefusedH\x00R\arefusedB\x06\n" +
 	"\x04body\"\xb3\x02\n" +
 	"\x05Hello\x12#\n" +
 	"\ragent_version\x18\x01 \x01(\tR\fagentVersion\x12)\n" +
@@ -2518,9 +2599,13 @@ const file_omegacd_agent_v1_agent_proto_rawDesc = "" +
 	"\bhostname\x18\b \x01(\tR\bhostname\x12\x19\n" +
 	"\bwork_dir\x18\t \x01(\tR\aworkDir\x12$\n" +
 	"\x0ework_dir_allow\x18\n" +
-	" \x03(\tR\fworkDirAllow\"!\n" +
+	" \x03(\tR\fworkDirAllow\"F\n" +
 	"\tChallenge\x12\x14\n" +
-	"\x05nonce\x18\x01 \x01(\fR\x05nonce\"P\n" +
+	"\x05nonce\x18\x01 \x01(\fR\x05nonce\x12#\n" +
+	"\rcontrol_plane\x18\x02 \x01(\tR\fcontrolPlane\"F\n" +
+	"\aRefused\x12#\n" +
+	"\rcontrol_plane\x18\x01 \x01(\tR\fcontrolPlane\x12\x16\n" +
+	"\x06invite\x18\x02 \x01(\tR\x06invite\"P\n" +
 	"\x11ChallengeResponse\x12\x1d\n" +
 	"\n" +
 	"public_key\x18\x01 \x01(\fR\tpublicKey\x12\x1c\n" +
@@ -2664,83 +2749,85 @@ func file_omegacd_agent_v1_agent_proto_rawDescGZIP() []byte {
 	return file_omegacd_agent_v1_agent_proto_rawDescData
 }
 
-var file_omegacd_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 33)
+var file_omegacd_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 34)
 var file_omegacd_agent_v1_agent_proto_goTypes = []any{
 	(*Envelope)(nil),            // 0: omegacd.agent.v1.Envelope
 	(*Hello)(nil),               // 1: omegacd.agent.v1.Hello
 	(*Challenge)(nil),           // 2: omegacd.agent.v1.Challenge
-	(*ChallengeResponse)(nil),   // 3: omegacd.agent.v1.ChallengeResponse
-	(*Enroll)(nil),              // 4: omegacd.agent.v1.Enroll
-	(*EnrollmentStatus)(nil),    // 5: omegacd.agent.v1.EnrollmentStatus
-	(*RotateKey)(nil),           // 6: omegacd.agent.v1.RotateKey
-	(*KeyRotation)(nil),         // 7: omegacd.agent.v1.KeyRotation
-	(*DesiredState)(nil),        // 8: omegacd.agent.v1.DesiredState
-	(*File)(nil),                // 9: omegacd.agent.v1.File
-	(*BlobRequest)(nil),         // 10: omegacd.agent.v1.BlobRequest
-	(*BlobChunk)(nil),           // 11: omegacd.agent.v1.BlobChunk
-	(*Resync)(nil),              // 12: omegacd.agent.v1.Resync
-	(*StatusReport)(nil),        // 13: omegacd.agent.v1.StatusReport
-	(*SyncOperationReport)(nil), // 14: omegacd.agent.v1.SyncOperationReport
-	(*LogsRequest)(nil),         // 15: omegacd.agent.v1.LogsRequest
-	(*LogChunk)(nil),            // 16: omegacd.agent.v1.LogChunk
-	(*LogsStop)(nil),            // 17: omegacd.agent.v1.LogsStop
-	(*OutboxEntry)(nil),         // 18: omegacd.agent.v1.OutboxEntry
-	(*RemoveApp)(nil),           // 19: omegacd.agent.v1.RemoveApp
-	(*AppRemoved)(nil),          // 20: omegacd.agent.v1.AppRemoved
-	(*RegistryAuthRequest)(nil), // 21: omegacd.agent.v1.RegistryAuthRequest
-	(*RegistryAuth)(nil),        // 22: omegacd.agent.v1.RegistryAuth
-	(*SealedCredential)(nil),    // 23: omegacd.agent.v1.SealedCredential
-	(*SyncProgress)(nil),        // 24: omegacd.agent.v1.SyncProgress
-	(*DiffRequest)(nil),         // 25: omegacd.agent.v1.DiffRequest
-	(*DiffResult)(nil),          // 26: omegacd.agent.v1.DiffResult
-	(*ImportRequest)(nil),       // 27: omegacd.agent.v1.ImportRequest
-	(*ImportResult)(nil),        // 28: omegacd.agent.v1.ImportResult
-	(*OutboxAck)(nil),           // 29: omegacd.agent.v1.OutboxAck
-	(*Error)(nil),               // 30: omegacd.agent.v1.Error
-	nil,                         // 31: omegacd.agent.v1.Resync.ChecksumsEntry
-	nil,                         // 32: omegacd.agent.v1.ImportResult.FilesEntry
+	(*Refused)(nil),             // 3: omegacd.agent.v1.Refused
+	(*ChallengeResponse)(nil),   // 4: omegacd.agent.v1.ChallengeResponse
+	(*Enroll)(nil),              // 5: omegacd.agent.v1.Enroll
+	(*EnrollmentStatus)(nil),    // 6: omegacd.agent.v1.EnrollmentStatus
+	(*RotateKey)(nil),           // 7: omegacd.agent.v1.RotateKey
+	(*KeyRotation)(nil),         // 8: omegacd.agent.v1.KeyRotation
+	(*DesiredState)(nil),        // 9: omegacd.agent.v1.DesiredState
+	(*File)(nil),                // 10: omegacd.agent.v1.File
+	(*BlobRequest)(nil),         // 11: omegacd.agent.v1.BlobRequest
+	(*BlobChunk)(nil),           // 12: omegacd.agent.v1.BlobChunk
+	(*Resync)(nil),              // 13: omegacd.agent.v1.Resync
+	(*StatusReport)(nil),        // 14: omegacd.agent.v1.StatusReport
+	(*SyncOperationReport)(nil), // 15: omegacd.agent.v1.SyncOperationReport
+	(*LogsRequest)(nil),         // 16: omegacd.agent.v1.LogsRequest
+	(*LogChunk)(nil),            // 17: omegacd.agent.v1.LogChunk
+	(*LogsStop)(nil),            // 18: omegacd.agent.v1.LogsStop
+	(*OutboxEntry)(nil),         // 19: omegacd.agent.v1.OutboxEntry
+	(*RemoveApp)(nil),           // 20: omegacd.agent.v1.RemoveApp
+	(*AppRemoved)(nil),          // 21: omegacd.agent.v1.AppRemoved
+	(*RegistryAuthRequest)(nil), // 22: omegacd.agent.v1.RegistryAuthRequest
+	(*RegistryAuth)(nil),        // 23: omegacd.agent.v1.RegistryAuth
+	(*SealedCredential)(nil),    // 24: omegacd.agent.v1.SealedCredential
+	(*SyncProgress)(nil),        // 25: omegacd.agent.v1.SyncProgress
+	(*DiffRequest)(nil),         // 26: omegacd.agent.v1.DiffRequest
+	(*DiffResult)(nil),          // 27: omegacd.agent.v1.DiffResult
+	(*ImportRequest)(nil),       // 28: omegacd.agent.v1.ImportRequest
+	(*ImportResult)(nil),        // 29: omegacd.agent.v1.ImportResult
+	(*OutboxAck)(nil),           // 30: omegacd.agent.v1.OutboxAck
+	(*Error)(nil),               // 31: omegacd.agent.v1.Error
+	nil,                         // 32: omegacd.agent.v1.Resync.ChecksumsEntry
+	nil,                         // 33: omegacd.agent.v1.ImportResult.FilesEntry
 }
 var file_omegacd_agent_v1_agent_proto_depIdxs = []int32{
 	1,  // 0: omegacd.agent.v1.Envelope.hello:type_name -> omegacd.agent.v1.Hello
 	2,  // 1: omegacd.agent.v1.Envelope.challenge:type_name -> omegacd.agent.v1.Challenge
-	3,  // 2: omegacd.agent.v1.Envelope.challenge_response:type_name -> omegacd.agent.v1.ChallengeResponse
-	8,  // 3: omegacd.agent.v1.Envelope.desired_state:type_name -> omegacd.agent.v1.DesiredState
-	10, // 4: omegacd.agent.v1.Envelope.blob_request:type_name -> omegacd.agent.v1.BlobRequest
-	11, // 5: omegacd.agent.v1.Envelope.blob_chunk:type_name -> omegacd.agent.v1.BlobChunk
-	12, // 6: omegacd.agent.v1.Envelope.resync:type_name -> omegacd.agent.v1.Resync
-	13, // 7: omegacd.agent.v1.Envelope.status_report:type_name -> omegacd.agent.v1.StatusReport
-	14, // 8: omegacd.agent.v1.Envelope.sync_operation_report:type_name -> omegacd.agent.v1.SyncOperationReport
-	15, // 9: omegacd.agent.v1.Envelope.logs_request:type_name -> omegacd.agent.v1.LogsRequest
-	16, // 10: omegacd.agent.v1.Envelope.log_chunk:type_name -> omegacd.agent.v1.LogChunk
-	18, // 11: omegacd.agent.v1.Envelope.outbox_entry:type_name -> omegacd.agent.v1.OutboxEntry
-	30, // 12: omegacd.agent.v1.Envelope.error:type_name -> omegacd.agent.v1.Error
-	4,  // 13: omegacd.agent.v1.Envelope.enroll:type_name -> omegacd.agent.v1.Enroll
-	5,  // 14: omegacd.agent.v1.Envelope.enrollment_status:type_name -> omegacd.agent.v1.EnrollmentStatus
-	6,  // 15: omegacd.agent.v1.Envelope.rotate_key:type_name -> omegacd.agent.v1.RotateKey
-	7,  // 16: omegacd.agent.v1.Envelope.key_rotation:type_name -> omegacd.agent.v1.KeyRotation
-	29, // 17: omegacd.agent.v1.Envelope.outbox_ack:type_name -> omegacd.agent.v1.OutboxAck
-	19, // 18: omegacd.agent.v1.Envelope.remove_app:type_name -> omegacd.agent.v1.RemoveApp
-	20, // 19: omegacd.agent.v1.Envelope.app_removed:type_name -> omegacd.agent.v1.AppRemoved
-	21, // 20: omegacd.agent.v1.Envelope.registry_auth_request:type_name -> omegacd.agent.v1.RegistryAuthRequest
-	22, // 21: omegacd.agent.v1.Envelope.registry_auth:type_name -> omegacd.agent.v1.RegistryAuth
-	24, // 22: omegacd.agent.v1.Envelope.sync_progress:type_name -> omegacd.agent.v1.SyncProgress
-	17, // 23: omegacd.agent.v1.Envelope.logs_stop:type_name -> omegacd.agent.v1.LogsStop
-	25, // 24: omegacd.agent.v1.Envelope.diff_request:type_name -> omegacd.agent.v1.DiffRequest
-	26, // 25: omegacd.agent.v1.Envelope.diff_result:type_name -> omegacd.agent.v1.DiffResult
-	27, // 26: omegacd.agent.v1.Envelope.import_request:type_name -> omegacd.agent.v1.ImportRequest
-	28, // 27: omegacd.agent.v1.Envelope.import_result:type_name -> omegacd.agent.v1.ImportResult
-	9,  // 28: omegacd.agent.v1.DesiredState.files:type_name -> omegacd.agent.v1.File
-	31, // 29: omegacd.agent.v1.Resync.checksums:type_name -> omegacd.agent.v1.Resync.ChecksumsEntry
-	14, // 30: omegacd.agent.v1.OutboxEntry.sync_operation_report:type_name -> omegacd.agent.v1.SyncOperationReport
-	20, // 31: omegacd.agent.v1.OutboxEntry.app_removed:type_name -> omegacd.agent.v1.AppRemoved
-	23, // 32: omegacd.agent.v1.RegistryAuth.credentials:type_name -> omegacd.agent.v1.SealedCredential
-	8,  // 33: omegacd.agent.v1.DiffRequest.desired_state:type_name -> omegacd.agent.v1.DesiredState
-	32, // 34: omegacd.agent.v1.ImportResult.files:type_name -> omegacd.agent.v1.ImportResult.FilesEntry
-	35, // [35:35] is the sub-list for method output_type
-	35, // [35:35] is the sub-list for method input_type
-	35, // [35:35] is the sub-list for extension type_name
-	35, // [35:35] is the sub-list for extension extendee
-	0,  // [0:35] is the sub-list for field type_name
+	4,  // 2: omegacd.agent.v1.Envelope.challenge_response:type_name -> omegacd.agent.v1.ChallengeResponse
+	9,  // 3: omegacd.agent.v1.Envelope.desired_state:type_name -> omegacd.agent.v1.DesiredState
+	11, // 4: omegacd.agent.v1.Envelope.blob_request:type_name -> omegacd.agent.v1.BlobRequest
+	12, // 5: omegacd.agent.v1.Envelope.blob_chunk:type_name -> omegacd.agent.v1.BlobChunk
+	13, // 6: omegacd.agent.v1.Envelope.resync:type_name -> omegacd.agent.v1.Resync
+	14, // 7: omegacd.agent.v1.Envelope.status_report:type_name -> omegacd.agent.v1.StatusReport
+	15, // 8: omegacd.agent.v1.Envelope.sync_operation_report:type_name -> omegacd.agent.v1.SyncOperationReport
+	16, // 9: omegacd.agent.v1.Envelope.logs_request:type_name -> omegacd.agent.v1.LogsRequest
+	17, // 10: omegacd.agent.v1.Envelope.log_chunk:type_name -> omegacd.agent.v1.LogChunk
+	19, // 11: omegacd.agent.v1.Envelope.outbox_entry:type_name -> omegacd.agent.v1.OutboxEntry
+	31, // 12: omegacd.agent.v1.Envelope.error:type_name -> omegacd.agent.v1.Error
+	5,  // 13: omegacd.agent.v1.Envelope.enroll:type_name -> omegacd.agent.v1.Enroll
+	6,  // 14: omegacd.agent.v1.Envelope.enrollment_status:type_name -> omegacd.agent.v1.EnrollmentStatus
+	7,  // 15: omegacd.agent.v1.Envelope.rotate_key:type_name -> omegacd.agent.v1.RotateKey
+	8,  // 16: omegacd.agent.v1.Envelope.key_rotation:type_name -> omegacd.agent.v1.KeyRotation
+	30, // 17: omegacd.agent.v1.Envelope.outbox_ack:type_name -> omegacd.agent.v1.OutboxAck
+	20, // 18: omegacd.agent.v1.Envelope.remove_app:type_name -> omegacd.agent.v1.RemoveApp
+	21, // 19: omegacd.agent.v1.Envelope.app_removed:type_name -> omegacd.agent.v1.AppRemoved
+	22, // 20: omegacd.agent.v1.Envelope.registry_auth_request:type_name -> omegacd.agent.v1.RegistryAuthRequest
+	23, // 21: omegacd.agent.v1.Envelope.registry_auth:type_name -> omegacd.agent.v1.RegistryAuth
+	25, // 22: omegacd.agent.v1.Envelope.sync_progress:type_name -> omegacd.agent.v1.SyncProgress
+	18, // 23: omegacd.agent.v1.Envelope.logs_stop:type_name -> omegacd.agent.v1.LogsStop
+	26, // 24: omegacd.agent.v1.Envelope.diff_request:type_name -> omegacd.agent.v1.DiffRequest
+	27, // 25: omegacd.agent.v1.Envelope.diff_result:type_name -> omegacd.agent.v1.DiffResult
+	28, // 26: omegacd.agent.v1.Envelope.import_request:type_name -> omegacd.agent.v1.ImportRequest
+	29, // 27: omegacd.agent.v1.Envelope.import_result:type_name -> omegacd.agent.v1.ImportResult
+	3,  // 28: omegacd.agent.v1.Envelope.refused:type_name -> omegacd.agent.v1.Refused
+	10, // 29: omegacd.agent.v1.DesiredState.files:type_name -> omegacd.agent.v1.File
+	32, // 30: omegacd.agent.v1.Resync.checksums:type_name -> omegacd.agent.v1.Resync.ChecksumsEntry
+	15, // 31: omegacd.agent.v1.OutboxEntry.sync_operation_report:type_name -> omegacd.agent.v1.SyncOperationReport
+	21, // 32: omegacd.agent.v1.OutboxEntry.app_removed:type_name -> omegacd.agent.v1.AppRemoved
+	24, // 33: omegacd.agent.v1.RegistryAuth.credentials:type_name -> omegacd.agent.v1.SealedCredential
+	9,  // 34: omegacd.agent.v1.DiffRequest.desired_state:type_name -> omegacd.agent.v1.DesiredState
+	33, // 35: omegacd.agent.v1.ImportResult.files:type_name -> omegacd.agent.v1.ImportResult.FilesEntry
+	36, // [36:36] is the sub-list for method output_type
+	36, // [36:36] is the sub-list for method input_type
+	36, // [36:36] is the sub-list for extension type_name
+	36, // [36:36] is the sub-list for extension extendee
+	0,  // [0:36] is the sub-list for field type_name
 }
 
 func init() { file_omegacd_agent_v1_agent_proto_init() }
@@ -2777,8 +2864,9 @@ func file_omegacd_agent_v1_agent_proto_init() {
 		(*Envelope_DiffResult)(nil),
 		(*Envelope_ImportRequest)(nil),
 		(*Envelope_ImportResult)(nil),
+		(*Envelope_Refused)(nil),
 	}
-	file_omegacd_agent_v1_agent_proto_msgTypes[18].OneofWrappers = []any{
+	file_omegacd_agent_v1_agent_proto_msgTypes[19].OneofWrappers = []any{
 		(*OutboxEntry_SyncOperationReport)(nil),
 		(*OutboxEntry_AppRemoved)(nil),
 	}
@@ -2788,7 +2876,7 @@ func file_omegacd_agent_v1_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_omegacd_agent_v1_agent_proto_rawDesc), len(file_omegacd_agent_v1_agent_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   33,
+			NumMessages:   34,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

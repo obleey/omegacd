@@ -38,6 +38,7 @@ message Envelope {
     DiffResult diff_result = 35;
     ImportRequest import_request = 36;
     ImportResult import_result = 37;
+    Refused refused = 38;
   }
 }
 
@@ -59,6 +60,16 @@ message Hello {
 
 message Challenge {
   bytes nonce = 1;
+  // the Control Plane's ID (Q341): an Agent approved by another one refuses it before enrolling (Q340)
+  string control_plane = 2;
+}
+
+// Refused answers a Challenge from a Control Plane other than the one that approved the Agent (Q340), which then ends
+// the connection: control_plane is the Agent's own, invite the one it was given (unused), so the Control Plane can
+// show the refusal on that Host.
+message Refused {
+  string control_plane = 1;
+  string invite = 2;
 }
 
 message ChallengeResponse {

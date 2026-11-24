@@ -129,6 +129,7 @@ func (ag *Agent) Connect(ctx context.Context, c Connection) {
 // serve answers the challenge, enrolling with the invite if there is one, then reads until the connection ends.
 func (ag *Agent) serve(ctx context.Context, conn *wire.Conn, c *Connection) error {
 	var rotation uint64 // the KeyRotation waiting for its answer
+	var cp string       // the Control Plane's ID, from its challenge
 	var next ed25519.PrivateKey
 	b := newBlobs(conn)
 	q := newRequests(conn)
@@ -149,6 +150,10 @@ func (ag *Agent) serve(ctx context.Context, conn *wire.Conn, c *Connection) erro
 		}
 		switch {
 		case e.GetChallenge() != nil:
+			cp = e.GetChallenge().ControlPlane
+			if err := ag.belongsTo(ctx, conn, c, cp); err != nil {
+				return err
+			}
 			host, _ := os.Hostname()
 			out := []*agentv1.Envelope{{Body: &agentv1.Envelope_Hello{Hello: &agentv1.Hello{AgentVersion: version.String(),
 				ProtocolVersion: ProtocolVersion, Os: runtime.GOOS, Arch: runtime.GOARCH, Hostname: host,
@@ -208,7 +213,12 @@ func (ag *Agent) serve(ctx context.Context, conn *wire.Conn, c *Connection) erro
 				ag.dropOutbox(ctx)
 			}
 			if s.Approved {
-				ag.log.Info("connected to the Control Plane, approved", "host", s.Host)
+				if ag.db != nil && cp != "" {
+					if err := ag.db.BindControlPlane(ctx, cp); err != nil { // coverage: unreachable, an insert into the Agent's healthy SQLite, which just answered the challenge's read
+						return fmt.Errorf("record the Control Plane that approved this Agent: %w", err)
+					}
+				}
+				ag.log.Info("connected to the Control Plane, approved", "host", s.Host, "controlPlane", cp)
 				if ag.db != nil { // an Agent without its state (tests of the connection alone) has nothing to sync
 					ag.reports.connected(conn)
 					go ag.keepInSync(ctx, conn)
@@ -253,4 +263,28 @@ func (ag *Agent) serve(ctx context.Context, conn *wire.Conn, c *Connection) erro
 			ag.log.Debug("an envelope this Agent doesn't handle: ignored", "id", e.Id, "replyTo", e.ReplyTo, "body", fmt.Sprintf("%T", e.Body))
 		}
 	}
+}
+
+// errOtherControlPlane ends a connection to a Control Plane other than the one that approved this Agent (Q340).
+var errOtherControlPlane = errors.New("this Agent belongs to the OmegaCD that approved it")
+
+// belongsTo refuses a Control Plane other than the one that approved this Agent (Q340), before anything is enrolled:
+// it tells it why, with the invite it was given, so that one shows it on the Host. An Agent no Control Plane approved
+// yet belongs to none.
+func (ag *Agent) belongsTo(ctx context.Context, conn *wire.Conn, c *Connection, cp string) error {
+	if ag.db == nil { // an Agent without its state (tests of the connection alone)
+		return nil
+	}
+	own, err := ag.db.ControlPlane(ctx)
+	if err != nil || own == "" || own == cp {
+		return err
+	}
+	conn.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_Refused{Refused: &agentv1.Refused{ControlPlane: own, Invite: c.Invite}}})
+	select { // sends queue: the Control Plane ends the connection once it read why
+	case <-conn.Done():
+	case <-time.After(5 * time.Second):
+	}
+	ag.log.Error("refused a Control Plane other than the one that approved this Agent: it stays with its own OmegaCD; "+
+		"only reinstalled with an empty state dir does it enroll with another", "controlPlane", cp, "own", own, "url", c.URL)
+	return fmt.Errorf("%w (%s), not %s", errOtherControlPlane, own, cp)
 }

@@ -26,13 +26,20 @@ type faultyStore struct {
 }
 
 type faults struct {
-	confirm, record, lock, apply, left error
-	approve                            string
-	allow                              []string
+	confirm, record, lock, apply, left, controlPlane error
+	approve                                          string
+	allow                                            []string
 }
 
 func (f *faultyStore) set(w faults) { f.mu.Lock(); f.what = w; f.mu.Unlock() }
 func (f *faultyStore) get() faults  { f.mu.Lock(); defer f.mu.Unlock(); return f.what }
+
+func (f *faultyStore) ControlPlaneID(ctx context.Context) (string, error) {
+	if err := f.get().controlPlane; err != nil {
+		return "", err
+	}
+	return f.Store.ControlPlaneID(ctx)
+}
 
 func (f *faultyStore) ConfirmSigningKey(ctx context.Context, host string, key []byte) error {
 	w := f.get()
@@ -299,4 +306,41 @@ func TestHostChangedTold(t *testing.T) {
 		t.Fatal(err)
 	}
 	more("the unlock", n)
+}
+
+// The challenge carries the Control Plane's ID (Q341); an Agent another one approved refuses it (Q340), with an invite
+// of no Host here or none, which only ends the connection; a Control Plane that can't read its ID challenges no one.
+func TestRefusedByAnAgent(t *testing.T) {
+	h, st, url, fs := faultyHub(t)
+	logs := logTo(h)
+	id, _ := st.ControlPlaneID(t.Context())
+	for _, invite := range []string{"omegacd-invite-none", ""} {
+		c, err := wire.Dial(t.Context(), url, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := reading(c)
+		if e := next(t, got); e.GetChallenge().GetControlPlane() != id {
+			t.Fatalf("challenge %v, want the Control Plane's ID %s", e, id)
+		}
+		c.Send(t.Context(), &agentv1.Envelope{Body: &agentv1.Envelope_Refused{Refused: &agentv1.Refused{ControlPlane: "other", Invite: invite}}})
+		for e := range got { // the hub answers with why, then ends the connection
+			if e.GetError() != nil {
+				c.Close()
+			}
+		}
+	}
+	waitLog(t, logs, `an Agent refused this Control Plane: its Agent belongs to another OmegaCD (other)`)
+
+	fs.set(faults{controlPlane: errors.New("database is locked")})
+	c, err := wire.Dial(t.Context(), url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for e := range reading(c) {
+		if e.GetError() != nil {
+			c.Close()
+		}
+	}
+	waitLog(t, logs, `err="database is locked"`)
 }

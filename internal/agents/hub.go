@@ -448,8 +448,12 @@ func (h *Hub) authenticate(ctx context.Context, c *wire.Conn) (domain.Host, []by
 	defer cancel()
 	nonce := make([]byte, 32)
 	rand.Read(nonce)
+	cp, err := h.store.ControlPlaneID(ctx)
+	if err != nil {
+		return domain.Host{}, nil, nil, false, err
+	}
 	// sends queue: a closed connection is the Recv's below to report
-	c.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_Challenge{Challenge: &agentv1.Challenge{Nonce: nonce}}})
+	c.Send(ctx, &agentv1.Envelope{Body: &agentv1.Envelope_Challenge{Challenge: &agentv1.Challenge{Nonce: nonce, ControlPlane: cp}}})
 	var enroll *agentv1.Enroll
 	var hello *agentv1.Hello
 	for {
@@ -462,6 +466,16 @@ func (h *Hub) authenticate(ctx context.Context, c *wire.Conn) (domain.Host, []by
 			hello = e.GetHello()
 		case e.GetEnroll() != nil:
 			enroll = e.GetEnroll()
+		case e.GetRefused() != nil: // an Agent another Control Plane approved (Q340): shown on the Host its invite is for
+			r := e.GetRefused()
+			why := fmt.Sprintf("its Agent belongs to another OmegaCD (%s) and refused this one; only reinstalled with an "+
+				"empty state dir does it enroll here", r.ControlPlane)
+			if r.Invite != "" {
+				if host, err := h.store.RefuseInvite(ctx, r.Invite, why); err == nil {
+					h.changed(ctx, host)
+				}
+			}
+			return domain.Host{}, nil, nil, false, fmt.Errorf("an Agent refused this Control Plane: %s", why)
 		case e.GetChallengeResponse() != nil:
 			r := e.GetChallengeResponse()
 			if len(r.PublicKey) != ed25519.PublicKeySize ||
