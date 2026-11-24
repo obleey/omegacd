@@ -45,8 +45,10 @@ OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_AGE_KEY_FILE=$T/age.ke
   OMEGACD_POLL_INTERVAL=1h "$BIN" > "$T/server.log" 2>&1 &
 SRV=$!
 cleanup() {
-  for s in adopt-a adopt-b; do "$BIN" app delete $s --volumes --yes >/dev/null 2>&1; docker compose -p $s down -v >/dev/null 2>&1; done
-  kill $SRV ${AGENT:-} 2>/dev/null; wait $SRV ${AGENT:-} 2>/dev/null; rm -rf "$T"
+  for s in adopt-a adopt-b; do "$BIN" app delete $s --volumes --yes >/dev/null 2>&1; done
+  kill $SRV ${AGENT:-} 2>/dev/null; wait $SRV ${AGENT:-} 2>/dev/null # before what's left goes: its Self-Heal
+  for s in adopt-a adopt-b; do docker compose -p $s down -v >/dev/null 2>&1; done
+  rm -rf "$T"
 }
 trap cleanup EXIT
 for _ in $(seq 50); do curl -sf $API/version >/dev/null && break; sleep 0.2; done

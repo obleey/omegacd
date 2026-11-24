@@ -1148,3 +1148,8 @@ and a delete with volumes would remove the other's data.
   keyed by their name, which `host rename` changes, and Application names are unique in one OmegaCD, so two of its
   Hosts sharing an engine never collide, and an Application moved between them stays its own. The ID is 128 random
   bits made at the Control Plane's first start, unique, and never changed: no setting, rename or API sets it.
+- **Q342** Recovery from nothing under Q340 (narrows Q117 and Q119's recovery path): the new Control Plane's Agents
+  refuse it; each is reinstalled with an empty state dir (new keys and Host Key, secrets rekeyed) and enrolled with a
+  new invite, and the App of Apps takes their running apps over with `adopt: true`, recreating their containers as
+  its own, volumes and data kept. A backup avoids it. Q119's takeover without deploying stays for a Control Plane
+  restored from an older backup that lacks an Application its Agent still runs; `recovery.sh` tests both.

@@ -19,14 +19,15 @@ OMEGACD_ADDR=127.0.0.1:18080 OMEGACD_DATA=$T/data OMEGACD_AGE_KEY_FILE=$T/age.ke
 SRV=$!
 AGENTS="" ENGINES=""
 cleanup() {
+  for e in $ENGINES; do "$BIN" app delete "imp${e%%=*}" --volumes --yes >/dev/null 2>&1; done
+  kill $SRV $AGENTS 2>/dev/null; wait $SRV $AGENTS 2>/dev/null # before what's left goes: their Self-Heal
   for e in $ENGINES; do
     sock=${e#*=} n=${e%%=*}
-    "$BIN" app delete imp$n --volumes --yes >/dev/null 2>&1
     DOCKER_HOST=$sock docker compose -p imp$n down -v >/dev/null 2>&1
     DOCKER_HOST=$sock docker rm -f imp-store$n-web >/dev/null 2>&1
     DOCKER_HOST=$sock docker volume rm imp-store$n >/dev/null 2>&1
   done
-  kill $SRV $AGENTS 2>/dev/null; wait $SRV $AGENTS 2>/dev/null; [ -n "${KEEP:-}" ] || rm -rf "$T"
+  [ -n "${KEEP:-}" ] || rm -rf "$T"
 }
 trap cleanup EXIT
 for _ in $(seq 50); do curl -sf $API/version >/dev/null && break; sleep 0.2; done

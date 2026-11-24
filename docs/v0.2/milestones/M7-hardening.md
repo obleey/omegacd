@@ -149,7 +149,7 @@ Each finding becomes a ticket, or is recorded as accepted with its reason in dec
 and the rest are fixed or accepted in decisions.md.
 
 ### M7-09 · Ownership of Compose projects
-**Status:** todo
+**Status:** done (2026-11-24, PR #176)
 **Depends on:** M7-01
 
 Found on 2026-11-24: an Agent takes a Compose project as its own when its containers carry any OmegaCD's label. The e2e
@@ -168,7 +168,7 @@ only if its database has the Application (then labelled at the next Sync), other
 An Agent belongs to the first Control Plane that approves it (Q340): another one, with another ID, is refused before
 the Agent enrolls, both sides saying why; only a reinstall with an empty state dir moves it.
 
-**Decisions:** Q335–Q341 (2026-11-24).
+**Decisions:** Q335–Q342 (2026-11-24).
 
 **Done when:** integration tests with two Agents on one engine and the same Application name pass on every engine of
 the matrix (the second refused; the first's containers and volume untouched by the second's Sync, Self-Heal and delete
