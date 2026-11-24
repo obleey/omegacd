@@ -106,6 +106,14 @@ func (ag *Agent) deploy(ctx context.Context, a App, r Revision, fetch func(hash 
 // apply writes a cached Revision into a's folder, decrypts it and brings the project up; recreate re-attaches every
 // container's bind mounts (after a restore the files are new). It records r as deployed. Caller holds the lock.
 func (ag *Agent) apply(ctx context.Context, a App, r Revision, recreate bool, opts domain.SyncOptions) error {
+	owner, err := ag.db.ControlPlane(ctx)
+	if err != nil {
+		return err
+	}
+	takeover, err := ag.claim(ctx, a, owner) // before its folder is written or the app recorded: a refused project leaves neither
+	if err != nil {
+		return err
+	}
 	if err := ag.work.Write(ctx, a, r); err != nil {
 		return err
 	}
@@ -118,14 +126,7 @@ func (ag *Agent) apply(ctx context.Context, a App, r Revision, recreate bool, op
 		ag.log.DebugContext(ctx, "decrypted", "file", d.Path)
 	}
 	app := application(a, r)
-	app.Owner, err = ag.db.ControlPlane(ctx)
-	if err != nil {
-		return err
-	}
-	takeover, err := ag.claim(ctx, a, app.Owner)
-	if err != nil {
-		return err
-	}
+	app.Owner = owner
 	for _, f := range app.ComposeFilesIn(dir) {
 		if _, err := os.Stat(filepath.Join(dir, f)); errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("%w: compose file %q not found in the Revision %s", domain.ErrInvalid, f, r.Revision)
