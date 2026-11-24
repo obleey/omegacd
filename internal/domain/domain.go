@@ -193,6 +193,8 @@ type Host struct {
 	AllowIPs []string `json:"allowIPs,omitempty"`
 	// Agent is what the Host's Agent said about itself when it last connected (Q41); nil before.
 	Agent *AgentInfo `json:"agent,omitempty"`
+	// Refused is why an Agent refused this Host's invite: it belongs to another OmegaCD (Q340); cleared when one enrolls.
+	Refused string `json:"refused,omitempty"`
 	// Unmanaged are the Applications the Host's Agent runs that the Control Plane doesn't know: "on the Host, not
 	// managed" (Q30, Q118), as of its last resync; never acted on (Q91).
 	Unmanaged []string `json:"unmanaged,omitempty"`
@@ -572,6 +574,11 @@ type Store interface {
 	// LockHost locks the Host with the connections that shared its key; UnlockHost clears it.
 	LockHost(ctx context.Context, host string, conns []AgentConnection) error
 	UnlockHost(ctx context.Context, host string) error
+	// ControlPlaneID is this Control Plane's ID (Q341): made once, never changed.
+	ControlPlaneID(ctx context.Context) (string, error)
+	// RefuseInvite records why an Agent of another OmegaCD refused the invite on its Host (Q340), and returns the Host;
+	// the invite stays unused. Enroll clears it.
+	RefuseInvite(ctx context.Context, invite, why string) (string, error)
 	// ApproveHost approves the Host's key if fingerprint is the key's (ErrInvalid otherwise, or without a key).
 	ApproveHost(ctx context.Context, host, fingerprint string) error
 	// SetAgentApps records a Host's Agent's resync: its Applications' checksums (Q119), the unknown ones (Q118).
