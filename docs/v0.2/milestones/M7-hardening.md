@@ -164,9 +164,13 @@ with another owner is never synced, self-healed or deleted, the refusal naming t
 with volumes and Prune volumes touch only this owner's volumes. Containers from before the label are the Agent's own
 only if its database has the Application (then labelled at the next Sync), otherwise refused unless `adopt: true`.
 
-**Decisions:** Q335–Q339 (2026-11-24).
+An Agent belongs to the first Control Plane that approves it (Q340): another one, with another ID, is refused before
+the Agent enrolls, both sides saying why; only a reinstall with an empty state dir moves it.
+
+**Decisions:** Q335–Q340 (2026-11-24).
 
 **Done when:** integration tests with two Agents on one engine and the same Application name pass on every engine of
 the matrix (the second refused; the first's containers and volume untouched by the second's Sync, Self-Heal and delete
 with volumes; adopt taking over on purpose); an e2e test runs two OmegaCDs on one Docker with the same Application name
-and the first's app keeps running with its data; the README says how two OmegaCDs share a Host.
+and the first's app keeps running with its data; an Agent approved by one Control Plane refuses a second one, whose
+invite stays unused; the README says how two OmegaCDs share a Host and what binds an Agent to its OmegaCD.

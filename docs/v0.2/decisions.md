@@ -1130,9 +1130,17 @@ and a delete with volumes would remove the other's data.
   with volumes and Prune volumes remove only volumes with this owner.
 - **Q337** Containers from before the owner label (OmegaCD's labels, no owner) are the Agent's own if its database has
   the Application, and the next Sync labels them; otherwise they are refused like a stack started by hand, and
-  `adopt: true` takes them over. Until now any OmegaCD's containers were taken silently.
+  `adopt: true` takes them over. Docker can't relabel a container, so they get the label when Compose next recreates
+  them; until then the database record is what makes them the Agent's own; adopt of another owner's project forces
+  that recreate. Until now any OmegaCD's containers were taken silently.
 - **Q338** A ticket of its own, M7-09, before M7-02: integration tests with two Agents on one engine and the same
   Application name (the second refused; the first's containers and volume untouched by the second's Sync, Self-Heal and
   delete with volumes; adopt taking over on purpose) and an e2e test with two OmegaCDs on one Docker.
 - **Q339** The local e2e suite and a demo on the same Docker: the demo is stopped while the suite runs (the walkthrough
   uses the README's names); after M7-09 a collision is refused instead of destroying anything.
+- **Q340** An Agent belongs to the first Control Plane that approves it, for good: it records that Control Plane's ID,
+  which every Control Plane sends in its challenge, and refuses another one before enrolling (its invite stays unused),
+  logging and telling it "this Agent belongs to OmegaCD <id>", which that Control Plane shows on the Host; it keeps its
+  Applications running and self-healing meanwhile. A Control Plane restored from its backup keeps its ID; one rebuilt
+  from nothing has a new one, which its Agents refuse: each is reinstalled with an empty state dir, a new Host Key and
+  Q289's recovery (forget, add the Host again, rekey). This narrows Q117's recovery from nothing.
