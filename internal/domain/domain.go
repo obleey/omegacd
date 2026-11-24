@@ -28,6 +28,17 @@ const (
 // ManagedLabel is set on every container omegacd creates; its value is the Application name.
 const ManagedLabel = "dev.omegacd.application"
 
+// OwnerLabel holds the ID of the Control Plane whose Agent created a container, volume or network (Q335, Q341): an
+// Agent never touches another owner's project (Q336).
+const OwnerLabel = "dev.omegacd.owner"
+
+// ProjectState is who a Compose project's containers belong to (Q336, Q337).
+type ProjectState struct {
+	Exists  bool     // it has containers
+	Managed bool     // one of them carries ManagedLabel: an OmegaCD started it
+	Owners  []string // the OwnerLabel values on them, sorted, without repeats; none on containers from before M7-09
+}
+
 // ManagedByLabel=ManagedByValue marks every container OmegaCD creates, for people and other tools filtering on it.
 const (
 	ManagedByLabel = "managed-by"
@@ -51,6 +62,7 @@ var (
 	ErrAlreadyExists = errors.New("already exists")
 	ErrInvalid       = errors.New("invalid")
 	ErrUnmanaged     = errors.New("compose project exists and is not managed by omegacd")
+	ErrOwned         = errors.New("compose project belongs to another OmegaCD")
 	ErrBusy          = errors.New("a sync operation is already running")
 	// ErrUnavailable: the Source Server can't be reached; what was rendered before still deploys (Q124)
 	ErrUnavailable = errors.New("unavailable")
@@ -71,6 +83,8 @@ type Application struct {
 	Prune          bool     `json:"prune"`
 	PruneVolumes   bool     `json:"pruneVolumes"` // with Prune, also delete undeclared project volumes; false whenever Prune is
 	Adopt          bool     `json:"adopt"`        // only honoured on create
+	// Owner is the Control Plane ID the Agent labels what it creates with (Q335); never stored or sent
+	Owner string `json:"-"`
 	// Deleting says how it's being deleted while its Agent hasn't confirmed (Q83): "containers", "volumes" or "keep"
 	Deleting   string    `json:"deleting,omitempty"`
 	RolledBack bool      `json:"rolledBack"`        // Auto-Sync was turned off by a Rollback; cleared when Auto-Sync is re-enabled
@@ -193,6 +207,8 @@ type Host struct {
 	AllowIPs []string `json:"allowIPs,omitempty"`
 	// Agent is what the Host's Agent said about itself when it last connected (Q41); nil before.
 	Agent *AgentInfo `json:"agent,omitempty"`
+	// Refused is why an Agent refused this Host's invite: it belongs to another OmegaCD (Q340); cleared when one enrolls.
+	Refused string `json:"refused,omitempty"`
 	// Unmanaged are the Applications the Host's Agent runs that the Control Plane doesn't know: "on the Host, not
 	// managed" (Q30, Q118), as of its last resync; never acted on (Q91).
 	Unmanaged []string `json:"unmanaged,omitempty"`
@@ -572,6 +588,11 @@ type Store interface {
 	// LockHost locks the Host with the connections that shared its key; UnlockHost clears it.
 	LockHost(ctx context.Context, host string, conns []AgentConnection) error
 	UnlockHost(ctx context.Context, host string) error
+	// ControlPlaneID is this Control Plane's ID (Q341): made once, never changed.
+	ControlPlaneID(ctx context.Context) (string, error)
+	// RefuseInvite records why an Agent of another OmegaCD refused the invite on its Host (Q340), and returns the Host;
+	// the invite stays unused. Enroll clears it.
+	RefuseInvite(ctx context.Context, invite, why string) (string, error)
 	// ApproveHost approves the Host's key if fingerprint is the key's (ErrInvalid otherwise, or without a key).
 	ApproveHost(ctx context.Context, host, fingerprint string) error
 	// SetAgentApps records a Host's Agent's resync: its Applications' checksums (Q119), the unknown ones (Q118).
@@ -697,12 +718,12 @@ type Engine interface {
 	// (and with PruneVolumes undeclared volumes), skipping networks and volumes a container still uses.
 	Sync(ctx context.Context, app Application, dir string, opts SyncOptions) error
 	// Remove deletes the project's containers and networks, and with volumes its named and anonymous
-	// volumes (like `docker compose down -v`; never external volumes or host paths).
+	// volumes (like `docker compose down -v`; never external volumes, host paths or another owner's volumes).
 	Remove(ctx context.Context, app Application, volumes bool) error
 	// Status returns the Live State, including Health per container and overall.
 	Status(ctx context.Context, app Application) (LiveState, error)
-	// ProjectExists reports whether a Compose project with this name has containers, and whether omegacd manages it.
-	ProjectExists(ctx context.Context, name string) (exists, managed bool, err error)
+	// Project reports whether a Compose project with this name has containers, and who they belong to.
+	Project(ctx context.Context, name string) (ProjectState, error)
 	// Logs streams the logs (stdout+stderr, demultiplexed, with timestamps) of one of app's containers to w
 	// until ctx ends or, if !follow, EOF. A container of another project is ErrNotFound.
 	Logs(ctx context.Context, app Application, containerID string, follow bool, tail int, w io.Writer) error

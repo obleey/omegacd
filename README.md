@@ -255,7 +255,9 @@ selfHeal: false
 prune: false
 ```
 
-`omegacd app export NAME` (or **Export YAML** in the UI) writes this format for an existing Application, and `omegacd app create -f FILE` reads it. Every Application names its `host:`: there is no default, and a definition without one fails the App of Apps' Sync, so nothing is deployed to a Host Git didn't name. Nested App of Apps are not supported. `adopt: true` lets an Application take over an existing, unmanaged Compose project of the same name.
+`omegacd app export NAME` (or **Export YAML** in the UI) writes this format for an existing Application, and `omegacd app create -f FILE` reads it. Every Application names its `host:`: there is no default, and a definition without one fails the App of Apps' Sync, so nothing is deployed to a Host Git didn't name. Nested App of Apps are not supported. `adopt: true` lets an Application take over an existing Compose project of the same name: one started by hand, or one
+[another OmegaCD](#one-omegacd-per-agent-and-two-omegacds-on-one-host) runs (its containers are then recreated as
+this OmegaCD's).
 
 ![App of Apps](assets/screenshots/app-of-apps.png)
 
@@ -333,7 +335,7 @@ Your Applications' secrets are not in either: each Host's Agent holds its own Ho
 
 **Restore** on a stopped Control Plane: an empty data dir, `tar -xf omegacd-….tar -C <data dir>`, `source.key` and the Master Key back where they were, start. The Agents reconnect by themselves. The files OmegaCD delivered aren't in the tar (Git has them): until the Source Server is reachable, Rollbacks work from what each Agent keeps (its last 10 Revisions per Application), and a reinstalled Host waits for the Source Server. A Sync the backup caught running, whose result reached only the Control Plane you lost, shows as **Unknown**; what runs is what each Agent reports.
 
-**From nothing** (no backup): start an empty Control Plane, add each Host again and run its Agent with the new invite (its state is kept: its apps keep running; reports it kept for the old Control Plane are dropped). `omegacd host list` shows what each Host runs that OmegaCD doesn't know (**not managed**: never touched). Create your App of Apps again: an Application its Agent already runs at the target Revision is **taken over** without deploying (its history says so); one at another Revision Syncs normally.
+**From nothing** (no backup): an empty Control Plane has a new ID, and [an Agent belongs to the OmegaCD that approved it](#one-omegacd-per-agent-and-two-omegacds-on-one-host), so each refuses the new one. Reinstall each Agent with an empty state dir (new keys, and a new Host Key: rekey your secrets with `omegacd secrets rekey`), add its Host again and run the Agent with the new invite. Its apps keep running meanwhile, but they carry the old OmegaCD's ID: create your App of Apps again with `adopt: true` on their definitions, which takes each over by recreating its containers (volumes and data stay). A backup avoids all this: restored, the Control Plane keeps its ID and the Agents reconnect by themselves.
 
 ## Git access
 
@@ -401,6 +403,22 @@ History, or `omegacd app cancel NAME`. Logs come only from the Agent: OmegaCD st
 (`17.11.2026 18:42`) or US (`11/17/2026 6:42 PM`).
 
 Applications with `host: web-1` then deploy through it; a Sync to it while it's offline waits for it, and its Applications show their last known state. `omegacd agent --help` lists its settings (its work dir, state dir, engine). The machine OmegaCD runs on is a Host like any other: give it an Agent too, and OmegaCD can deploy its own Compose project as an Application — an Agent only refuses the project it runs in itself.
+
+### One OmegaCD per Agent, and two OmegaCDs on one Host
+
+Each OmegaCD has an ID of its own, made at its first start and never changed. **An Agent belongs to the first OmegaCD
+that approves it, for good**: pointed at another one (another URL and invite), it refuses it before enrolling, logs why,
+and that OmegaCD shows on the Host that its Agent belongs to another OmegaCD; the invite stays unused. Its Applications
+keep running and self-healing for their own OmegaCD meanwhile. Moving a Host to another OmegaCD means reinstalling its
+Agent with an empty state dir: a new Host Key too, so its secrets are rekeyed (`omegacd secrets rekey`).
+
+**What an Agent creates carries its OmegaCD's ID** (`dev.omegacd.owner`, on containers, volumes and networks), so two
+OmegaCDs can share a Host's engine — staging beside production, a trial install — without touching each other's
+projects: a Sync of an Application whose Compose project of the same name belongs to another OmegaCD fails, naming it
+("belongs to another OmegaCD (…): rename the Application, or set adopt: true to take it over"), and no delete or Prune
+removes another OmegaCD's containers or volumes. Containers from before these labels count as an Agent's own if it
+deployed them, and get the label when Compose next recreates them; `adopt: true` takes over a project on purpose,
+recreating its containers as the new OmegaCD's.
 
 ### The Agent in a container
 

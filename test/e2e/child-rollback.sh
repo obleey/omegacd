@@ -13,11 +13,12 @@ fail=0
 check() { if eval "$2"; then echo "PASS  $1"; else echo "FAIL  $1"; fail=1; fi; }
 gitc() { git -C "$REPO" -c user.name=e2e -c user.email=e2e@local "$@"; }
 cleanup() {
+  kill $SRV ${AGENT:-} 2>/dev/null; wait $SRV ${AGENT:-} 2>/dev/null # first: its Self-Heal would bring them back
   for p in web held; do
     docker rm -f $(docker ps -aq --filter label=com.docker.compose.project=$p) >/dev/null 2>&1
     docker network rm ${p}_default >/dev/null 2>&1
   done
-  kill $SRV ${AGENT:-} 2>/dev/null; wait $SRV ${AGENT:-} 2>/dev/null; rm -rf "$T"
+  rm -rf "$T"
 }
 trap cleanup EXIT
 

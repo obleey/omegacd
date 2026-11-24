@@ -924,3 +924,54 @@ func TestSupersedeAndEmptyAllowlist(t *testing.T) {
 		t.Fatalf("allow %#v", h.AllowIPs)
 	}
 }
+
+// The Control Plane's ID (Q341): 32 hex digits made once, the same after reopening, another for another database, and
+// neither changed nor removed by anything.
+func TestControlPlaneID(t *testing.T) {
+	s, path := open(t)
+	id, err := s.ControlPlaneID(ctx)
+	must(t, err)
+	if len(id) != 32 || strings.Trim(id, "0123456789abcdef") != "" {
+		t.Fatalf("ID %q", id)
+	}
+	s.Close()
+	again, err := Open(path, s.sealer)
+	must(t, err)
+	defer again.Close()
+	if got, _ := again.ControlPlaneID(ctx); got != id {
+		t.Fatalf("reopened: %q, want %q", got, id)
+	}
+	other, _ := open(t)
+	if got, _ := other.ControlPlaneID(ctx); got == id {
+		t.Fatal("two databases with one ID")
+	}
+	for _, q := range []string{`UPDATE control_plane SET id = 'mine'`, `DELETE FROM control_plane`, `INSERT INTO control_plane VALUES (2, 'x')`} {
+		if _, err := again.db.ExecContext(ctx, q); err == nil {
+			t.Errorf("%s: allowed", q)
+		}
+	}
+	if got, _ := again.ControlPlaneID(ctx); got != id {
+		t.Fatalf("changed to %q", got)
+	}
+}
+
+// An Agent of another OmegaCD refusing an invite (Q340): recorded on its Host, the invite still usable, cleared when an
+// Agent enrolls with it; an invite of no Host is not found.
+func TestRefuseInvite(t *testing.T) {
+	s, _ := open(t)
+	invite, err := s.CreateInvite(ctx, "web", time.Now().Add(time.Hour))
+	must(t, err)
+	host, err := s.RefuseInvite(ctx, invite, "its Agent belongs to OmegaCD 1234")
+	must(t, err)
+	if h, _ := s.GetHost(ctx, "web"); host != "web" || h.Refused != "its Agent belongs to OmegaCD 1234" {
+		t.Fatalf("RefuseInvite = %q; Host %+v", host, h)
+	}
+	if _, err := s.RefuseInvite(ctx, "omegacd-invite-none", "x"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("an unknown invite: %v", err)
+	}
+	h, err := s.Enroll(ctx, invite, []byte("key"), "age1web", time.Now())
+	must(t, err)
+	if h.Refused != "" {
+		t.Fatalf("after enrolling: %+v", h)
+	}
+}

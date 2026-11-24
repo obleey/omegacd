@@ -3,48 +3,70 @@ package agent
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/obleey/omegacd/internal/domain"
-	agentv1 "github.com/obleey/omegacd/internal/proto/agent/v1"
 )
 
-// projects answers ProjectExists as if the Host ran an unmanaged project named "hand", or fails.
+// projects answers Project as if the Host ran these projects, or fails.
 type projects struct {
 	domain.Engine
 	err error
 }
 
-func (p projects) ProjectExists(_ context.Context, name string) (bool, bool, error) {
-	return name == "hand", false, p.err
+func (p projects) Project(_ context.Context, name string) (domain.ProjectState, error) {
+	return map[string]domain.ProjectState{
+		"hand":    {Exists: true},                                           // started by hand
+		"theirs":  {Exists: true, Managed: true, Owners: []string{"other"}}, // another OmegaCD's
+		"old":     {Exists: true, Managed: true},                            // an OmegaCD before M7-09, not this Agent
+		"oldours": {Exists: true, Managed: true},                            // the same, deployed by this Agent
+		"mine":    {Exists: true, Managed: true, Owners: []string{"me"}},
+		"mixed":   {Exists: true, Managed: true, Owners: []string{"me", "other"}},
+	}[name], p.err
 }
 
-// A first deploy over a hand-started project is refused unless the Application adopts it; with adopt, and for an
-// Application this Agent deployed before, nothing is checked.
-func TestAdoptable(t *testing.T) {
+// Only this Agent's own project is acted on (Q336, Q337): a hand-started one, another OmegaCD's and an unlabelled one
+// it didn't deploy are refused unless adopted; adopting one an OmegaCD started recreates its containers, so they carry
+// this owner.
+func TestClaim(t *testing.T) {
 	db := openDB(t, t.TempDir()+"/agent.db")
 	ctx := t.Context()
 	ag := New(db, nil, nil, nil, projects{}, nil)
-	db.SaveApp(ctx, App{Name: "ours", Revision: "r1"})
+	db.SaveApp(ctx, App{Name: "oldours", Revision: "r1"})
 	for _, tc := range []struct {
-		app   string
-		adopt bool
-		want  error
+		app      string
+		adopt    bool
+		want     error
+		recreate bool
 	}{
-		{"hand", false, domain.ErrUnmanaged},
-		{"hand", true, nil}, // a first deploy, adopting: not in this Agent's database yet
-		{"ours", false, nil},
-		{"new", false, nil},
+		{"new", false, nil, false},
+		{"hand", false, domain.ErrUnmanaged, false},
+		{"hand", true, nil, false}, // Compose adopts a hand-started project as it is (Q119)
+		{"theirs", false, domain.ErrOwned, false},
+		{"theirs", true, nil, true},
+		{"mixed", false, domain.ErrOwned, false},
+		{"mixed", true, nil, true},
+		{"old", false, domain.ErrOwned, false},
+		{"old", true, nil, true},
+		{"oldours", false, nil, false}, // labelled when Compose next recreates it
+		{"mine", false, nil, false},
+		{"mine", true, nil, false},
 	} {
-		if err := ag.adoptable(ctx, &agentv1.DesiredState{App: tc.app, Adopt: tc.adopt}); !errors.Is(err, tc.want) {
-			t.Errorf("%s adopt=%v: %v", tc.app, tc.adopt, err)
+		recreate, err := ag.claim(ctx, App{Name: tc.app, Adopt: tc.adopt}, "me")
+		if !errors.Is(err, tc.want) || recreate != tc.recreate {
+			t.Errorf("%s adopt=%v: %v, recreate %v", tc.app, tc.adopt, err, recreate)
 		}
 	}
-	if err := New(db, nil, nil, nil, projects{err: errors.New("engine down")}, nil).adoptable(ctx, &agentv1.DesiredState{App: "new"}); err == nil {
+	if _, err := ag.claim(ctx, App{Name: "theirs"}, "me"); err == nil || !strings.Contains(err.Error(),
+		"a Compose project theirs on this Host belongs to another OmegaCD (other): rename the Application, or set adopt: true") {
+		t.Errorf("the refusal: %v", err)
+	}
+	if _, err := New(db, nil, nil, nil, projects{err: errors.New("engine down")}, nil).claim(ctx, App{Name: "new"}, "me"); err == nil {
 		t.Error("an engine that can't answer let it deploy")
 	}
 	db.Close()
-	if err := ag.adoptable(ctx, &agentv1.DesiredState{App: "new"}); err == nil || errors.Is(err, domain.ErrNotFound) {
+	if _, err := ag.claim(ctx, App{Name: "mine"}, "me"); err == nil || errors.Is(err, domain.ErrNotFound) {
 		t.Errorf("a database that can't answer: %v", err)
 	}
 }

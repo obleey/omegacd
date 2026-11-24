@@ -972,6 +972,10 @@ func TestEnrollmentAPI(t *testing.T) {
 
 func (s *fakeStore) UnlockHost(context.Context, string) error { return nil }
 
+func (s *fakeStore) ControlPlaneID(context.Context) (string, error) {
+	return "0123456789abcdef0123456789abcdef", nil
+}
+
 // The Agents' endpoint needs no session (an Agent signs a challenge instead) and upgrades through the API's
 // middleware: the Agent gets its challenge.
 func TestAgentsConnectIsPublic(t *testing.T) {

@@ -197,15 +197,15 @@ func TestLifecycle(t *testing.T) {
 		t.Errorf("Services = %v", ls.Services)
 	}
 
-	if exists, managed, err := e.ProjectExists(ctx, app.Name); err != nil || !exists || !managed {
-		t.Errorf("ProjectExists(managed) = %v, %v, %v", exists, managed, err)
+	if st, err := e.Project(ctx, app.Name); err != nil || !st.Exists || !st.Managed || len(st.Owners) != 0 {
+		t.Errorf("Project(managed, no owner) = %+v, %v", st, err)
 	}
 
 	if err := e.Remove(ctx, app, false); err != nil {
 		t.Fatal(err)
 	}
-	if exists, _, err := e.ProjectExists(ctx, app.Name); err != nil || exists {
-		t.Errorf("ProjectExists after Remove = %v, %v", exists, err)
+	if st, err := e.Project(ctx, app.Name); err != nil || st.Exists {
+		t.Errorf("Project after Remove = %+v, %v", st, err)
 	}
 }
 
@@ -226,16 +226,16 @@ func TestProjectExistsUnmanaged(t *testing.T) {
 	if err := e.local().compose.Up(ctx, p, api.UpOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	exists, managed, err := e.ProjectExists(ctx, app.Name)
-	if err != nil || !exists || managed {
-		t.Fatalf("ProjectExists(unmanaged) = %v, %v, %v; want true, false", exists, managed, err)
+	st, err := e.Project(ctx, app.Name)
+	if err != nil || !st.Exists || st.Managed {
+		t.Fatalf("Project(unmanaged) = %+v, %v; want existing, unmanaged", st, err)
 	}
 	// Adopting must not recreate: our loader and labels hash the same as plain compose.
 	if diffs, err := e.Diff(ctx, app, dir, ""); err != nil || len(diffs) != 0 {
 		t.Errorf("Diff of unmanaged project = %+v, %v; want empty", diffs, err)
 	}
-	if exists, _, _ := e.ProjectExists(ctx, app.Name+"-nope"); exists {
-		t.Error("ProjectExists(missing) = true")
+	if st, _ := e.Project(ctx, app.Name+"-nope"); st.Exists {
+		t.Error("Project(missing) exists")
 	}
 }
 

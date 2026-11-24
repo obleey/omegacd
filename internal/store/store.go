@@ -139,6 +139,21 @@ CREATE TABLE encryption_key_hosts (
 CREATE TRIGGER hosts_rename_keys AFTER UPDATE OF name ON hosts BEGIN
 	UPDATE encryption_key_hosts SET host = NEW.name WHERE host = OLD.name;
 END;
+`, `
+-- M7-09: the Control Plane's ID (Q341), 128 random bits made here once, which nothing changes or removes; and why an
+-- Agent of another OmegaCD refused a Host's invite (Q340)
+CREATE TABLE control_plane (
+	one INTEGER PRIMARY KEY CHECK (one = 1),
+	id TEXT NOT NULL
+);
+INSERT INTO control_plane (one, id) VALUES (1, lower(hex(randomblob(16))));
+CREATE TRIGGER control_plane_unchanged BEFORE UPDATE ON control_plane BEGIN
+	SELECT RAISE(ABORT, 'the Control Plane ID never changes');
+END;
+CREATE TRIGGER control_plane_kept BEFORE DELETE ON control_plane BEGIN
+	SELECT RAISE(ABORT, 'the Control Plane ID never changes');
+END;
+ALTER TABLE hosts ADD COLUMN refused TEXT NOT NULL DEFAULT '';
 `}
 
 type Store struct {
@@ -599,14 +614,14 @@ func (s *Store) DeleteEncryptionKey(ctx context.Context, name string) error {
 // ---- hosts ----
 
 // hostSelect reads a Host with its Agent's enrollment
-const hostSelect = `SELECT name, created_at, signing_key, age_recipient, approved, locked, agent, allow_ips, agent_apps, unmanaged FROM hosts`
+const hostSelect = `SELECT name, created_at, signing_key, age_recipient, approved, locked, agent, allow_ips, agent_apps, unmanaged, refused FROM hosts`
 
 func (s *Store) scanHost(r scanner) (domain.Host, error) {
 	var h domain.Host
 	var created int64
 	var locked, agent, allow, agentApps, unmanaged string
 	if err := r.Scan(&h.Name, &created,
-		&h.SigningKey, &h.AgeRecipient, &h.Approved, &locked, &agent, &allow, &agentApps, &unmanaged); err != nil {
+		&h.SigningKey, &h.AgeRecipient, &h.Approved, &locked, &agent, &allow, &agentApps, &unmanaged, &h.Refused); err != nil {
 		return h, mapErr(err)
 	}
 	if err := json.Unmarshal([]byte(agentApps), &h.AgentApps); err != nil {
@@ -893,7 +908,7 @@ func (s *Store) Enroll(ctx context.Context, invite string, signingKey []byte, ag
 		tx.Commit() // an expired invite is used up too
 		return domain.Host{}, errInvite
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE hosts SET signing_key = ?, age_recipient = ?, approved = 0 WHERE name = ?`,
+	if _, err := tx.ExecContext(ctx, `UPDATE hosts SET signing_key = ?, age_recipient = ?, approved = 0, refused = '' WHERE name = ?`,
 		signingKey, ageRecipient, host); err != nil { // coverage: unreachable, the same transaction, holding the write lock, on a healthy SQLite
 		return domain.Host{}, mapErr(err)
 	}
@@ -901,6 +916,22 @@ func (s *Store) Enroll(ctx context.Context, invite string, signingKey []byte, ag
 		return domain.Host{}, err
 	}
 	return s.GetHost(ctx, host)
+}
+
+// ControlPlaneID is this Control Plane's ID (Q341), made by the migration that added it.
+func (s *Store) ControlPlaneID(ctx context.Context) (string, error) {
+	var id string
+	err := s.db.QueryRowContext(ctx, `SELECT id FROM control_plane`).Scan(&id)
+	return id, err
+}
+
+// RefuseInvite records on the Host an invite is for why an Agent refused to enroll with it (Q340), leaving the invite
+// unused; ErrNotFound for an invite of no Host.
+func (s *Store) RefuseInvite(ctx context.Context, invite, why string) (string, error) {
+	var host string
+	err := s.db.QueryRowContext(ctx, `UPDATE hosts SET refused = ? WHERE name = (SELECT host FROM invites WHERE hash = ?) RETURNING name`,
+		why, hashToken(invite)).Scan(&host)
+	return host, mapErr(err)
 }
 
 // SetAgentApps records what a Host's Agent said at its resync: each Application it runs with its deployed tree's

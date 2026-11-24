@@ -234,3 +234,64 @@ func TestRemovalToOutbox(t *testing.T) {
 		t.Fatal("a live connection wasn't told to send it")
 	}
 }
+
+// An Agent belongs to the first Control Plane that approves it (Q340): pointed at another OmegaCD with that one's
+// invite, it refuses before enrolling, saying so in its log and on that Host, whose invite stays usable; its own
+// Control Plane it connects to again.
+func TestAgentBelongsToFirstControlPlane(t *testing.T) {
+	ctx := t.Context()
+	controlPlane := func(host string) (*store.Store, *agents.Hub, string, string) {
+		id, _ := age.GenerateX25519Identity()
+		st, err := store.Open(filepath.Join(t.TempDir(), "omegacd.db"), crypto.NewSealer(id))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { st.Close() })
+		hub := agents.New(st, nil)
+		srv := httptest.NewServer(hub)
+		t.Cleanup(srv.Close)
+		invite, _ := st.CreateInvite(ctx, host, time.Now().Add(time.Hour))
+		return st, hub, srv.URL, invite
+	}
+	stA, hubA, urlA, inviteA := controlPlane("web")
+	stB, _, urlB, inviteB := controlPlane("web")
+	idA, _ := stA.ControlPlaneID(ctx)
+
+	db := openDB(t, filepath.Join(t.TempDir(), "agent.db"))
+	defer db.Close()
+	key, _ := SigningKey(t.TempDir())
+	connect := func(url, invite string) (*logging.Buffer, context.CancelFunc) {
+		var log logging.Buffer
+		l, _ := logging.New(&log, "info", "text")
+		cctx, cancel := context.WithCancel(ctx)
+		go New(db, nil, nil, nil, nil, l).Connect(cctx, Connection{URL: url, Invite: invite, Key: key, AgeRecipient: testRecipient})
+		return &log, cancel
+	}
+	log, stop := connect(urlA, inviteA)
+	waitLog(t, log, "waiting for an admin to approve this Agent")
+	if own, _ := db.ControlPlane(ctx); own != "" {
+		t.Fatalf("bound before its approval: %q", own)
+	}
+	if err := hubA.Approve(ctx, "web", domain.Fingerprint(key.Public().(ed25519.PublicKey))); err != nil {
+		t.Fatal(err)
+	}
+	waitLog(t, log, "connected to the Control Plane, approved")
+	if own, _ := db.ControlPlane(ctx); own != idA {
+		t.Fatalf("bound to %q, want %q", own, idA)
+	}
+	stop()
+
+	log, stop = connect(urlB, inviteB)
+	waitLog(t, log, "refused a Control Plane other than the one that approved this Agent")
+	stop()
+	if h, _ := stB.GetHost(ctx, "web"); h.Fingerprint != "" || !strings.Contains(h.Refused, "its Agent belongs to another OmegaCD ("+idA+")") {
+		t.Fatalf("the other OmegaCD's Host: %+v", h)
+	}
+	if _, err := stB.Enroll(ctx, inviteB, []byte("another Agent's key"), testRecipient, time.Now()); err != nil {
+		t.Fatalf("the refused invite isn't usable: %v", err)
+	}
+
+	log, stop = connect(urlA, "")
+	defer stop()
+	waitLog(t, log, "connected to the Control Plane, approved")
+}

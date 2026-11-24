@@ -106,6 +106,14 @@ func (ag *Agent) deploy(ctx context.Context, a App, r Revision, fetch func(hash 
 // apply writes a cached Revision into a's folder, decrypts it and brings the project up; recreate re-attaches every
 // container's bind mounts (after a restore the files are new). It records r as deployed. Caller holds the lock.
 func (ag *Agent) apply(ctx context.Context, a App, r Revision, recreate bool, opts domain.SyncOptions) error {
+	owner, err := ag.db.ControlPlane(ctx)
+	if err != nil { // coverage: unreachable, a read of the Agent's healthy SQLite, which every caller just read or wrote
+		return err
+	}
+	takeover, err := ag.claim(ctx, a, owner) // before its folder is written or the app recorded: a refused project leaves neither
+	if err != nil {
+		return err
+	}
 	if err := ag.work.Write(ctx, a, r); err != nil {
 		return err
 	}
@@ -118,6 +126,7 @@ func (ag *Agent) apply(ctx context.Context, a App, r Revision, recreate bool, op
 		ag.log.DebugContext(ctx, "decrypted", "file", d.Path)
 	}
 	app := application(a, r)
+	app.Owner = owner
 	for _, f := range app.ComposeFilesIn(dir) {
 		if _, err := os.Stat(filepath.Join(dir, f)); errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("%w: compose file %q not found in the Revision %s", domain.ErrInvalid, f, r.Revision)
@@ -126,7 +135,7 @@ func (ag *Agent) apply(ctx context.Context, a App, r Revision, recreate bool, op
 	if err := ag.engine.Validate(ctx, app, dir); err != nil {
 		return err
 	}
-	opts.Prune, opts.PruneVolumes, opts.ForceRecreate = app.Prune, app.PruneVolumes, recreate
+	opts.Prune, opts.PruneVolumes, opts.ForceRecreate = app.Prune, app.PruneVolumes, recreate || takeover
 	err = ag.engine.Sync(ctx, app, dir, opts)
 	if err != nil {
 		return err
@@ -243,7 +252,14 @@ func (ag *Agent) Remove(ctx context.Context, name string, volumes bool) error {
 	if err != nil {
 		return err
 	}
-	if err := ag.engine.Remove(ctx, application(a, Revision{}), volumes); err != nil {
+	app := application(a, Revision{})
+	if app.Owner, err = ag.db.ControlPlane(ctx); err != nil { // coverage: unreachable, a read of the Agent's healthy SQLite, which just read the app
+		return err
+	}
+	if _, err := ag.claim(ctx, a, app.Owner); err != nil { // another OmegaCD's containers in it: forget it instead (--forget)
+		return err
+	}
+	if err := ag.engine.Remove(ctx, app, volumes); err != nil {
 		return err
 	}
 	if a.Dir != "" {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -107,7 +108,7 @@ func (b *blobs) deliver(hash string, r blobResult) {
 // fromDesired is the Application and Revision a Desired State describes.
 func fromDesired(ds *agentv1.DesiredState) (App, Revision) {
 	a := App{Name: ds.App, Parent: ds.Parent, WorkDir: ds.WorkDir, SelfHeal: ds.SelfHeal, Prune: ds.Prune,
-		PruneVolumes: ds.PruneVolumes}
+		PruneVolumes: ds.PruneVolumes, Adopt: ds.Adopt}
 	r := Revision{App: ds.App, Revision: ds.Revision, Checksum: ds.Checksum, ComposeFiles: ds.ComposeFiles, Profiles: ds.Profiles}
 	for _, f := range ds.Files {
 		r.Files = append(r.Files, domain.File{Path: f.Path, Mode: fs.FileMode(f.Mode), SHA256: hex.EncodeToString(f.Sha256)})
@@ -147,24 +148,32 @@ func (ag *Agent) refuseSelf(ctx context.Context, app string) error {
 	return nil
 }
 
-// adoptable refuses a first deploy over a Compose project of the same name that OmegaCD didn't start, unless the
-// Application adopts it: a hand-started stack is never taken over by accident.
-func (ag *Agent) adoptable(ctx context.Context, ds *agentv1.DesiredState) error {
-	if ds.Adopt {
-		return nil
+// claim refuses to act on a's Compose project unless it is this Agent's own, before any deploy, restore, rollback or
+// Self-Heal touches it (Q336, Q337): one OmegaCD didn't start (a stack started by hand), one another OmegaCD's
+// containers are in, and one an OmegaCD started without saying which that this Agent didn't deploy. With a.Adopt it
+// takes any of them over; recreate is then true where containers carry no owner or another one, so all get this one.
+func (ag *Agent) claim(ctx context.Context, a App, owner string) (recreate bool, err error) {
+	st, err := ag.engine.Project(ctx, a.Name)
+	if err != nil || !st.Exists {
+		return false, err
 	}
-	if _, err := ag.db.GetApp(ctx, ds.App); !errors.Is(err, domain.ErrNotFound) {
-		return err // nil: deployed here before, OmegaCD's own
+	others := slices.DeleteFunc(slices.Clone(st.Owners), func(o string) bool { return o == owner })
+	_, known := ag.db.GetApp(ctx, a.Name)
+	if known != nil && !errors.Is(known, domain.ErrNotFound) {
+		return false, known
 	}
-	exists, managed, err := ag.engine.ProjectExists(ctx, ds.App)
-	if err != nil {
-		return err
+	switch {
+	case !st.Managed && !a.Adopt:
+		return false, fmt.Errorf("%w: a Compose project %s runs on this Host that OmegaCD didn't start: set adopt: true to take it over",
+			domain.ErrUnmanaged, a.Name)
+	case len(others) > 0 && !a.Adopt:
+		return false, fmt.Errorf("%w: a Compose project %s on this Host belongs to another OmegaCD (%s): rename the Application, "+
+			"or set adopt: true to take it over", domain.ErrOwned, a.Name, strings.Join(others, ", "))
+	case st.Managed && len(st.Owners) == 0 && known != nil && !a.Adopt:
+		return false, fmt.Errorf("%w: a Compose project %s on this Host was started by an OmegaCD that doesn't say which, not by this "+
+			"Agent: rename the Application, or set adopt: true to take it over", domain.ErrOwned, a.Name)
 	}
-	if exists && !managed {
-		return fmt.Errorf("%w: a Compose project %s runs on this Host that OmegaCD didn't start: set adopt: true to take it over",
-			domain.ErrUnmanaged, ds.App)
-	}
-	return nil
+	return a.Adopt && st.Managed && (len(others) > 0 || len(st.Owners) == 0), nil
 }
 
 // requests are the Agent's requests waiting for the Control Plane's answer (reply_to), on one connection.
@@ -253,9 +262,6 @@ func (ag *Agent) desired(ctx context.Context, conn *wire.Conn, b *blobs, q *requ
 	err := checkNames(ds.App, ds.Parent)
 	if err == nil {
 		err = ag.refuseSelf(ctx, ds.App)
-	}
-	if err == nil {
-		err = ag.adoptable(ctx, ds)
 	}
 	if err == nil {
 		progress := func(p domain.ProgressEvent) {

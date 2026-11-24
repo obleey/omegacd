@@ -147,3 +147,31 @@ Each finding becomes a ticket, or is recorded as accepted with its reason in dec
 
 **Done when:** the review's report is in `docs/v0.2/security-review.md`, every finding high or above is fixed with a test,
 and the rest are fixed or accepted in decisions.md.
+
+### M7-09 · Ownership of Compose projects
+**Status:** done (2026-11-24, PR #176)
+**Depends on:** M7-01
+
+Found on 2026-11-24: an Agent takes a Compose project as its own when its containers carry any OmegaCD's label. The e2e
+walkthrough's throwaway OmegaCD, on the same Docker as a demo OmegaCD, deployed an Application `whoami` over the demo's
+and its delete removed the demo's container. Two OmegaCDs on one engine (staging beside production, a trial install),
+or two Hosts of one whose Agents share an engine, would do the same in production, and a delete with volumes would
+remove the other's data.
+
+Every container, volume and network the Agent creates for a project gets `dev.omegacd.owner=<Control Plane ID>` (Q341:
+128 random bits made once and kept in the Control Plane's database, never changed; it survives a Host enrolling again,
+Q289, and a Host's rename). A project
+with another owner is never synced, self-healed or deleted, the refusal naming the owner; `--forget` still works; a delete
+with volumes and Prune volumes touch only this owner's volumes. Containers from before the label are the Agent's own
+only if its database has the Application (then labelled at the next Sync), otherwise refused unless `adopt: true`.
+
+An Agent belongs to the first Control Plane that approves it (Q340): another one, with another ID, is refused before
+the Agent enrolls, both sides saying why; only a reinstall with an empty state dir moves it.
+
+**Decisions:** Q335–Q342 (2026-11-24).
+
+**Done when:** integration tests with two Agents on one engine and the same Application name pass on every engine of
+the matrix (the second refused; the first's containers and volume untouched by the second's Sync, Self-Heal and delete
+with volumes; adopt taking over on purpose); an e2e test runs two OmegaCDs on one Docker with the same Application name
+and the first's app keeps running with its data; an Agent approved by one Control Plane refuses a second one, whose
+invite stays unused; the README says how two OmegaCDs share a Host and what binds an Agent to its OmegaCD.

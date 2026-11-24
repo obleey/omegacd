@@ -134,3 +134,30 @@ func TestMigrations(t *testing.T) {
 		t.Fatal("opened a database from a newer Agent")
 	}
 }
+
+// The Control Plane that approved the Agent (Q340): none at first, the first one kept, never changed or removed.
+func TestControlPlaneBinding(t *testing.T) {
+	ctx := t.Context()
+	d := openDB(t, filepath.Join(t.TempDir(), "agent.db"))
+	if id, err := d.ControlPlane(ctx); err != nil || id != "" {
+		t.Fatalf("before any: %q, %v", id, err)
+	}
+	if err := d.BindControlPlane(ctx, "first"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.BindControlPlane(ctx, "second"); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{`UPDATE control_plane SET id = 'x'`, `DELETE FROM control_plane`} {
+		if _, err := d.db.ExecContext(ctx, q); err == nil {
+			t.Errorf("%s: allowed", q)
+		}
+	}
+	if id, _ := d.ControlPlane(ctx); id != "first" {
+		t.Fatalf("bound to %q, want the first", id)
+	}
+	d.Close()
+	if _, err := d.ControlPlane(ctx); err == nil {
+		t.Fatal("a closed database read")
+	}
+}
