@@ -10,10 +10,12 @@ up)
   root=${2:?usage: test/engines.sh up ROOT}
   mkdir -p "$root"
   # Both engines run as uid 1000 inside their containers, while the tests write as the runner's user; a real rootless
-  # Agent is its engine's own user. A default ACL lets uid 1000 read and traverse whatever the tests create under root.
+  # Agent is its engine's own user. A default ACL lets uid 1000 use whatever the tests create under root, writing too
+  # (a container writing into a bind mount): its named entry wins over a folder's "other" bits, so rx would leave
+  # even a 0777 folder read-only to it where the runner's user isn't uid 1000 (CI)
   if [ "$(uname)" = Linux ]; then
     command -v setfacl >/dev/null || sudo apt-get install -y -q acl >/dev/null
-    setfacl -m u:1000:rx "$root" && setfacl -d -m u:1000:rx "$root"
+    setfacl -m u:1000:rwx "$root" && setfacl -d -m u:1000:rwx "$root"
   fi
   # existing ones are reused, and started if a reboot stopped them
   docker start omegacd-it-rootless omegacd-it-podman >/dev/null 2>&1 || true
@@ -39,6 +41,15 @@ EOF
       docker logs --tail 30 "$([ $port = 23750 ] && echo omegacd-it-rootless || echo omegacd-it-podman)" >&2
       exit 1
     }
+  done
+  # the tests' images, pulled once by this machine's engine (its cache survives cleanups) and copied into each engine in
+  # a container: four engines pulling from Docker Hub on every run fail now and then on its token server
+  for image in busybox busybox:1.36 busybox:1.37 busybox:1.38 nginx:alpine nginx:1.29-alpine; do
+    docker image inspect "$image" >/dev/null 2>&1 || docker pull -q "$image" >/dev/null
+    for port in 23750 23751; do
+      DOCKER_HOST=tcp://127.0.0.1:$port docker image inspect "$image" >/dev/null 2>&1 ||
+        docker save "$image" | DOCKER_HOST=tcp://127.0.0.1:$port docker load -q >/dev/null
+    done
   done
   ;;
 down) docker rm -f omegacd-it-rootless omegacd-it-podman >/dev/null 2>&1 || true ;;

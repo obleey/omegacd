@@ -703,7 +703,8 @@ func keepsRunning(restartPolicy string) bool {
 }
 
 // containerHealth maps docker container state to a Health Status. An exited 0 one-shot is Healthy,
-// but a long-running service (one with a restart policy) that is not running is Degraded.
+// but a long-running service (one with a restart policy) that is not running is Degraded. Podman says "stopped" for a
+// container that exited until it cleaned up after it: the same as "exited".
 func containerHealth(state, health string, exitCode, restartCount int, longRunning bool) domain.HealthStatus {
 	switch state {
 	case "running":
@@ -721,7 +722,7 @@ func containerHealth(state, health string, exitCode, restartCount int, longRunni
 			return domain.Progressing
 		}
 		return domain.Degraded
-	case "exited":
+	case "exited", "stopped":
 		if exitCode == 0 && !longRunning {
 			return domain.Healthy
 		}

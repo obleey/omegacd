@@ -3,7 +3,7 @@
 Proving "no data loss" and every supported setup (Q50, Q52).
 
 ### M7-01 · Test pyramid with real Agents
-**Status:** todo
+**Status:** done (2026-11-24, PR #174)
 **Depends on:** M4-05
 
 Unit tests; integration tests running a real Agent against Docker-in-Docker **rootful and rootless**, and **rootless
@@ -14,6 +14,12 @@ Found on 2026-11-23 (M6-11): `test/e2e/migrations.sh` fails every time on macOS 
 v5.7.2), never on Linux: after a new Revision the migrate container runs the old `schema.sql` (the schema check, the
 failing migration and the app left as it was all fail), the OrbStack quirk of a file rewritten at the same path within
 a second mounted stale. Make it hold on macOS too, so the local suite is green before the Linux run.
+
+**Decisions (Q332–Q334, 2026-11-23):** the engines job runs every integration test of `agent`, `importer` and `engine`
+on each engine, plus one new test with a real controller, hub, Source Server and Agent through an Application's life
+(Q332); `migrations.sh` skips its after-rewrite checks on macOS only, naming OrbStack's stale file cache, with no
+product change, Linux running them all (Q333); done when the engines job is green on all four engines on both
+architectures, `make e2e` green on macOS and the Linux gate passes (Q334).
 
 **Done when:** CI is green on all three engines.
 

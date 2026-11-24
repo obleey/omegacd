@@ -167,7 +167,8 @@ jobs:
         with:
           go-version-file: go.mod
       - *rootless-podman # set up in the e2e job above
-      # the Agent's deploy path against rootful Docker, rootless Docker and rootless Podman (Q34, Q52), the same engines
+      # the Agent, the importer and the engine package against rootful Docker, rootless Docker and rootless Podman (Q34,
+      # Q52), the Control Plane driving the Agent through an Application's life on each (Q332); the same engines
       # test/linux.sh runs on every machine
       - run: mkdir cover && make test-engines ENGINES_ROOT=/tmp/omegacd-engines ENGINES="rootful rootless podman host-podman" COVER_DIR=$PWD/cover
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
