@@ -1113,3 +1113,26 @@ Building Q189–Q201:
   them all. The README's development notes say so.
 - **Q334** Done when: the Agent engines job runs Q332's tests on all four engines, amd64 and arm64, and CI is green;
   `make e2e` is green on macOS with Q333's skip; the Linux gate passes.
+## Ownership of Compose projects (M7-09, 2026-11-24)
+
+Found on 2026-11-24: the e2e walkthrough's throwaway OmegaCD deployed an Application `whoami` to the same Docker as a
+demo OmegaCD with an Application of that name; its Agent took the demo's container as its own (any OmegaCD's label
+counted) and its delete removed it. In production two OmegaCDs, or two Hosts of one, on one engine would do the same,
+and a delete with volumes would remove the other's data.
+
+- **Q335** The Agent labels everything it creates for a project, containers and the volumes and networks Compose makes
+  for it, with `dev.omegacd.owner=<Control Plane ID>/<Host name>`: the Control Plane ID is random, made at its first
+  start and kept in its database. It differs between two OmegaCDs and between two Hosts of one, and stays when a Host
+  enrolls again with a new key (Q289).
+- **Q336** A project whose containers carry another owner is never touched: a Sync, a Self-Heal or a delete of it is
+  refused, naming the owner ("a Compose project whoami on this Host belongs to another OmegaCD (owner …): rename the
+  Application, or set adopt: true to take it over"); `app delete --forget` still works, touching no container. A delete
+  with volumes and Prune volumes remove only volumes with this owner.
+- **Q337** Containers from before the owner label (OmegaCD's labels, no owner) are the Agent's own if its database has
+  the Application, and the next Sync labels them; otherwise they are refused like a stack started by hand, and
+  `adopt: true` takes them over. Until now any OmegaCD's containers were taken silently.
+- **Q338** A ticket of its own, M7-09, before M7-02: integration tests with two Agents on one engine and the same
+  Application name (the second refused; the first's containers and volume untouched by the second's Sync, Self-Heal and
+  delete with volumes; adopt taking over on purpose) and an e2e test with two OmegaCDs on one Docker.
+- **Q339** The local e2e suite and a demo on the same Docker: the demo is stopped while the suite runs (the walkthrough
+  uses the README's names); after M7-09 a collision is refused instead of destroying anything.
