@@ -600,6 +600,11 @@ func TestAbsoluteBindMountIsLeftAlone(t *testing.T) {
 	e := newTestEngine(t)
 	app := testApp(t, e)
 	dir, data := enginetest.TempDir(t), enginetest.TempDir(t) // data: an absolute host path outside the app dir, like /opt/media
+	// the container writes into it: an engine in a container runs as uid 1000, another user than the test's on CI's
+	// runners; engines.sh's ACL gives it rwx, which the folder's group bits (the ACL mask) cap: 0711 leaves it --x
+	if err := os.Chmod(data, 0o777); err != nil {
+		t.Fatal(err)
+	}
 	write(t, dir, "compose.yaml", fmt.Sprintf(`
 services:
   web:
