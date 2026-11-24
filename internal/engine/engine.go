@@ -104,7 +104,26 @@ func (e *Engine) load(ctx context.Context, app domain.Application, dir string) (
 			domain.ManagedLabel:   app.Name,
 			domain.ManagedByLabel: domain.ManagedByValue,
 		}
+		if app.Owner != "" {
+			s.CustomLabels[domain.OwnerLabel] = app.Owner
+		}
 		p.Services[name] = s
+	}
+	// the volumes and networks Compose creates carry the owner too (Q335); like the services' labels, it isn't hashed,
+	// so labelling never recreates one
+	if app.Owner != "" {
+		for name, v := range p.Volumes {
+			if !bool(v.External) {
+				v.CustomLabels = v.CustomLabels.Add(domain.OwnerLabel, app.Owner)
+				p.Volumes[name] = v
+			}
+		}
+		for name, n := range p.Networks {
+			if !bool(n.External) {
+				n.CustomLabels = n.CustomLabels.Add(domain.OwnerLabel, app.Owner)
+				p.Networks[name] = n
+			}
+		}
 	}
 	if err := addContentHashes(p); err != nil {
 		return nil, err
@@ -336,7 +355,7 @@ func (e *Engine) Diff(ctx context.Context, app domain.Application, dir, asDir st
 			diffs = append(diffs, d)
 		}
 	}
-	nets, vols, err := undeclared(ctx, hc.cli.Client(), p)
+	nets, vols, err := undeclared(ctx, hc.cli.Client(), p, app.Owner)
 	if err != nil {
 		return nil, err
 	}
@@ -474,7 +493,7 @@ func (e *Engine) Sync(ctx context.Context, app domain.Application, dir string, o
 	if !opts.Prune {
 		return nil
 	}
-	return pruneUndeclared(ctx, e.cfg.Log, hc.cli.Client(), p, opts.PruneVolumes)
+	return pruneUndeclared(ctx, e.cfg.Log, hc.cli.Client(), p, app.Owner, opts.PruneVolumes)
 }
 
 // settleUndeclared handles containers of services the project no longer declares (removed from
@@ -509,7 +528,7 @@ func settleUndeclared(ctx context.Context, log *slog.Logger, c client.APIClient,
 
 // undeclared lists the networks and volumes labelled with the project that it no longer declares.
 // Volumes of profile-disabled services still count as declared: switching a profile off keeps their data.
-func undeclared(ctx context.Context, c client.APIClient, p *types.Project) ([]network.Summary, []volume.Volume, error) {
+func undeclared(ctx context.Context, c client.APIClient, p *types.Project, owner string) ([]network.Summary, []volume.Volume, error) {
 	nets, err := c.NetworkList(ctx, client.NetworkListOptions{Filters: projectFilter(p.Name)})
 	if err != nil {
 		return nil, nil, fmt.Errorf("list networks: %w", err)
@@ -529,10 +548,11 @@ func undeclared(ctx context.Context, c client.APIClient, p *types.Project) ([]ne
 			}
 		}
 	}
-	// a resource without its compose key label was not created by compose for this project: never ours to delete
+	// a resource without its compose key label was not created by compose for this project, and one with another
+	// owner by another OmegaCD (Q336): never ours to delete
 	var rn []network.Summary
 	for _, n := range nets.Items {
-		if k := n.Labels[api.NetworkLabel]; k != "" {
+		if k := n.Labels[api.NetworkLabel]; k != "" && !foreign(n.Labels, owner) {
 			if _, ok := p.Networks[k]; !ok {
 				rn = append(rn, n)
 			}
@@ -540,7 +560,7 @@ func undeclared(ctx context.Context, c client.APIClient, p *types.Project) ([]ne
 	}
 	var rv []volume.Volume
 	for _, v := range vols.Items {
-		if k := v.Labels[api.VolumeLabel]; k != "" && !declared[k] {
+		if k := v.Labels[api.VolumeLabel]; k != "" && !declared[k] && !foreign(v.Labels, owner) {
 			rv = append(rv, v)
 		}
 	}
@@ -552,8 +572,8 @@ func undeclared(ctx context.Context, c client.APIClient, p *types.Project) ([]ne
 // pruneUndeclared deletes the project's undeclared networks, and with volumes its undeclared volumes,
 // that no container of any project (stopped ones included) uses; those in use stay, prune pending.
 // Compose up only prunes containers. Bind mounts are not volumes, so no host path is ever touched.
-func pruneUndeclared(ctx context.Context, log *slog.Logger, c client.APIClient, p *types.Project, volumes bool) error {
-	nets, vols, err := undeclared(ctx, c, p)
+func pruneUndeclared(ctx context.Context, log *slog.Logger, c client.APIClient, p *types.Project, owner string, volumes bool) error {
+	nets, vols, err := undeclared(ctx, c, p, owner)
 	if err != nil {
 		return err
 	}
@@ -593,8 +613,32 @@ func pruneUndeclared(ctx context.Context, log *slog.Logger, c client.APIClient, 
 // with the project (it skips ones it did not create) and the containers' anonymous volumes.
 func (e *Engine) Remove(ctx context.Context, app domain.Application, volumes bool) error {
 	hc := e.hc
-	if err := hc.compose.Down(ctx, app.Name, api.DownOptions{RemoveOrphans: true, Volumes: volumes}); err != nil {
+	c := hc.cli.Client()
+	var keep []string // another OmegaCD's volumes in the project (Q336): compose down -v would take them too
+	var ours []volume.Volume
+	if volumes {
+		vols, err := c.VolumeList(ctx, client.VolumeListOptions{Filters: projectFilter(app.Name)})
+		if err != nil {
+			return fmt.Errorf("list volumes: %w", err)
+		}
+		for _, v := range vols.Items {
+			if foreign(v.Labels, app.Owner) {
+				keep = append(keep, v.Name)
+			} else {
+				ours = append(ours, v)
+			}
+		}
+	}
+	if err := hc.compose.Down(ctx, app.Name, api.DownOptions{RemoveOrphans: true, Volumes: volumes && len(keep) == 0}); err != nil {
 		return fmt.Errorf("compose down: %w", err)
+	}
+	if len(keep) > 0 {
+		e.cfg.Log.WarnContext(ctx, "volumes of another OmegaCD in the project kept", "app", app.Name, "volumes", keep)
+		for _, v := range ours {
+			if _, err := c.VolumeRemove(ctx, v.Name, client.VolumeRemoveOptions{}); err != nil {
+				return fmt.Errorf("remove volume %s: %w", v.Name, err)
+			}
+		}
 	}
 	e.mu.Lock()
 	delete(e.desired, app.Name)
@@ -739,18 +783,22 @@ func worst(a, b domain.HealthStatus) domain.HealthStatus {
 	return a
 }
 
-func (e *Engine) ProjectExists(ctx context.Context, name string) (exists, managed bool, err error) {
-	hc := e.hc
-	ctrs, err := containers(ctx, hc.cli.Client(), name)
+func (e *Engine) Project(ctx context.Context, name string) (domain.ProjectState, error) {
+	ctrs, err := containers(ctx, e.hc.cli.Client(), name)
 	if err != nil {
-		return false, false, err
+		return domain.ProjectState{}, err
 	}
+	st := domain.ProjectState{Exists: len(ctrs) > 0}
 	for _, c := range ctrs {
 		if _, ok := c.Labels[domain.ManagedLabel]; ok {
-			managed = true
+			st.Managed = true
+		}
+		if o := c.Labels[domain.OwnerLabel]; o != "" && !slices.Contains(st.Owners, o) {
+			st.Owners = append(st.Owners, o)
 		}
 	}
-	return len(ctrs) > 0, managed, nil
+	slices.Sort(st.Owners)
+	return st, nil
 }
 
 func (e *Engine) Logs(ctx context.Context, app domain.Application, containerID string, follow bool, tail int, w io.Writer) error {
@@ -950,4 +998,10 @@ func dockerTime(s string) time.Time {
 		return time.Time{}
 	}
 	return t
+}
+
+// foreign reports whether labels name an owner other than owner (Q336): another OmegaCD's. None is no one's.
+func foreign(labels map[string]string, owner string) bool {
+	o := labels[domain.OwnerLabel]
+	return o != "" && o != owner
 }

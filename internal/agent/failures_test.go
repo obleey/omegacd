@@ -24,6 +24,11 @@ type scriptedEngine struct {
 	logs   func(id string) error
 }
 
+// Project: no project of that name runs yet, so the Agent's own to take.
+func (scriptedEngine) Project(context.Context, string) (domain.ProjectState, error) {
+	return domain.ProjectState{}, nil
+}
+
 func (scriptedEngine) Validate(context.Context, domain.Application, string) error { return nil }
 func (scriptedEngine) Sync(context.Context, domain.Application, string, domain.SyncOptions) error {
 	return nil

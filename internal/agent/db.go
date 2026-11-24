@@ -83,6 +83,7 @@ type App struct {
 	SelfHeal     bool
 	Prune        bool
 	PruneVolumes bool
+	Adopt        bool // this Sync takes over a project of its name it doesn't own (Q336); never stored
 }
 
 // Revision is an Application's Desired State at one Revision, as cached.

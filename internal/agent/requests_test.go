@@ -136,6 +136,14 @@ func (removeFails) Remove(context.Context, domain.Application, bool) error {
 	return errors.New("volume in use")
 }
 
+// Project: "theirs" is another OmegaCD's (Q336), the rest nobody's yet.
+func (removeFails) Project(_ context.Context, name string) (domain.ProjectState, error) {
+	if name == "theirs" {
+		return domain.ProjectState{Exists: true, Managed: true, Owners: []string{"other"}}, nil
+	}
+	return domain.ProjectState{}, nil
+}
+
 // Q83 on the Agent: forgetting an app it doesn't have is ErrNotFound; a removal that fails is answered with why and
 // not put in the outbox; one whose answer can't be recorded either is logged.
 func TestRemovalFailures(t *testing.T) {
@@ -155,6 +163,12 @@ func TestRemovalFailures(t *testing.T) {
 	}
 	if entries, _ := db.Outbox(ctx); len(entries) != 0 {
 		t.Fatalf("a failed removal in the outbox: %v", entries)
+	}
+	// another OmegaCD's containers in its project (Q336): not removed; forgetting it touches none
+	db.SaveApp(ctx, App{Name: "theirs"})
+	ag.removeApp(ctx, conn, 10, &agentv1.RemoveApp{App: "theirs", Volumes: true})
+	if e := <-got; !strings.Contains(e.GetAppRemoved().GetError(), "belongs to another OmegaCD (other)") {
+		t.Fatalf("removing another OmegaCD's project: %v", e)
 	}
 	// a delete retried after its answer was lost: the app is gone already, which is removed
 	ag.removeApp(ctx, conn, 9, &agentv1.RemoveApp{App: "never-here"})

@@ -148,7 +148,7 @@ func TestEngineFailures(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "prune service extra") {
 			t.Fatalf("containers: %v", err)
 		}
-		err = pruneUndeclared(ctx, logging.Discard, c, p, true)
+		err = pruneUndeclared(ctx, logging.Discard, c, p, "", true)
 		for _, want := range []string{"prune network " + app.Name + "_back", "prune network " + app.Name + "_front",
 			"prune volume " + app.Name + "_va", "prune volume " + app.Name + "_vb"} {
 			if err == nil || !strings.Contains(err.Error(), want) {
@@ -162,13 +162,13 @@ func TestEngineFailures(t *testing.T) {
 			t.Fatalf("%v", err)
 		}
 		_, c = faulty(t, nil, fail("GET", "/networks"))
-		if err := pruneUndeclared(ctx, logging.Discard, c, p, true); err == nil || !strings.Contains(err.Error(), "list networks") {
+		if err := pruneUndeclared(ctx, logging.Discard, c, p, "", true); err == nil || !strings.Contains(err.Error(), "list networks") {
 			t.Fatalf("%v", err)
 		}
 	})
 	t.Run("listing the volumes for the prune", func(t *testing.T) { // its own: faulty proxies the DOCKER_HOST it finds
 		_, c := faulty(t, nil, fail("GET", "/volumes"))
-		if err := pruneUndeclared(ctx, logging.Discard, c, p, true); err == nil || !strings.Contains(err.Error(), "list volumes") {
+		if err := pruneUndeclared(ctx, logging.Discard, c, p, "", true); err == nil || !strings.Contains(err.Error(), "list volumes") {
 			t.Fatalf("%v", err)
 		}
 	})
@@ -217,7 +217,7 @@ func TestEngineFailures(t *testing.T) {
 	}
 	t.Run("the rest", func(t *testing.T) {
 		f, _ := faulty(t, nil, fail("GET", "/containers/json"))
-		if _, _, err := f.ProjectExists(ctx, app.Name); err == nil {
+		if _, err := f.Project(ctx, app.Name); err == nil {
 			t.Error("ProjectExists")
 		}
 		if _, err := f.Inspect(ctx, app, "volume", app.Name+"_cache"); err == nil || !strings.Contains(err.Error(), "list containers") {

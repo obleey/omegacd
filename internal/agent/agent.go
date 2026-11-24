@@ -118,6 +118,14 @@ func (ag *Agent) apply(ctx context.Context, a App, r Revision, recreate bool, op
 		ag.log.DebugContext(ctx, "decrypted", "file", d.Path)
 	}
 	app := application(a, r)
+	app.Owner, err = ag.db.ControlPlane(ctx)
+	if err != nil {
+		return err
+	}
+	takeover, err := ag.claim(ctx, a, app.Owner)
+	if err != nil {
+		return err
+	}
 	for _, f := range app.ComposeFilesIn(dir) {
 		if _, err := os.Stat(filepath.Join(dir, f)); errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("%w: compose file %q not found in the Revision %s", domain.ErrInvalid, f, r.Revision)
@@ -126,7 +134,7 @@ func (ag *Agent) apply(ctx context.Context, a App, r Revision, recreate bool, op
 	if err := ag.engine.Validate(ctx, app, dir); err != nil {
 		return err
 	}
-	opts.Prune, opts.PruneVolumes, opts.ForceRecreate = app.Prune, app.PruneVolumes, recreate
+	opts.Prune, opts.PruneVolumes, opts.ForceRecreate = app.Prune, app.PruneVolumes, recreate || takeover
 	err = ag.engine.Sync(ctx, app, dir, opts)
 	if err != nil {
 		return err
@@ -243,7 +251,14 @@ func (ag *Agent) Remove(ctx context.Context, name string, volumes bool) error {
 	if err != nil {
 		return err
 	}
-	if err := ag.engine.Remove(ctx, application(a, Revision{}), volumes); err != nil {
+	app := application(a, Revision{})
+	if app.Owner, err = ag.db.ControlPlane(ctx); err != nil {
+		return err
+	}
+	if _, err := ag.claim(ctx, a, app.Owner); err != nil { // another OmegaCD's containers in it: forget it instead (--forget)
+		return err
+	}
+	if err := ag.engine.Remove(ctx, app, volumes); err != nil {
 		return err
 	}
 	if a.Dir != "" {
