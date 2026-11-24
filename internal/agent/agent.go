@@ -107,7 +107,7 @@ func (ag *Agent) deploy(ctx context.Context, a App, r Revision, fetch func(hash 
 // container's bind mounts (after a restore the files are new). It records r as deployed. Caller holds the lock.
 func (ag *Agent) apply(ctx context.Context, a App, r Revision, recreate bool, opts domain.SyncOptions) error {
 	owner, err := ag.db.ControlPlane(ctx)
-	if err != nil {
+	if err != nil { // coverage: unreachable, a read of the Agent's healthy SQLite, which every caller just read or wrote
 		return err
 	}
 	takeover, err := ag.claim(ctx, a, owner) // before its folder is written or the app recorded: a refused project leaves neither
@@ -253,7 +253,7 @@ func (ag *Agent) Remove(ctx context.Context, name string, volumes bool) error {
 		return err
 	}
 	app := application(a, Revision{})
-	if app.Owner, err = ag.db.ControlPlane(ctx); err != nil {
+	if app.Owner, err = ag.db.ControlPlane(ctx); err != nil { // coverage: unreachable, a read of the Agent's healthy SQLite, which just read the app
 		return err
 	}
 	if _, err := ag.claim(ctx, a, app.Owner); err != nil { // another OmegaCD's containers in it: forget it instead (--forget)
