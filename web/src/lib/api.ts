@@ -183,6 +183,7 @@ export interface HostView {
 	allowIPs?: string[];
 	agent?: AgentInfo;
 	unmanaged?: string[]; // Applications its Agent runs that OmegaCD doesn't know (Q118)
+	refused?: string; // why an Agent of another OmegaCD refused this Host's invite (Q340)
 	status: HostStatus;
 	apps: string[];
 }

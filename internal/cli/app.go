@@ -731,6 +731,8 @@ func (c *CLI) hostList(ctx context.Context, args []string) error {
 	for _, h := range hosts {
 		var agent string
 		switch {
+		case h.Fingerprint == "" && h.Refused != "": // the reason in full: -o json
+			agent = "invited, REFUSED: its Agent belongs to another OmegaCD"
 		case h.Fingerprint == "":
 			agent = "invited"
 		case len(h.Locked) > 0:

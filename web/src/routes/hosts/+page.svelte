@@ -162,6 +162,8 @@
 					</div>
 				{:else if h.agent?.refused}
 					<p class="alert" role="alert"><Icon name="x-circle" size={15} />{h.agent.refused}</p>
+				{:else if h.refused && !h.fingerprint}
+					<p class="alert" role="alert"><Icon name="x-circle" size={15} />The Agent given this invite refused it: {h.refused}</p>
 				{/if}
 
 				<dl>
