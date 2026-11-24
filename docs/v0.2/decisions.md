@@ -1121,7 +1121,7 @@ counted) and its delete removed it. In production two OmegaCDs, or two Hosts of 
 and a delete with volumes would remove the other's data.
 
 - **Q335** The Agent labels everything it creates for a project, containers and the volumes and networks Compose makes
-  for it, with `dev.omegacd.owner=<Control Plane ID>/<Host name>`: the Control Plane ID is random, made at its first
+  for it, with `dev.omegacd.owner=<Control Plane ID>/<Host name>` (Q341: the Control Plane ID alone): the Control Plane ID is random, made at its first
   start and kept in its database. It differs between two OmegaCDs and between two Hosts of one, and stays when a Host
   enrolls again with a new key (Q289).
 - **Q336** A project whose containers carry another owner is never touched: a Sync, a Self-Heal or a delete of it is
@@ -1144,3 +1144,7 @@ and a delete with volumes would remove the other's data.
   Applications running and self-healing meanwhile. A Control Plane restored from its backup keeps its ID; one rebuilt
   from nothing has a new one, which its Agents refuse: each is reinstalled with an empty state dir, a new Host Key and
   Q289's recovery (forget, add the Host again, rekey). This narrows Q117's recovery from nothing.
+- **Q341** (corrects Q335) The owner is the Control Plane's ID alone, `dev.omegacd.owner=<Control Plane ID>`: Hosts are
+  keyed by their name, which `host rename` changes, and Application names are unique in one OmegaCD, so two of its
+  Hosts sharing an engine never collide, and an Application moved between them stays its own. The ID is 128 random
+  bits made at the Control Plane's first start, unique, and never changed: no setting, rename or API sets it.

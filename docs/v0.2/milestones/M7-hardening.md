@@ -158,8 +158,9 @@ and its delete removed the demo's container. Two OmegaCDs on one engine (staging
 or two Hosts of one whose Agents share an engine, would do the same in production, and a delete with volumes would
 remove the other's data.
 
-Every container, volume and network the Agent creates for a project gets `dev.omegacd.owner=<Control Plane ID>/<Host>`
-(the Control Plane ID random, made once and kept in its database; it survives a Host enrolling again, Q289). A project
+Every container, volume and network the Agent creates for a project gets `dev.omegacd.owner=<Control Plane ID>` (Q341:
+128 random bits made once and kept in the Control Plane's database, never changed; it survives a Host enrolling again,
+Q289, and a Host's rename). A project
 with another owner is never synced, self-healed or deleted, the refusal naming the owner; `--forget` still works; a delete
 with volumes and Prune volumes touch only this owner's volumes. Containers from before the label are the Agent's own
 only if its database has the Application (then labelled at the next Sync), otherwise refused unless `adopt: true`.
@@ -167,7 +168,7 @@ only if its database has the Application (then labelled at the next Sync), other
 An Agent belongs to the first Control Plane that approves it (Q340): another one, with another ID, is refused before
 the Agent enrolls, both sides saying why; only a reinstall with an empty state dir moves it.
 
-**Decisions:** Q335–Q340 (2026-11-24).
+**Decisions:** Q335–Q341 (2026-11-24).
 
 **Done when:** integration tests with two Agents on one engine and the same Application name pass on every engine of
 the matrix (the second refused; the first's containers and volume untouched by the second's Sync, Self-Heal and delete
