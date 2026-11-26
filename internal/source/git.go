@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"log/slog"
 	neturl "net/url"
+	"os"
 	"path"
 	"path/filepath"
 	"slices"
@@ -53,9 +54,53 @@ type repo struct {
 	lastFetch time.Time
 }
 
-// damaged is err from reading the repo cache, naming its folder (Q139): an error that persists may be a damaged cache.
+// damaged is err from reading the repo cache, naming its folder (Q139): one the Source Server repairs by cloning the
+// Repository again (Q348), and if it persists, returns.
 func (e *repo) damaged(err error) error {
-	return fmt.Errorf("%w (if this persists, the repo cache %s may be damaged: delete it, the next fetch clones the Repository again)", err, e.dir)
+	return damagedErr{fmt.Errorf("%w (if this persists, the repo cache %s may be damaged: delete it, the next fetch clones the Repository again)", err, e.dir)}
+}
+
+// damagedErr is a read of the repo cache that failed (Q348).
+type damagedErr struct{ error }
+
+func (d damagedErr) Unwrap() error { return d.error }
+
+// repairing runs read on the repo cache for url and, when it fails because the cache is damaged, clones the
+// Repository again and runs it once more (Q348). The caller holds e's lock.
+func (g *Git) repairing(ctx context.Context, e *repo, url string, read func() error) error {
+	err := read()
+	// a read cut short (cancelled, timed out: go-git says so in errors of its own) says nothing about the cache
+	if !errors.As(err, new(damagedErr)) || ctx.Err() != nil {
+		return err
+	}
+	g.Log.WarnContext(ctx, "the repo cache is damaged: cloning the Repository again", "dir", e.dir, "repo", redact(url), "err", err)
+	if rerr := g.reclone(ctx, e, url); rerr != nil {
+		g.Log.WarnContext(ctx, "the repo cache couldn't be cloned again", "dir", e.dir, "repo", redact(url), "err", rerr)
+		return err
+	}
+	return read()
+}
+
+// reclone deletes e's folder and clones url into it again. The caller holds e's lock.
+func (g *Git) reclone(ctx context.Context, e *repo, url string) error {
+	if err := os.RemoveAll(e.dir); err != nil {
+		return err
+	}
+	r, err := initCache(e.dir, url)
+	if err != nil { // coverage: unreachable, its folder just removed: its parent is writable
+		return err
+	}
+	e.r, e.lastFetch = r, time.Time{}
+	return g.fetch(ctx, e, url)
+}
+
+// initCache makes an empty bare repository in dir whose origin is url.
+func initCache(dir, url string) (*git.Repository, error) {
+	r, err := git.PlainInit(dir, true)
+	if err == nil {
+		_, err = r.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{url}})
+	}
+	return r, err
 }
 
 func New(cacheDir string, creds func(ctx context.Context) ([]domain.RepoCredential, error)) *Git {
@@ -76,11 +121,14 @@ func (g *Git) open(url string) (*repo, func(), error) {
 	e.mu.Lock()
 	if e.r == nil {
 		r, err := git.PlainOpen(e.dir)
-		if errors.Is(err, git.ErrRepositoryNotExists) {
-			r, err = git.PlainInit(e.dir, true)
-			if err == nil {
-				_, err = r.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{url}})
+		if err != nil && !errors.Is(err, git.ErrRepositoryNotExists) { // damaged (Q348): started over, fetched again
+			g.Log.Warn("the repo cache can't be opened: cloning the Repository again", "dir", e.dir, "repo", redact(url), "err", err)
+			if err = os.RemoveAll(e.dir); err == nil {
+				err = git.ErrRepositoryNotExists
 			}
+		}
+		if errors.Is(err, git.ErrRepositoryNotExists) {
+			r, err = initCache(e.dir, url)
 		}
 		if err != nil {
 			e.mu.Unlock()
@@ -332,13 +380,20 @@ func subtree(c *object.Commit, p string) (*object.Tree, error) {
 	return t, err
 }
 
-// tree is every file under p at sha, nil if p does not exist there.
+// tree is every file under p at sha, nil if p does not exist there; a damaged repo cache is cloned again (Q348).
 func (g *Git) tree(ctx context.Context, repoURL, sha, p string) ([]treeFile, error) {
 	e, unlock, err := g.open(repoURL)
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
+	var files []treeFile
+	err = g.repairing(ctx, e, repoURL, func() (err error) { files, err = g.readTree(ctx, e, repoURL, sha, p); return err })
+	return files, err
+}
+
+// readTree is tree from the open repo cache e.
+func (g *Git) readTree(ctx context.Context, e *repo, repoURL, sha, p string) ([]treeFile, error) {
 	c, err := g.commit(ctx, e, repoURL, sha)
 	if err != nil {
 		return nil, err
@@ -378,12 +433,20 @@ type treeFile struct {
 	content []byte
 }
 
+// Diff is the unified diff of p between two commits; a damaged repo cache is cloned again (Q348).
 func (g *Git) Diff(ctx context.Context, repoURL, fromSHA, toSHA, p string) (string, error) {
 	e, unlock, err := g.open(repoURL)
 	if err != nil {
 		return "", err
 	}
 	defer unlock()
+	var out string
+	err = g.repairing(ctx, e, repoURL, func() (err error) { out, err = g.diff(ctx, e, repoURL, fromSHA, toSHA, p); return err })
+	return out, err
+}
+
+// diff is Diff from the open repo cache e.
+func (g *Git) diff(ctx context.Context, e *repo, repoURL, fromSHA, toSHA, p string) (string, error) {
 	fail := func(err error) (string, error) {
 		return "", hide(repoURL, e.damaged(fmt.Errorf("diff %s %s..%s: %w", repoURL, fromSHA, toSHA, err)))
 	}

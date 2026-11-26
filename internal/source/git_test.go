@@ -21,6 +21,7 @@ import (
 	"github.com/go-git/go-git/v5/storage/memory"
 
 	"github.com/obleey/omegacd/internal/domain"
+	"github.com/obleey/omegacd/internal/logging"
 )
 
 type fixture struct {
@@ -264,8 +265,10 @@ func damage(t *testing.T, g *Git, url string, keep func(plumbing.EncodedObject) 
 	}
 }
 
-// Q139: what a damaged repo cache can't read fails naming the cache's folder, to delete; a Diff's errors name the
-// Repository and Revisions.
+// Q139, Q348: what a damaged repo cache can't read makes the Source Server clone the Repository again and read once
+// more, saying so; a cancelled read isn't taken for damage. Damage that persists (the Repository can't be cloned
+// again) fails naming the cache's folder, to delete, a Diff's errors naming the Repository and Revisions; a cache that
+// can't be opened is started over.
 func TestDamagedRepoCache(t *testing.T) {
 	f, _, c1, _ := setup(t)
 	c3 := f.commit(map[string]string{"app/compose.yaml": "services: {web: {}}\n"})
@@ -296,17 +299,71 @@ func TestDamagedRepoCache(t *testing.T) {
 		}},
 	} {
 		g := New(t.TempDir(), nil)
+		var log logging.Buffer
+		g.Log, _ = logging.New(&log, "debug", "text")
 		if _, err := g.Resolve(ctx, f.dir, "main"); err != nil {
 			t.Fatal(err)
 		}
 		damage(t, g, f.dir, tc.keep, tc.bad...)
 		err := tc.do(g)
-		if err == nil || !strings.Contains(err.Error(), "may be damaged") || !strings.Contains(err.Error(), g.cacheDir) {
-			t.Errorf("%s: %v", tc.name, err)
+		repaired := strings.Contains(log.String(), `msg="the repo cache is damaged: cloning the Repository again" dir=`+g.cacheDir)
+		if tc.name == "a diff cancelled" {
+			if err == nil || repaired { // go-git's own "operation canceled", not context.Canceled
+				t.Errorf("%s: %v, repaired %v", tc.name, err, repaired)
+			}
+			continue
+		}
+		if err != nil || !repaired {
+			t.Errorf("%s: %v, repaired %v:\n%s", tc.name, err, repaired, log.String())
+		}
+
+		// the same damage with the Repository gone: it persists, and says where
+		damage(t, g, f.dir, tc.keep, tc.bad...)
+		os.Rename(f.dir, f.dir+".gone")
+		err = tc.do(g)
+		os.Rename(f.dir+".gone", f.dir)
+		if err == nil || !strings.Contains(err.Error(), "may be damaged") || !strings.Contains(err.Error(), g.cacheDir) ||
+			!strings.Contains(log.String(), "the repo cache couldn't be cloned again") {
+			t.Errorf("%s, persisting: %v", tc.name, err)
 		}
 		if strings.HasPrefix(tc.name, "a diff") && !strings.Contains(err.Error(), "diff "+f.dir) {
 			t.Errorf("%s: %v, want the Repository named", tc.name, err)
 		}
+		if errors.Unwrap(err) == nil {
+			t.Errorf("%s: %v lost its cause", tc.name, err)
+		}
+	}
+
+	// a cache whose folder can't be removed: the damage stays, said so
+	g := New(t.TempDir(), nil)
+	var log logging.Buffer
+	g.Log, _ = logging.New(&log, "debug", "text")
+	if _, err := g.Resolve(ctx, f.dir, "main"); err != nil {
+		t.Fatal(err)
+	}
+	damage(t, g, f.dir, isType(plumbing.CommitObject))
+	os.Chmod(g.cacheDir, 0o555)
+	_, err := g.tree(ctx, f.dir, c1, "app")
+	os.Chmod(g.cacheDir, 0o755)
+	if err == nil || !strings.Contains(log.String(), "the repo cache couldn't be cloned again") {
+		t.Errorf("a cache that can't be removed: %v", err)
+	}
+
+	// a cache on disk that can't be opened at all: started over, fetched again
+	cache := t.TempDir()
+	if _, err := New(cache, nil).Resolve(ctx, f.dir, "main"); err != nil {
+		t.Fatal(err)
+	}
+	dirs, _ := os.ReadDir(cache)
+	if err := os.WriteFile(filepath.Join(cache, dirs[0].Name(), "config"), []byte("[not git"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	g = New(cache, nil)
+	log = logging.Buffer{}
+	g.Log, _ = logging.New(&log, "debug", "text")
+	if files, err := g.tree(ctx, f.dir, c1, "app"); err != nil || len(files) == 0 ||
+		!strings.Contains(log.String(), "the repo cache can't be opened: cloning the Repository again") {
+		t.Fatalf("a cache that can't be opened: %v, %d files:\n%s", err, len(files), log.String())
 	}
 }
 
