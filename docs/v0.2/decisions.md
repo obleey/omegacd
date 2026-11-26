@@ -1153,3 +1153,12 @@ and a delete with volumes would remove the other's data.
   new invite, and the App of Apps takes their running apps over with `adopt: true`, recreating their containers as
   its own, volumes and data kept. A backup avoids it. Q119's takeover without deploying stays for a Control Plane
   restored from an older backup that lacks an Application its Agent still runs; `recovery.sh` tests both.
+
+## End-to-end suite on Control Plane + Agent (M7-02, 2026-11-26)
+
+- **Q343** M7-02 is covered by the scripts M3–M6 wrote: every e2e script deploys through an Agent (v0.2 has no other
+  way), and enrollment, offline Hosts, queued Syncs, offline rollbacks and the Control Plane's own project through its
+  machine's Agent each have theirs (the ticket maps them). It closes with that map and no new code.
+- **Q344** The gate in CI comes with M7-07: Forgejo Actions on the maintainer's runners, by Ubuntu and Debian on both
+  architectures, one job at a time, others' pull requests after approval. No Hetzner servers are brought up from
+  GitHub's CI; until M7-07 Debian is tested by the local gate before every push.

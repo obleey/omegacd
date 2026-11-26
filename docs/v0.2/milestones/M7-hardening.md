@@ -24,7 +24,7 @@ architectures, `make e2e` green on macOS and the Linux gate passes (Q334).
 **Done when:** CI is green on all three engines.
 
 ### M7-02 · End-to-end suite on Control Plane + Agent
-**Status:** todo
+**Status:** done (2026-11-26, PR #177): covered by the scripts M3–M6 wrote (Q343)
 **Depends on:** M6-02
 
 Port `test/e2e` (mounts, compose views, secrets, adopt, README walkthrough, webhook) to a Control Plane with an Agent,
@@ -34,6 +34,21 @@ Open: CI could run this whole gate on the Hetzner test servers too (the API toke
 per run), so Debian is tested in CI and pull requests from people who don't run the gate are covered: today GitHub's
 runners are Ubuntu only and Debian is tested by the local gate before every push. Decide when outside contributions
 start (a Debian container on the runners was rejected: no systemd or Docker of its own there, only part of the suite).
+
+**Covered (Q343, 2026-11-26)**, every script through an Agent since v0.2 deploys only through Agents:
+
+| Asked for | Where |
+|---|---|
+| mounts, compose views, secrets, adopt, README walkthrough, webhook | each enrolls an Agent (`enroll.sh`) and deploys through it, most checking "deployed by the Agent of the Control Plane's machine" (Q104) |
+| enrollment | `enrollment.sh`: invite, fingerprint approval, key rotation, lock and unlock, revoke, allowlist |
+| offline Host | `agent-sync.sh` (its last state "as of", logs refused, the last Diff), `agent-ops.sh` (a delete waits for it) |
+| queued Sync | `agent-sync.sh`: it waits, `app cancel` ends it, and one that waited runs when its Agent is back, as the same Sync Operation |
+| offline rollback | `agent-sync.sh`: on the Host itself, reported from the outbox on reconnect, exactly once |
+| OmegaCD managing its own Control Plane (Q104) | `agent-self.sh`: an Agent in a container deploys the Control Plane's project, refusing only its own |
+
+The open question is answered by M7-07 (Q344): CI moves to the maintainer's own runners, labelled by Ubuntu and Debian
+on both architectures, one job at a time, which is the gate; no Hetzner servers come up from GitHub's CI. Until then
+Debian is tested by the local gate before every push.
 
 **Done when:** `make e2e` is green.
 
@@ -113,7 +128,8 @@ pull mirror of GitHub (every 10 minutes, Actions off). The switch:
   is replaced.
 - **CI on Forgejo Actions** with the maintainer's runners, labelled by need: `ubuntu-24.04-amd64`,
   `ubuntu-24.04-arm64`, `debian-13-amd64`, `debian-13-arm64` (host jobs, one at a time: the gate), and `docker` for
-  light container jobs (web UI, secret scan); jobs from others' pull requests only after approval.
+  light container jobs (web UI, secret scan); jobs from others' pull requests only after approval. This is how Debian
+  and pull requests from people who don't run the gate get tested in CI (Q344, M7-02's open question).
 - **Releases stay public** while the source may become private:
   - images on Docker Hub (`obleey/omegacd`), optionally a second registry as a fallback;
   - binaries and `install.sh` from a public place, chosen then (a release-only repository, an own domain with object
