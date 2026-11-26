@@ -53,7 +53,7 @@ Debian is tested by the local gate before every push.
 **Done when:** `make e2e` is green.
 
 ### M7-03 · Chaos tests for no data loss
-**Status:** todo
+**Status:** done (2026-11-26, PR #178)
 **Depends on:** M7-02
 
 Kill the Control Plane mid-Sync; kill the Source Server; reboot an Agent Host while offline; restore the Control Plane

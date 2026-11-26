@@ -1172,8 +1172,10 @@ and a delete with volumes would remove the other's data.
   few seconds: the Agent finishes, its report waits in its outbox, and the Control Plane restarted closes that Sync as
   Succeeded from it; the app runs with its data, an unchanged app's container is the same one.
 - **Q347** The standalone Source Server killed while it renders a new Revision: that Sync fails saying why, the apps run
-  on untouched, and once it is back the next Sync works. The Agent killed mid-deploy: the Control Plane marks that Sync
-  failed or unknown, the Agent restarted restores its apps with their data, and a new Sync succeeds.
+  on untouched, and once it is back the next Sync works. The Agent killed mid-deploy: that Sync stays Running while the
+  Agent is gone, as it may yet report it from its outbox; back without a report, the Control Plane closes it as Unknown,
+  saying the Agent may have been stopped during it; the Agent restored its apps with their data, and a new Sync
+  succeeds.
 - **Q348** The repo cache repairs itself (Q139): a read of the cached clone that fails (a commit, a tree, a file, a
   diff), or a cache that can't be opened for anything but not being there yet, makes the Source Server delete that
   folder, clone the Repository again and retry once, logging a warning naming the folder and the error; failing again,

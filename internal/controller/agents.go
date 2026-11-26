@@ -291,7 +291,8 @@ func (c *Controller) closeLost(ctx context.Context, host, app string, ops []doma
 			continue
 		}
 		msg := "result unknown: Host " + host + "'s Agent neither runs it nor reported how it ended (the Control Plane's " +
-			"database is older than the Host, restored from a backup, or the Sync was lost with a dropped connection); " +
+			"database is older than the Host, restored from a backup, its Agent was stopped during it, or the Sync was lost " +
+			"with a dropped connection); " +
 			"the Application's state is what its Agent reports"
 		if err := c.cfg.Store.FinishOp(ctx, op.ID, domain.OpUnknown, msg); err != nil {
 			c.cfg.Log.ErrorContext(ctx, "close a lost sync operation", "app", app, "op", op.ID, "err", err)
