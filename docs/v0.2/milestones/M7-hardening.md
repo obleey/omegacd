@@ -61,6 +61,12 @@ from a backup and rebuild it from nothing (Q24, Q30, Q31).
 Damage a Source Server's repo cache (`<data>/repos/<hash>`): it deletes and clones it again on its own (Q139; until
 then its errors name the folder to delete).
 
+**Decisions (Q345–Q349, 2026-11-26):** the reboot while offline is the gate's real reboot (`systemd.sh`, no Control
+Plane up), the restore and the rebuild `recovery.sh`; a new `chaos.sh` kills the Control Plane mid-Sync (the Agent's
+report closes it once it is back), the standalone Source Server mid-render and the Agent mid-deploy, apps keeping data
+in a volume (Q345–Q347); the repo cache repairs itself: a failed read or open makes the Source Server delete it, clone
+again and retry once, logging it; a failed fetch never does (Q348).
+
 **Done when:** in every case all apps run afterwards with their data, and nothing was recreated that didn't change.
 
 ### M7-04 · Real-world run

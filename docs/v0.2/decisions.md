@@ -1162,3 +1162,23 @@ and a delete with volumes would remove the other's data.
 - **Q344** The gate in CI comes with M7-07: Forgejo Actions on the maintainer's runners, by Ubuntu and Debian on both
   architectures, one job at a time, others' pull requests after approval. No Hetzner servers are brought up from
   GitHub's CI; until M7-07 Debian is tested by the local gate before every push.
+
+## Chaos tests for no data loss (M7-03, 2026-11-26)
+
+- **Q345** The Agent Host rebooted while offline is the gate's real reboot of every server, which runs with no Control
+  Plane (`systemd.sh`, Q249); the restore from a backup and the rebuild from nothing are `recovery.sh` (Q342). New is an
+  e2e `chaos.sh` for the kills, whose apps keep data in a volume and whose containers are compared before and after.
+- **Q346** The Control Plane killed (SIGKILL) mid-Sync, while the Agent deploys an app whose one-shot migration takes a
+  few seconds: the Agent finishes, its report waits in its outbox, and the Control Plane restarted closes that Sync as
+  Succeeded from it; the app runs with its data, an unchanged app's container is the same one.
+- **Q347** The standalone Source Server killed while it renders a new Revision: that Sync fails saying why, the apps run
+  on untouched, and once it is back the next Sync works. The Agent killed mid-deploy: the Control Plane marks that Sync
+  failed or unknown, the Agent restarted restores its apps with their data, and a new Sync succeeds.
+- **Q348** The repo cache repairs itself (Q139): a read of the cached clone that fails (a commit, a tree, a file, a
+  diff), or a cache that can't be opened for anything but not being there yet, makes the Source Server delete that
+  folder, clone the Repository again and retry once, logging a warning naming the folder and the error; failing again,
+  the error is returned as before, naming the folder. A failed fetch (network, credentials) never does: it is nearly
+  always not the cache.
+- **Q349** Done when `chaos.sh` passes on macOS and the four Linux servers (the kills and the damaged cache, every app
+  running with its data, nothing recreated that didn't change); the ticket names `systemd.sh` and `recovery.sh` for the
+  reboot, the restore and the rebuild.
