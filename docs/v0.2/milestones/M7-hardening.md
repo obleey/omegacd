@@ -53,13 +53,19 @@ Debian is tested by the local gate before every push.
 **Done when:** `make e2e` is green.
 
 ### M7-03 · Chaos tests for no data loss
-**Status:** todo
+**Status:** done (2026-11-26, PR #178)
 **Depends on:** M7-02
 
 Kill the Control Plane mid-Sync; kill the Source Server; reboot an Agent Host while offline; restore the Control Plane
 from a backup and rebuild it from nothing (Q24, Q30, Q31).
 Damage a Source Server's repo cache (`<data>/repos/<hash>`): it deletes and clones it again on its own (Q139; until
 then its errors name the folder to delete).
+
+**Decisions (Q345–Q349, 2026-11-26):** the reboot while offline is the gate's real reboot (`systemd.sh`, no Control
+Plane up), the restore and the rebuild `recovery.sh`; a new `chaos.sh` kills the Control Plane mid-Sync (the Agent's
+report closes it once it is back), the standalone Source Server mid-render and the Agent mid-deploy, apps keeping data
+in a volume (Q345–Q347); the repo cache repairs itself: a failed read or open makes the Source Server delete it, clone
+again and retry once, logging it; a failed fetch never does (Q348).
 
 **Done when:** in every case all apps run afterwards with their data, and nothing was recreated that didn't change.
 

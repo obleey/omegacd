@@ -192,7 +192,9 @@ func (r rig) syncNowFinished(t *testing.T, name string) domain.SyncOperation {
 	if _, err := r.c.Sync(t.Context(), name, domain.SyncRequest{}); err != nil {
 		t.Fatal(err)
 	}
-	return waitOp(t, r, name)
+	op := waitOp(t, r, name)
+	r.waitIdle(t, name) // written finished before its syncing ends: a Sync right after would be ErrBusy
+	return op
 }
 
 // What an update may not do, and a delete while a Sync runs.
@@ -379,7 +381,9 @@ func TestOperatorLines(t *testing.T) {
 	ag.mu.Lock()
 	ag.err = agents.ErrOffline
 	ag.mu.Unlock()
-	r.c.Sync(ctx, "web", domain.SyncRequest{})
+	if _, err := r.c.Sync(ctx, "web", domain.SyncRequest{}); err != nil {
+		t.Fatal(err)
+	}
 	waitLog(t, logs, `level=WARN msg="sync not finished" phase=Waiting why="the Host's Agent is not connected"`)
 	r.waitIdle(t, "web")
 	if err := r.c.DeleteApp(ctx, "web", true, false); !errors.Is(err, domain.ErrWaitingForHost) {

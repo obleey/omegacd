@@ -754,8 +754,9 @@ balancer between the two must pass TLS through untouched (TCP mode: Traefik `Hos
 `tls.passthrough`, nginx `stream` with `ssl_preread`, HAProxy `mode tcp`): terminating TLS there would drop the
 client certificate and the Source Server refuses the connection. Repository credentials live in the Source
 Server's data dir (see [Git access](#git-access)). Its log shows each request that fails for a reason of its own (Git
-unreachable, its disk) at Warn. A repo cache that keeps failing with "may be damaged" names its folder under
-`repos/`: delete it, and the next fetch clones the Repository again.
+unreachable, its disk) at Warn. A damaged repo cache (a read of it fails) repairs itself: the Source Server deletes
+its folder under `repos/`, clones the Repository again and retries, logging a warning. One that still fails says "may
+be damaged" and names that folder.
 
 **While it is down**, what runs keeps running, and what was rendered before still deploys: the Control Plane keeps
 the files it delivered (`payloads` in its data dir), so Rollbacks, Syncs that waited for a Host and reinstalled Hosts
